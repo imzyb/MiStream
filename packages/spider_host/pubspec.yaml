@@ -1,0 +1,13 @@
+name: spider_host
+description: >
+  Spider 子进程的生命周期、进程池、JSON-RPC over stdio 客户端、超时与熔断。
+  M3 落地，见 docs/08-RPC协议.md。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  meta: ^1.18.0

@@ -1,0 +1,3 @@
+# 依赖版本基线（M0 锁定，docs/03 §2）
+# CI 矩阵与本地开发共用同一版本，asdf / mise 均可读取本文件。
+flutter 3.44.8-stable

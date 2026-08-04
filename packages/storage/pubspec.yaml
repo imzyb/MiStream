@@ -1,0 +1,13 @@
+name: storage
+description: >
+  drift 数据库、schema 迁移、DAO、Repository 实现、缓存淘汰与备份导入导出。
+  M2 落地，见 docs/07-数据库设计.md。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  meta: ^1.18.0

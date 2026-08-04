@@ -1,0 +1,34 @@
+# Dart / Flutter
+.dart_tool/
+.packages
+.pub/
+.pub-cache/
+build/
+pubspec_overrides.yaml
+
+# pub workspace 只在仓库根保留一份 lock（docs/10 §7）
+**/pubspec.lock
+!/pubspec.lock
+
+# Flutter 生成物
+.flutter-plugins
+.flutter-plugins-dependencies
+**/generated_plugin_registrant.dart
+**/Flutter/Generated.xcconfig
+**/Flutter/flutter_export_environment.sh
+**/ephemeral/
+
+# 运行时产物
+logs/
+coverage/
+*.log
+
+# 编辑器
+.idea/
+.vscode/
+*.iml
+*.iws
+
+# 系统
+.DS_Store
+Thumbs.db

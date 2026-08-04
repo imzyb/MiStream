@@ -1,0 +1,60 @@
+name: Bug 报告
+description: 功能不符合预期、崩溃、界面异常
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        源不兼容（某个源搜不到 / 进不去详情 / 起播失败）请改用
+        **源兼容性问题** 模板——那类问题需要的信息完全不同。
+
+  - type: textarea
+    id: what
+    attributes:
+      label: 问题现象
+      description: 发生了什么，你期望发生什么
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 打开……
+        2. 点击……
+        3. 观察到……
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: MiStream 版本
+      placeholder: 例如 0.1.0（见「设置 → 关于」）
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: 操作系统
+      placeholder: 例如 Windows 11 23H2 / macOS 14.5 / Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断信息
+      description: >
+        「设置 → 关于 → 复制诊断信息」生成的内容。它已经过脱敏，可以直接贴。
+      render: text
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我贴出的内容里不含任何源地址、订阅链接或解析接口
+          required: true

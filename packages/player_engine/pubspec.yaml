@@ -1,0 +1,13 @@
+name: player_engine
+description: >
+  PlayerEngine 抽象与 libmpv 实现：能力矩阵、硬解降级、轨道与字幕管理、状态流。
+  M1 落地，见 docs/04-播放器设计.md。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  meta: ^1.18.0

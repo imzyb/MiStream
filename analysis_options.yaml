@@ -1,0 +1,27 @@
+# 全仓库唯一的 analyzer 配置。
+#
+# 分析器从被分析文件向上查找最近的 analysis_options.yaml，因此子包不写自己的
+# 配置就会自动继承这一份——这是刻意的：规则分散在十几个文件里必然漂移。
+# 唯一的例外是 apps/mistream，它需要额外排除生成代码。
+#
+# 规则来源见 docs/10-开发规范.md §3.1：very_good_analysis 作基线，
+# CI 中 `--fatal-infos --fatal-warnings`，零告警才算通过。
+include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+
+  errors:
+    # 生成代码尚未落地前，TODO 不该阻断构建
+    todo: ignore
+    # 用了自己包里标记废弃的 API，说明迁移没做完，必须暴露出来
+    deprecated_member_use_from_same_package: warning
+
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - "**/*.mocks.dart"
+    - "**/generated_plugin_registrant.dart"

@@ -1,0 +1,97 @@
+# MiStream monorepo 的 pub workspace 根。
+#
+# 这不是一个可发布的包，只承担三件事：
+#   1. 声明 workspace 成员，让全仓库共享一份依赖解析与一份 pubspec.lock
+#   2. 持有全局开发期依赖（lint 规则集），供根 analysis_options.yaml 的
+#      `include: package:...` 解析
+#   3. 承载 melos 配置。Melos 7 起不再读 melos.yaml：配置必须写在下面的
+#      `melos:` 键里，且 melos 本身必须是根包的 dev_dependency——melos 正是
+#      靠「向上找哪个 pubspec.yaml 的 dev_dependencies 里有 melos」来定位
+#      仓库根的，缺了它连 `melos list` 都会报「不在 workspace 内」。
+#
+# 目录含义见 docs/02-系统架构.md §5。
+name: mistream_workspace
+description: MiStream monorepo workspace root（不发布）
+publish_to: none
+
+environment:
+  sdk: ^3.12.0
+
+workspace:
+  - apps/mistream
+  - packages/core_domain
+  - packages/core_logging
+  - packages/core_config
+  - packages/spider_host
+  - packages/player_engine
+  - packages/storage
+  - packages/plugin_host
+  - packages/theme_engine
+  - runtimes/spider_js
+  - runtimes/spider_python
+  - runtimes/spider_jvm
+  - runtimes/sniffer
+  - tools/arch_check
+  - tools/commit_lint
+
+dev_dependencies:
+  melos: ^8.2.2
+  very_good_analysis: ^10.3.0
+
+melos:
+  # 刻意没有 packages 字段：Melos 7 起直接复用上面的 workspace 列表。
+  # 同一份成员清单写两遍，迟早会有人只改一边。
+
+  command:
+    bootstrap:
+      # bootstrap 是每个人上手的第一条命令，把 git hooks 的安装挂在这里，
+      # 比写进 README 指望人手动执行可靠。
+      hooks:
+        post: git config core.hooksPath .githooks
+
+  scripts:
+    hooks:install:
+      description: 安装 git hooks（bootstrap 已自动执行，此处供手动修复）
+      run: git config core.hooksPath .githooks
+
+    format:
+      description: 格式化全部 Dart 代码
+      run: dart format .
+
+    format:check:
+      description: 校验格式一致性，不改文件（CI 用）
+      run: dart format --output=none --set-exit-if-changed .
+
+    analyze:
+      description: 静态检查，零告警才算通过（docs/10 §3.1）
+      run: flutter analyze --fatal-infos --fatal-warnings
+
+    test:dart:
+      description: 纯 Dart 包单测
+      run: melos exec --concurrency 1 -- dart test
+      packageFilters:
+        flutter: false
+        dirExists: test
+
+    test:flutter:
+      description: Flutter 包单测
+      run: melos exec --concurrency 1 -- flutter test
+      packageFilters:
+        flutter: true
+        dirExists: test
+
+    test:
+      description: 全部单测
+      run: melos run test:dart --no-select && melos run test:flutter --no-select
+
+    check:arch:
+      description: 分层纪律与 ignore 注释校验（ROADMAP M0 出口标准 ③）
+      run: dart run tools/arch_check/bin/arch_check.dart
+
+    check:all:
+      description: M0 出口标准一键校验
+      run: >
+        melos run format:check --no-select &&
+        melos run analyze --no-select &&
+        melos run check:arch --no-select &&
+        melos run test --no-select

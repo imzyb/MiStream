@@ -1,0 +1,290 @@
+# 05 · Spider 引擎
+
+Spider 引擎是 MiStream 最复杂、风险最高的子系统。它要做三件事：**统一接口**、**多运行时**、**沙箱隔离**。
+
+## 1. 统一 Spider 接口
+
+所有运行时对上层暴露同一组方法。语义对齐 `com.github.catvod.crawler.Spider`，但参数与返回值改为强 schema 的 JSON。
+
+| 方法 | 入参 | 返回 | 说明 |
+| --- | --- | --- | --- |
+| `init` | `{extend, config}` | `{ok, capabilities}` | 初始化，返回该源实际支持的能力位 |
+| `homeContent` | `{filter: bool}` | `{classes[], filters{}, list[]}` | 首页分类与筛选项 |
+| `homeVideoContent` | `{}` | `{list[]}` | 首页推荐内容（可空） |
+| `categoryContent` | `{tid, page, filter, extend}` | `{list[], page, pageCount, limit, total}` | 分类翻页 |
+| `detailContent` | `{ids[]}` | `{list[VodDetail]}` | 详情 + 剧集列表 |
+| `searchContent` | `{key, quick, page}` | `{list[]}` | 搜索 |
+| `playerContent` | `{flag, id, vipFlags[]}` | `{parse, url, header{}, playUrl, jx, danmaku}` | 播放地址 |
+| `liveContent` | `{url}` | `{groups[]}` | 直播频道 |
+| `isVideoFormat` | `{url}` | `{ok}` | 嗅探时判定是否媒体流 |
+| `manualVideoCheck` | `{}` | `{ok}` | 是否需要人工确认嗅探结果 |
+| `action` | `{action, value}` | `{type, payload}` | 源自定义动作（弹窗/输入/刷新） |
+| `destroy` | `{}` | `{}` | 释放资源 |
+
+### 核心数据模型
+
+```jsonc
+// VodItem —— 列表项
+{
+  "vodId": "string",         // 必填，源内唯一
+  "vodName": "string",       // 必填
+  "vodPic": "string",        // 封面 URL
+  "vodRemarks": "string",    // 角标：更新至 12 集 / HD
+  "vodYear": "string",
+  "vodArea": "string",
+  "typeName": "string"
+}
+
+// VodDetail —— 详情
+{
+  "vodId": "string",
+  "vodName": "string",
+  "vodPic": "string",
+  "typeName": "string",
+  "vodYear": "string",
+  "vodArea": "string",
+  "vodRemarks": "string",
+  "vodActor": "string",
+  "vodDirector": "string",
+  "vodContent": "string",
+  "vodPlayFrom": ["线路1", "线路2"],        // flag 列表，$$$ 分隔的原始形态在解析层已拆开
+  "vodPlayUrl": [                          // 与 vodPlayFrom 一一对应
+    [{"name": "第1集", "url": "..."}, ...],
+    [...]
+  ]
+}
+
+// PlayResult
+{
+  "parse": 0,                 // 0=直链 1=需解析
+  "url": "string",            // parse=0 时为直链；parse=1 时为待解析页面地址
+  "header": {"User-Agent": "...", "Referer": "..."},
+  "jx": 0,                    // 是否允许走解析接口
+  "danmaku": "string",        // 可选弹幕地址
+  "subs": [{"name":"", "url":"", "format":"srt"}]  // 可选外挂字幕
+}
+```
+
+上层 Domain 模型与此**不共用类型**：`core_config` 负责把源返回的松散 JSON 归一化、校验、填默认值后再映射为 Domain 实体。源返回缺字段、类型不对、URL 是相对路径，都在这一层兜住。
+
+## 2. 四类运行时对比
+
+| | JS | HTTP | Python | JVM |
+| --- | --- | --- | --- | --- |
+| 生态占比 | **最高**（drpy 系） | 中 | 低 | 中（存量 jar） |
+| 实现难度 | 高（宿主 API 多） | **最低** | 中 | **最高** |
+| 分发成本 | 随包 ~10MB | 0 | 可选下载 ~30MB | 需外部 JRE |
+| 隔离性 | 好（QuickJS 可限内存/时间） | 最好（本来就在远端） | 中 | 中 |
+| 优先级 | **P0** | **P0** | P2 | P3（探索） |
+
+### 2.1 HTTP 运行时（先做，用于打通端到端）
+
+源本身是一个远端 HTTP 服务，客户端只做请求转发：
+
+```
+POST {api}/  { "method": "searchContent", "params": {...} }
+→ { "list": [...] }
+```
+
+无子进程、无沙箱问题。它的价值是让 M3 阶段就能端到端跑通「搜索 → 详情 → 播放」，把 UI 与编排层的问题先暴露出来，而不是等 JS 运行时做完。
+
+### 2.2 JS 运行时（主战场）
+
+- 引擎：QuickJS，跑在 `spider_js` 子进程内。
+- 每个源一个独立 JS Context；Context 之间不共享全局对象。
+- 资源限制：单次调用超时（默认 15s）、内存上限（默认 256MB）、JS 栈深度限制。
+- 超时靠 QuickJS 的 interrupt handler 中断，而不是靠杀进程——避免影响同进程其它源。
+
+**必须实现的宿主 API**（drpy 兼容层，兼容性的成败在此）：
+
+| 类别 | API |
+| --- | --- |
+| 网络 | `req(url, options)` — method/headers/body/timeout/redirect/withHeaders/buffer/postType |
+| HTML 解析 | `pdfh(html, rule)`、`pdfa(html, rule)`、`pd(html, rule, baseUrl)`、`pdfl(...)` |
+| JSON 解析 | `jsonpath` 风格取值 |
+| 存储 | `local.get/set/delete`（按源隔离命名空间，落 SQLite） |
+| 编码 | `base64Encode/Decode`、`gbkDecode`、`urlencode`、`md5`、`sha1`、`sha256` |
+| 加密 | `aes(mode, encrypt, input, key, iv, ...)`、`rsa(...)`、`hmac` |
+| 工具 | `console.log/warn/error`（转发到 RPC 日志通道）、`joinUrl`、`setTimeout`（受控） |
+| 环境 | `getProxy()`、`getAppVersion()`、`getUA()` |
+
+`pdfh` 的选择器语法是简化伪 XPath（形如 `body&&.list&&a&&href`、`.title&&Text`、`img&&src`），**不是标准 XPath 也不是标准 CSS**。这是整个项目里最容易出错、最需要靠回归测试保证的部分。
+
+**兼容性回归测试集**：在 `runtimes/spider_js/test/compat/` 下维护一组固定的 `(html 快照, 规则, 期望输出)` 三元组，覆盖真实源里出现过的写法。每次改动跑全量。这套测试集的规模，直接决定 JS 源兼容率。
+
+### 2.3 Python 运行时
+
+- 嵌入 CPython，跑在 `spider_python` 子进程。
+- 提供与 JS 侧对等的宿主 API（`req` / `pdfh` / `local` 等），语义一致。
+- 限制：禁用 `os` / `subprocess` / `socket` 直接访问，网络必须走宿主 `req`。
+- 作为**可选下载组件**，不进基础安装包。
+
+### 2.4 JVM 运行时（探索项，明确降级）
+
+存量 jar spider 的现实障碍：
+
+1. 多数产物是 **Dex 字节码**（Android 格式），不是标准 JVM class → 需 `dex2jar` 类转换，且转换后未必能跑。
+2. 大量 jar 直接调用 `android.util.Base64`、`android.text.TextUtils`、`android.content.Context`、`WebView` → 需要一层 android 兼容 shim。
+3. 部分 jar 依赖 Android WebView 执行 JS 挑战 → 需转接到 sniffer 进程。
+4. jar 本身是**闭源二进制**，无法审计，安全风险最高。
+
+**结论与承诺边界**：
+
+- 不进 v1.0 出口标准。
+- 做成可选组件：用户自行安装 JRE 17+，MiStream 提供 `spider_jvm` 进程 + 有限的 android shim。
+- 只承诺「纯 Java 逻辑 + 已 shim 的 android API 子集」可跑，**不承诺任意 jar 可用**。
+- UI 中对 jar 源标注「实验性 · 二进制不可审计」并要求用户显式确认后才加载。
+
+这条降级要在 ROADMAP 与 README 里都写清楚，避免用户预期错位。
+
+## 3. 生命周期与进程池
+
+```
+[未加载] ──load()──> [初始化中] ──init成功──> [就绪] ──调用──> [就绪]
+                          │                      │
+                       init失败                空闲超时/内存超限
+                          ↓                      ↓
+                      [失败]                  [已回收]
+                          │                      │
+                      重试(退避)              下次调用重新 load
+                          ↓
+                  连续失败 N 次 → [熔断] （UI 标红，用户可手动重置）
+```
+
+- **进程复用**：同类型运行时共用一个子进程，源之间靠 Context 隔离。进程数不随源数增长。
+- **空闲回收**：源 10 分钟无调用 → 销毁其 Context；进程内无 Context 且 5 分钟无活动 → 退出进程。
+- **崩溃恢复**：子进程异常退出 → SpiderHost 检测到管道关闭 → 标记所有在途请求失败 → 按退避重启（1s/2s/4s/8s，上限 5 次）。
+- **熔断**：单源连续失败 5 次进入熔断，60 秒后半开重试。熔断状态在源列表 UI 上可见。
+
+## 4. 沙箱与权限
+
+分层防护，不依赖单一机制：
+
+| 层 | 措施 |
+| --- | --- |
+| 进程 | 独立子进程；Windows 用 Job Object 限制内存与子进程创建；不继承主进程句柄 |
+| 文件系统 | 子进程工作目录限定在 `%APPDATA%/MiStream/sandbox/{runtimeId}/`；运行时层面不暴露文件 API |
+| 网络 | 所有网络必须经宿主 `req`，由主进程统一发起 → 可施加协议白名单（仅 http/https）、私网地址拦截（防 SSRF）、超时、大小上限、代理与 DoH |
+| 内存/CPU | QuickJS 内存上限 + interrupt 超时；进程级 RSS 监控，超限杀掉重启 |
+| 数据 | `local` 存储按源命名空间隔离，单源配额（默认 5MB） |
+
+**SSRF 防护是硬要求**：源脚本可以请求任意 URL，必须在宿主 `req` 里拦截 `127.0.0.1` / `10.` / `172.16-31.` / `192.168.` / `169.254.` / IPv6 私网段，以及 `file://` `ftp://` 等非白名单协议。
+
+## 5. TVBox 配置兼容层
+
+### 5.1 解码链
+
+```
+原始字节
+ ├─ 以 '{' 开头 → 明文 JSON
+ ├─ Base64 特征 → 解码后重入
+ ├─ 已知 AES 加密体（十六进制头部特征）→ 按约定密钥/IV 解密后重入
+ └─ 都不匹配 → 报错「无法识别的配置格式」，附前 64 字节 hex 供排查
+```
+
+解析器必须容忍脏 JSON：注释、尾逗号、单引号——现实中的配置文件经常不是严格 JSON。用宽松解析器，而不是标准 `jsonDecode`。
+
+### 5.2 字段映射
+
+| TVBox 字段 | MiStream 领域模型 | 说明 |
+| --- | --- | --- |
+| `spider` | `SpiderBundle{url, md5}` | 全局 jar 地址，带 md5 校验；jar 不可用时不阻塞其它源 |
+| `sites[]` | `SourceSite` | 见下方 type 映射 |
+| `sites[].ext` | `SourceSite.extend` | 可能是内联 JSON、URL 或 base64，需二次解析 |
+| `lives[]` | `LiveGroup` / `LiveChannel` | 支持 m3u 与 txt 两种订阅格式 |
+| `parses[]` | `ParseRule{name, type, url, ext}` | type: 0=嗅探 1=JSON接口 2=聚合 3=WebView |
+| `flags[]` | `List<String>` | 解析器适用的播放线路 |
+| `rules[]` | `SnifferRule` | 嗅探规则：`host` + `regex` 命中/排除 |
+| `wallpaper` | `AppConfig.wallpaperUrl` | 可选 |
+| `doh[]` | `DohProvider` | 映射到 Dio 的 DNS 层 |
+| `ijk[]` | — | **忽略**（ijkplayer 专有），必要时映射到 mpv 选项 |
+
+### 5.3 site type 映射
+
+| type | 语义 | MiStream 运行时 |
+| --- | --- | --- |
+| `0` | XPath / CSP 网页解析 | JS（用内置通用解析脚本） |
+| `1` | JSON API（苹果 CMS 风格） | HTTP（内置 API 适配器，零脚本） |
+| `3` | Spider（`api` 以 `csp_` 开头 → jar 类名；以 `.js` 结尾 → JS 脚本） | JS 或 JVM |
+| `4` | JSON API 变体 | HTTP |
+| 其它 | 未知 | 标记为不支持，UI 灰显并说明原因 |
+
+**注意**：type=3 且 `api` 为 `csp_XXX` 的，需要从全局 `spider` jar 中加载类 → 走 JVM 运行时 → 属于降级范围。UI 上要能一眼看出哪些源因运行时缺失而不可用。
+
+### 5.4 源诊断面板
+
+一个专门的设置页，对每个源显示：运行时类型、状态（就绪/熔断/不支持）、最近一次调用耗时与错误、`init` 返回的能力位、以及一个「测试」按钮跑 `homeContent + search("测试")`。这是用户和源作者排障的主入口，必须进 v1.0。
+
+## 6. 嗅探器（Sniffer）
+
+用于 `parse=1` 且无解析器命中、或 `type=0` 网页源的场景。
+
+```
+sniffer 进程（WebView2 / WKWebView / CEF）
+ → 通过 CDP 加载目标页面
+ → 监听 Network.responseReceived / Network.requestWillBeSent
+ → 按规则匹配 URL：
+     命中扩展名 (.m3u8/.mp4/.flv/.mkv) 或 Content-Type (video/*, application/vnd.apple.mpegurl)
+     排除规则（广告域名、统计脚本、缩略图）
+ → 命中即返回 URL + 该请求的完整 header
+ → 超时（默认 20s）或页面加载完成仍无命中 → 失败
+```
+
+- 进程用完即杀，不复用 profile，不持久化 cookie（除非源显式要求）。
+- 规则来自配置的 `rules` 字段 + 内置的通用广告过滤名单。
+- 嗅探过程对用户可见（可选的调试窗口），便于源作者调规则。
+- 嗅探永远是最后手段：慢、不稳定、资源开销大。
+
+## 7. 聚合搜索的并发控制
+
+```
+全局并发上限：8（可配置 1–32）
+单源超时：8s（可配置）
+单源结果上限：50 条（防止某源刷屏）
+去重：标题归一化（去空格/全半角/常见后缀）+ 年份 → 同一作品的多源结果合并为一张卡片
+排序：源优先级 → 标题相关度 → 有封面优先
+```
+
+结果通过 `Stream` 增量吐给 UI，不等全部完成。慢源的结果晚到即插入，不打断已显示内容的滚动位置。
+
+## 8. 缓存
+
+| 内容 | 键 | TTL | 存储 |
+| --- | --- | --- | --- |
+| `homeContent` 分类 | `(sourceId)` | 6h | SQLite |
+| `categoryContent` 列表 | `(sourceId, tid, page, filterHash)` | 30min | SQLite |
+| `detailContent` | `(sourceId, vodId)` | 2h | SQLite |
+| `searchContent` | `(sourceId, key, page)` | 10min | 内存 |
+| `playerContent` | 不缓存 | — | — |
+| 封面图 | URL | 7d | 磁盘（LRU，上限 500MB） |
+
+播放地址**绝不缓存**——多数源的直链带时效签名，缓存必然导致播放失败。
+
+## 9. 错误分类
+
+RPC 错误码详见 [08-RPC协议](08-RPC协议.md)，此处是语义分类：
+
+| 类别 | 示例 | UI 表现 |
+| --- | --- | --- |
+| 配置错误 | 无法解析配置、type 不支持 | 导入时即报，指出具体字段 |
+| 运行时缺失 | 需要 JVM 但未安装 | 源灰显 + 「安装运行时」按钮 |
+| 脚本错误 | JS 抛异常、语法错误 | 源诊断面板显示堆栈，可复制 |
+| 网络错误 | 超时、DNS 失败、403 | 显示状态码，提示检查网络/代理 |
+| 数据错误 | 返回空、字段缺失、格式不符 | 「该源未返回结果」，不当作崩溃 |
+| 资源超限 | 内存超限、执行超时 | 熔断该源并提示 |
+
+## 10. Spider SDK（v1.5 目标）
+
+给源作者的开发工具，是插件市场能否长起来的前提：
+
+- **类型定义**：`spider.d.ts`，含全部宿主 API 的 TypeScript 声明。
+- **本地调试器**：`mistream spider dev ./my-spider.js`，起一个 REPL，可单独调用任一方法并打印结构化结果与耗时。
+- **测试脚手架**：录制真实 HTML 快照 → 生成回归用例，源站改版时能快速定位。
+- **校验器**：`mistream spider lint`，检查返回值 schema、必填字段、常见反模式（同步死循环、无超时请求）。
+- **文档站**：API 参考 + 从零写一个源的教程。
+
+## 11. 相关文档
+
+- 进程协议 → [08-RPC协议](08-RPC协议.md)
+- 插件形态的源分发 → [06-插件系统](06-插件系统.md)
+- 起播编排 → [04-播放器设计](04-播放器设计.md) §7

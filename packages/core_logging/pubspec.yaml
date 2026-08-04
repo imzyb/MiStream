@@ -1,0 +1,19 @@
+name: core_logging
+description: >
+  MiStream 结构化日志：JSONL 落盘、按日滚动、7 天保留，以及不可绕过的脱敏。
+  格式与 RPC 日志通道统一，见 docs/10-开发规范.md §9。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  core_domain:
+    path: ../core_domain
+  meta: ^1.18.0
+  path: ^1.9.1
+
+dev_dependencies:
+  test: ^1.31.0

@@ -1,0 +1,25 @@
+# 统一用 LF 存储与检出。git hooks 是 sh 脚本，带 CRLF 在 Windows 的
+# Git Bash 下会以 `bad interpreter` 失败，所以这条不是风格偏好而是硬要求。
+* text=auto eol=lf
+
+.githooks/* text eol=lf
+*.sh        text eol=lf
+
+# Windows 原生脚本必须保留 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.ttf  binary
+*.otf  binary
+*.dll  binary
+*.so   binary
+*.dylib binary
+*.exe  binary
+*.zip  binary

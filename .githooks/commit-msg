@@ -1,0 +1,13 @@
+#!/bin/sh
+# 校验提交信息是否符合 Conventional Commits（docs/10-开发规范.md §2）。
+#
+# 本地拦不住的（--no-verify、别人的机器上没装 dart）由 CI 的 commitlint job
+# 再拦一次，两处共用 tools/commit_lint 的同一份实现。
+set -eu
+
+if ! command -v dart >/dev/null 2>&1; then
+  echo "commit-msg: 找不到 dart，跳过提交信息校验（CI 仍会拦）" >&2
+  exit 0
+fi
+
+exec dart run tools/commit_lint/bin/commit_lint.dart "$1"

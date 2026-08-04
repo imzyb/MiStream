@@ -1,0 +1,13 @@
+name: core_config
+description: >
+  TVBox 配置的抓取、解码（明文/Base64/AES）、宽松 JSON 解析、字段映射与校验。
+  M3 落地，见 docs/05-Spider引擎.md §5。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  meta: ^1.18.0

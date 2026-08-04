@@ -1,0 +1,101 @@
+name: 源兼容性问题
+description: 某个源在 MiStream 上的行为与预期不符
+labels: [source-compat]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 先说清楚边界
+
+        **不要贴源地址、订阅链接或解析接口。** 含这些内容的 issue 会被直接
+        关闭。MiStream 不内置、不分发、不推荐任何内容源。
+
+        这类问题的修复**必须附带一条兼容性测试用例**（`docs/10-开发规范.md`
+        §11），所以下面的「最小规则 + HTML 片段 + 期望输出」不是走流程，
+        是修复本身需要的原料——没有它们，改动无法回归。
+
+  - type: dropdown
+    id: source-type
+    attributes:
+      label: 源类型
+      options:
+        - JS（drpy 系）
+        - JSON API（type=1）
+        - 网页解析（type=0 / XPath / CSP）
+        - Python
+        - Jar（实验性，不承诺兼容）
+        - 不确定
+    validations:
+      required: true
+
+  - type: dropdown
+    id: method
+    attributes:
+      label: 出问题的方法
+      options:
+        - home / homeVideo（首页）
+        - category（分类）
+        - detail（详情）
+        - search（搜索）
+        - play（起播）
+        - live（直播）
+        - 其它
+    validations:
+      required: true
+
+  - type: textarea
+    id: rule
+    attributes:
+      label: 最小复现规则
+      description: >
+        能触发问题的最小规则片段，例如一条 `pdfh` 选择器。请脱敏，只留语法结构。
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: html
+    attributes:
+      label: HTML 片段
+      description: >
+        规则作用的那段 HTML（几十行即可，不要整页）。域名与 id 可以替换成
+        `example.com` / `xxx`，只要保留结构。
+      render: html
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望输出
+      description: 在 TVBox 系客户端上这条规则取到的值
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际输出
+      description: MiStream 取到的值（或报的错误码）
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断信息
+      description: >
+        源诊断面板里的「复制诊断信息」。已脱敏，可直接贴。
+      render: text
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我没有贴出任何源地址、订阅链接或解析接口
+          required: true
+        - label: 我提供的 HTML 片段与规则足以复现问题
+          required: true

@@ -1,0 +1,46 @@
+name: 功能提案
+description: 希望增加或改进某个能力
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提案前请先看 [ROADMAP](../../ROADMAP.md) 的「明确不做的事」——
+        移动端、内置源、VIP 破解、官方云同步服务器等已经明确排除，
+        提了也不会做。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决的问题
+      description: 描述你遇到的实际困难，而不是直接描述方案
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 设想的方案
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考虑过的其它做法
+      description: 包括「用现有功能绕过去」——如果能绕过去，说明优先级不高
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 大致范围
+      options:
+        - 界面与交互
+        - 播放
+        - 源与解析
+        - 直播
+        - 下载
+        - 插件与主题
+        - 其它
+    validations:
+      required: true

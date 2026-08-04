@@ -1,0 +1,13 @@
+name: spider_jvm
+description: >
+  外部 JRE + android 兼容 shim 的运行时子进程。实验性可选组件，M15 落地。
+  不承诺任意 jar 可用。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  meta: ^1.18.0

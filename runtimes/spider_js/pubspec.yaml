@@ -1,0 +1,13 @@
+name: spider_js
+description: >
+  QuickJS 运行时子进程与 drpy 宿主 API 兼容层。项目关键路径，M4 落地，
+  见 docs/05-Spider引擎.md §2。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  meta: ^1.18.0

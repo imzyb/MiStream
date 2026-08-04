@@ -1,0 +1,16 @@
+name: core_domain
+description: >
+  MiStream 领域层：实体、值对象、Repository 接口、Result 与错误码。
+  纯 Dart 实现，不依赖 Flutter 或任何 IO 包（由 tools/arch_check 强制校验）。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  meta: ^1.18.0
+
+dev_dependencies:
+  test: ^1.31.0

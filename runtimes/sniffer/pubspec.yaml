@@ -1,0 +1,12 @@
+name: sniffer
+description: >
+  无头浏览器嗅探子进程，统一走 CDP。M6 落地，见 docs/05-Spider引擎.md §6。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  meta: ^1.18.0

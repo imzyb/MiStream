@@ -1,0 +1,30 @@
+#!/bin/sh
+# 格式化暂存的 Dart 文件，并把结果重新入暂存区。
+#
+# docs/10-开发规范.md §3.1 要求 pre-commit「自动执行」dart format，而不是只做
+# 检查——检查失败让人回去手动跑一遍，除了制造摩擦没有别的作用。CI 里则是
+# --set-exit-if-changed 的纯检查，因为那时已经没有「顺手改掉」的机会了。
+set -eu
+
+if ! command -v dart >/dev/null 2>&1; then
+  echo "pre-commit: 找不到 dart，跳过格式化（CI 仍会检查格式）" >&2
+  exit 0
+fi
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR -- '*.dart')
+if [ -z "$staged" ]; then
+  exit 0
+fi
+
+# 重命名或删除后旧路径可能已不在工作区，先滤掉。
+existing=$(printf '%s\n' "$staged" | while IFS= read -r file; do
+  [ -f "$file" ] && printf '%s\n' "$file"
+done)
+
+if [ -z "$existing" ]; then
+  exit 0
+fi
+
+# tr + xargs -0 而不是直接展开：路径里可能有空格，GNU 与 BSD 的 xargs 都支持 -0。
+printf '%s\n' "$existing" | tr '\n' '\0' | xargs -0 dart format >/dev/null
+printf '%s\n' "$existing" | tr '\n' '\0' | xargs -0 git add
