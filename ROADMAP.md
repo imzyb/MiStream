@@ -70,7 +70,7 @@ M0 工程奠基
 **出口标准**
 
 - [x] `melos bootstrap && melos run analyze && melos run test` 全绿
-- [ ] CI 在三平台上通过 —— 仓库尚无 remote，workflow 只能保证语法自洽，推到 GitHub 后才能勾
+- [x] CI 在三平台上通过
 - [x] `core_domain` 包不依赖任何 Flutter/IO 包，且有脚本强制校验
 - [x] 一条示例日志能正确脱敏 URL 中的 token
 
