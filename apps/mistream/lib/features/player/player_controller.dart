@@ -48,6 +48,7 @@ class PlayerController extends ChangeNotifier {
   bool _muted = false;
   double _rate = 1;
   PlayerError? _fatalError;
+  PlayerError? _notice;
 
   bool _controlsVisible = true;
   DateTime? _lastInteraction;
@@ -75,6 +76,23 @@ class PlayerController extends ChangeNotifier {
 
   /// 最近一次致命错误；`null` 表示正常播放。
   PlayerError? get fatalError => _fatalError;
+
+  /// 最近一次**非致命**事件（如硬解降级）。
+  ///
+  /// 与 [fatalError] 的分工在 `player_error.dart`：非致命事件不打断播放，UI 用
+  /// 它飘一条提示而不是弹错误卡片。`docs/04` §5 规则 2 明确要求硬解降级「在 UI
+  /// 明确提示」，不能静默。
+  ///
+  /// 事件消费后由 UI 调 [consumeNotice] 清空；不清空时这里保留最新一条，方便
+  /// 测试「最后一次提示了什么」。
+  PlayerError? get notice => _notice;
+
+  /// 消费 [notice]（UI 已展示）。
+  void consumeNotice() {
+    if (_notice == null) return;
+    _notice = null;
+    notifyListeners();
+  }
 
   /// 控制栏当前应显示。
   bool get isControlVisible => _controlsVisible;
@@ -126,6 +144,8 @@ class PlayerController extends ChangeNotifier {
           // 顺序是 errorStream 先、stateStream 后，谁后到谁说话，得让错误卡片
           // 留住。
           if (s != PlayerState.error) _fatalError = null;
+          // 新起播（opening）时清掉上一条提示，避免残留。
+          if (s == PlayerState.opening) _notice = null;
           notifyListeners();
         },
         onDone: _syncFromEngine,
@@ -153,7 +173,11 @@ class PlayerController extends ChangeNotifier {
       ),
       e.errorStream.listen(
         (err) {
-          if (err.isFatal) _fatalError = err;
+          if (err.isFatal) {
+            _fatalError = err;
+          } else {
+            _notice = err;
+          }
           notifyListeners();
         },
         onError: _ignore,

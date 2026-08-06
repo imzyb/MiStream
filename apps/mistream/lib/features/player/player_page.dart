@@ -65,6 +65,7 @@ class _PlayerPageState extends State<PlayerPage> {
     // 立即把控制栏显示出来；引擎流一来就有状态可渲染。
     _controller
       ..addListener(_maybeScheduleHide)
+      ..addListener(_maybeShowNotice)
       ..showControls();
   }
 
@@ -73,14 +74,19 @@ class _PlayerPageState extends State<PlayerPage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_maybeScheduleHide);
-      _controller.addListener(_maybeScheduleHide);
+      oldWidget.controller.removeListener(_maybeShowNotice);
+      _controller
+        ..addListener(_maybeScheduleHide)
+        ..addListener(_maybeShowNotice);
     }
   }
 
   @override
   void dispose() {
     _hideTimer?.cancel();
-    _controller.removeListener(_maybeScheduleHide);
+    _controller
+      ..removeListener(_maybeScheduleHide)
+      ..removeListener(_maybeShowNotice);
     super.dispose();
   }
 
@@ -98,6 +104,22 @@ class _PlayerPageState extends State<PlayerPage> {
       _hideTimer = null;
       if (!_controller.isControlVisible) _controller.showControls();
     }
+  }
+
+  /// 非致命事件（如硬解降级）到点后飘一条提示并消费。
+  ///
+  /// `docs/04` §5 规则 2 要求硬解降级「在 UI 明确提示」，这里就是那个出口：
+  /// [PlayerController.notice] 一非空就展示 SnackBar，随后
+  /// `PlayerController.consumeNotice` 清空，避免每次位置流通知都重复弹。
+  void _maybeShowNotice() {
+    final err = _controller.notice;
+    if (err == null || !mounted) return;
+    _controller.consumeNotice();
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(err.error.message)),
+      );
   }
 
   /// 同步「当前阶段已耗时」：进入连接态开始计时，离开则停止并清零。

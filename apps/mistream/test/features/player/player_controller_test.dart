@@ -1,3 +1,4 @@
+import 'package:core_domain/core_domain.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mistream/features/player/player_controller.dart';
 import 'package:player_engine/player_engine.dart';
@@ -125,6 +126,42 @@ void main() {
       await controller.adjustVolumeBy(-100);
       await pumpEventQueue();
       expect(engine.volume, 0);
+    });
+  });
+
+  group('notice — 非致命事件（硬解降级）', () {
+    test('非致命错误存入 notice，不进 fatalError', () async {
+      await initPlaying();
+      engine.emitError(PlayerError.hwdecFallback(from: 'd3d11va', to: 'no'));
+      await pumpEventQueue();
+      expect(controller.fatalError, isNull);
+      expect(controller.notice, isNotNull);
+      expect(controller.notice!.code, ErrorCode.playerHwdecFallback);
+      expect(controller.isPlaying, isTrue); // 播放不被打断
+    });
+
+    test('consumeNotice 清空 hint', () async {
+      await initPlaying();
+      engine.emitError(PlayerError.hwdecFallback(from: 'd3d11va', to: 'no'));
+      await pumpEventQueue();
+      controller.consumeNotice();
+      expect(controller.notice, isNull);
+    });
+
+    test('致命错误仍进 fatalError 且 State 转 error', () async {
+      await initPlaying();
+      engine.emitError(
+        const PlayerError(
+          error: LocalError(
+            code: ErrorCode.playerOpenFailed,
+            message: 'open failed',
+          ),
+        ),
+      );
+      await pumpEventQueue();
+      expect(controller.fatalError, isNotNull);
+      expect(controller.notice, isNull);
+      expect(controller.state, PlayerState.error);
     });
   });
 }

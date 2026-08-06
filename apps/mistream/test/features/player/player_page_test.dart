@@ -161,6 +161,19 @@ void main() {
       expect(find.byType(PlayerErrorCard), findsOneWidget);
       expect(find.textContaining('错误码 PLAYER_OPEN_FAILED'), findsOneWidget);
     });
+
+    testWidgets('硬解降级（非致命）飘提示而不是弹错误卡片', (tester) async {
+      final engine = await pumpPlayer(tester);
+      engine.emitError(
+        PlayerError.hwdecFallback(from: 'd3d11va-copy', to: 'no'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      // 不弹错误卡片（播放未被打断）。
+      expect(find.byType(PlayerErrorCard), findsNothing);
+      // 飘一条 SnackBar，带降级文案。
+      expect(find.text('硬解 d3d11va-copy 不可用，已降级到 no'), findsOneWidget);
+    });
   });
 
   group('快捷键', () {
