@@ -25,3 +25,4 @@ export 'src/dao/site_cache_dao.dart';
 export 'src/database/database.dart' show AppDatabase, kCurrentSchemaVersion;
 export 'src/database/tables.dart';
 export 'src/database/type_converters.dart' show utcMillis;
+export 'src/repository/repositories.dart' show Repositories;
