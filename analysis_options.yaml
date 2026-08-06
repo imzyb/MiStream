@@ -25,6 +25,8 @@ analyzer:
     - "**/*.freezed.dart"
     - "**/*.mocks.dart"
     - "**/generated_plugin_registrant.dart"
+    # drift schema 迁移验证代码（`melos run schema:update` 生成），同 g.dart 不提交 lint
+    - "**/schema_versions.dart/**"
     - build/**
     - android/**
     - ios/**

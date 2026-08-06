@@ -103,6 +103,14 @@ melos:
       packageFilters:
         dependsOn: build_runner
 
+    schema:update:
+      description: 刷新 drift schema 快照并重生成迁移验证代码（改表后跑一次）
+      run: >
+        dart run drift_dev schema dump lib/src/database/database.dart drift_schemas/ &&
+        dart run drift_dev schema generate drift_schemas/ lib/src/database/schema_versions.dart
+      packageFilters:
+        dirExists: drift_schemas
+
     libmpv:install:
       description: 下载并校验 libmpv（锁定版本 + SHA256），装进 build/libmpv
       run: dart run tools/libmpv_dist/bin/libmpv_dist.dart install
