@@ -97,6 +97,12 @@ melos:
         melos run check:arch --no-select &&
         melos run test --no-select
 
+    generate:
+      description: 生成 drift 代码（ADR-008：产物不提交，CI 与本地都走 build_runner）
+      run: dart run build_runner build --delete-conflicting-outputs
+      packageFilters:
+        dependsOn: build_runner
+
     libmpv:install:
       description: 下载并校验 libmpv（锁定版本 + SHA256），装进 build/libmpv
       run: dart run tools/libmpv_dist/bin/libmpv_dist.dart install

@@ -29,6 +29,9 @@ coverage/
 *.iml
 *.iws
 
+# 生成代码（ADR-008：drift 产物不提交，CI 走 build_runner）
+**/*.g.dart
+
 # 系统
 .DS_Store
 Thumbs.db
