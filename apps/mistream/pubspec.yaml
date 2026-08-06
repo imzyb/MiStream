@@ -11,8 +11,16 @@ environment:
   sdk: ^3.12.0
 
 dependencies:
+  # 错误码/错误对象：错误卡片要按影视码查人话文案，直接依赖领域类型。
+  core_domain:
+    path: ../../packages/core_domain
   flutter:
     sdk: flutter
+  # 播放内核抽象。UI 层只依赖它（docs/04-播放器设计.md §2），真画面渲染用的是
+  # media_kit_video，但那只在接入具体 `VideoController` 时才需要；控制栏、进度条、
+  # 快捷键这些骨架只认 PlayerEngine 这一层接口，用它就能测。
+  player_engine:
+    path: ../../packages/player_engine
 
 dev_dependencies:
   flutter_test:

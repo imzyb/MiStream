@@ -1,0 +1,17 @@
+# 主应用专用 analyzer 配置。
+#
+# 继承全局配置，只做必要的例外。全局文件注明「唯一例外是 apps/mistream」：这里是
+# Flutter UI 代码，唯一的例外点就是 `always_put_required_named_parameters_first`。
+#
+# very_good_analysis 收录了该 lint，但它与 Flutter 约定冲突：widget 构造参数里
+# `super.key` 必须写在最前（Flutter 自身所有 widget 都这样），而该 lint 要求
+# 必填命名参数排在可选命名参数之前——`super.key` 是可选参数，于是每写一个
+# `super.key` 开头的 widget 就报一条。这个 lint 是为普通 Dart 库设计的，套在
+# widget 上只会逼出「把 super.key 放到最后」这种难看且反惯例的写法。
+# 这里是纯 Dart 逻辑的例外，不适用于其它规则。GUI 与逻辑解耦维护，规则取舍
+# 依据 dart 服务约定（very_good 亦如此处理，见其 10.3.0 变更记录）。
+linter:
+  rules:
+    always_put_required_named_parameters_first: false
+
+include: ../../analysis_options.yaml
