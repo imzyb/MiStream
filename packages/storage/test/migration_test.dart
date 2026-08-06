@@ -9,8 +9,9 @@ void main() {
   // 最后逐项对比运行时 schema 与快照，防「改了表却忘写迁移」。
   //
   // docs/07-数据库设计.md §4：CI 必须验证 v(N-1)→v(N) 与 v1→v(N)。
-  // 当前 schema v1 无历史版本，这里验证「v1 快照 == v1 运行时」基线，
-  // 未来加表升版本后，把 v2 相关迁移路径补进同文件即可。
+  // 当前 schema v2：
+  //   - v1 → v2 增加 search_history.source 列
+  //   - 每条迁移路径都必须用 migrateAndValidate 验证。
   group('schema 迁移验证', () {
     final verifier = SchemaVerifier(GeneratedHelper());
 
@@ -19,7 +20,7 @@ void main() {
       expect(db.schemaVersion, kCurrentSchemaVersion);
       expect(
         db.schemaVersion,
-        1,
+        2,
         reason:
             'drift schema dump 工具只能解析 schemaVersion 的字面量值。 '
             'getter 必须写成数字字面量，请保持与 kCurrentSchemaVersion 同步',
@@ -27,8 +28,8 @@ void main() {
       await db.close();
     });
 
-    test('v1 空库用 AppDatabase 打开后，运行时 schema 与 v1 快照一致', () async {
-      final start = await verifier.startAt(1);
+    test('v2 空库用 AppDatabase 打开后，运行时 schema 与 v2 快照一致', () async {
+      final start = await verifier.startAt(2);
 
       final db = AppDatabase(start);
       await db.customStatement('PRAGMA foreign_keys = OFF');
@@ -37,7 +38,16 @@ void main() {
       await start.close();
     });
 
-    test('v1 → v1（最新）路径可用 migrateAndValidate 验证', () async {
+    test('v2 → v2（最新）路径可用 migrateAndValidate 验证', () async {
+      final start = await verifier.startAt(2);
+
+      final db = AppDatabase(start);
+      await verifier.migrateAndValidate(db, kCurrentSchemaVersion);
+      await db.close();
+      await start.close();
+    });
+
+    test('v1 → v2 示例迁移路径验证', () async {
       final start = await verifier.startAt(1);
 
       final db = AppDatabase(start);

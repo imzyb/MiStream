@@ -391,6 +391,7 @@ class SearchHistories extends Table {
   IntColumn get hitCount =>
       integer().named('hit_count').withDefault(const Constant(1))();
   IntColumn get lastAt => integer().named('last_at').map(utcMillis)();
+  TextColumn get source => text().withDefault(const Constant('local'))();
 
   @override
   Set<Column> get primaryKey => {keyword};

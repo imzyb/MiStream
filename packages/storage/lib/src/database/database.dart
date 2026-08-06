@@ -14,7 +14,7 @@ part 'database.g.dart';
 /// 当前 schema 版本。独立于 `appVersion` 演进，每次改表必须 +1 并写迁移。
 ///
 /// `docs/07-数据库设计.md` §4
-const int kCurrentSchemaVersion = 1;
+const int kCurrentSchemaVersion = 2;
 
 /// MiStream 本地数据库。
 ///
@@ -56,6 +56,10 @@ class AppDatabase extends _$AppDatabase {
 
   /// 内存库，测试用。
   AppDatabase.inMemory() : super(NativeDatabase.memory(setup: _configure));
+
+  /// 测试钩子：置 true 时让 `onUpgrade` 迁移到一半抛异常，用于验证
+  /// 「迁移失败 → 回滚 → 保留备份」路径。仅测试用，勿在业务代码开启。
+  static bool debugFailMigrations = false;
 
   /// 应用 PRAGMA：WAL、外键、busy_timeout。
   static void _configure(Database db) {
@@ -110,7 +114,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -118,7 +122,17 @@ class AppDatabase extends _$AppDatabase {
       await m.createAll();
     },
     onUpgrade: (m, from, to) async {
-      // M2c 落地：逐版本迁移 + 迁移前备份 + 失败回滚。
+      // 逐版本迁移：每一步必须可在 v1+ 的任意版本库上连续执行。
+      if (from < 2) {
+        // v1 → v2：search_history 增加 source 列（来源：local/plugin/...）。
+        await m.addColumn(searchHistories, searchHistories.source);
+      }
+
+      if (debugFailMigrations) {
+        throw StateError(
+          'debugFailMigrations=true：模拟迁移中途失败，验证回滚路径',
+        );
+      }
     },
   );
 }

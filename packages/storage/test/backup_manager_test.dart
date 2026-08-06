@@ -136,5 +136,59 @@ void main() {
         isEmpty,
       );
     });
+
+    test('迁移失败抛异常且备份仍在，库文件未被半迁移污染', () async {
+      final tmp = Directory.systemTemp.createTempSync('migrate_fail');
+      addTearDown(() {
+        AppDatabase.debugFailMigrations = false;
+        try {
+          tmp.deleteSync(recursive: true);
+        } on FileSystemException {
+          // 删除失败可忽略，临时目录最终会被系统清理。
+        }
+      });
+
+      // 造一个 v1 库：先建最新库，再把 user_version 改回 1。
+      final fresh = AppDatabase.open('${tmp.path}\\stale.db');
+      await fresh.customStatement('PRAGMA foreign_keys = OFF');
+      await fresh.close();
+      final raw = sqlite3.open('${tmp.path}\\stale.db');
+      try {
+        raw.execute('PRAGMA user_version = 1');
+      } finally {
+        raw.close();
+      }
+
+      final backupDir = Directory('${tmp.path}\\backup');
+      AppDatabase.debugFailMigrations = true;
+
+      // 迁移失败：drift 在事务内回滚。drift 惰性打开连接，需触发一次查询
+      // 才会真正执行迁移；打开失败后连接进入错误态。
+      final db = AppDatabase.open(
+        '${tmp.path}\\stale.db',
+        backups: BackupManager(backupDir),
+      );
+      await expectLater(
+        db.customSelect('SELECT 1').get(),
+        throwsA(anything),
+      );
+      await db.close();
+
+      // 失败前已备份旧库，可直接用备份恢复。
+      final backups = BackupManager(backupDir).backups();
+      expect(backups, isNotEmpty);
+
+      // 库文件仍是可打开的 v1 库（未被半迁移破坏）。
+      final reopened = sqlite3.open('${tmp.path}\\stale.db');
+      try {
+        final version = reopened
+            .select('PRAGMA user_version')
+            .single
+            .columnAt(0);
+        expect(version, lessThan(kCurrentSchemaVersion));
+      } finally {
+        reopened.close();
+      }
+    });
   });
 }

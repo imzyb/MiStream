@@ -22,16 +22,20 @@ class SearchHistoryRepository {
   }
 
   /// 记录一次搜索：已存在则命中 +1 且更新 [at]；否则插入。
-  Future<void> record(String keyword, {DateTime? at}) async {
+  ///
+  /// [source] 记录这次搜索来自哪里（`local`/`plugin`/...），默认 `local`。
+  Future<void> record(String keyword, {DateTime? at, String? source}) async {
     final now = at ?? DateTime.now().toUtc();
+    final src = source ?? 'local';
     await db.customInsert(
-      'INSERT INTO search_history (keyword, hit_count, last_at) '
-      'VALUES (?, 1, ?) '
-      'ON CONFLICT(keyword) DO UPDATE SET '
-      'hit_count = hit_count + 1, last_at = excluded.last_at',
+      'INSERT INTO search_history (keyword, hit_count, last_at, source) '
+      'VALUES (?, 1, ?, ?) '
+      'ON CONFLICT(keyword) DO UPDATE SET hit_count = hit_count + 1, '
+      'last_at = excluded.last_at, source = excluded.source',
       variables: [
         Variable.withString(keyword),
         Variable.withInt(now.millisecondsSinceEpoch),
+        Variable.withString(src),
       ],
     );
   }
