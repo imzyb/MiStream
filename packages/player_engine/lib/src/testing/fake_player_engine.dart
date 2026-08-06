@@ -15,55 +15,8 @@ import 'package:player_engine/src/player_error.dart';
 import 'package:player_engine/src/player_log.dart';
 import 'package:player_engine/src/player_state.dart';
 import 'package:player_engine/src/track.dart';
+import 'package:player_engine/src/value_stream.dart';
 import 'package:player_engine/src/video_filter_settings.dart';
-
-/// 一个持有当前值的多订阅流。
-///
-/// 订阅时先补发当前值，再接后续变化——这正是 [PlayerEngine] 文档里钉死的流
-/// 语义。用 `Stream.multi` 而不是 `StreamController.broadcast`：后者对迟到的
-/// 订阅者不会补发任何东西，而播放页的组件本来就是陆续挂载的。
-final class _ValueStream<T> {
-  _ValueStream(this._value);
-
-  final StreamController<T> _controller = StreamController<T>.broadcast();
-  T _value;
-  var _closed = false;
-
-  T get value => _value;
-
-  /// 无条件推送，即便值没变。
-  void emit(T next) {
-    if (_closed) return;
-    _value = next;
-    _controller.add(next);
-  }
-
-  /// 值变化时才推送。
-  void emitIfChanged(T next) {
-    if (_value == next) return;
-    emit(next);
-  }
-
-  Stream<T> get stream => Stream<T>.multi((controller) {
-    controller.add(_value);
-    if (_closed) {
-      unawaited(controller.close());
-      return;
-    }
-    final subscription = _controller.stream.listen(
-      controller.add,
-      onError: controller.addError,
-      onDone: controller.close,
-    );
-    controller.onCancel = subscription.cancel;
-  }, isBroadcast: true);
-
-  Future<void> close() async {
-    if (_closed) return;
-    _closed = true;
-    await _controller.close();
-  }
-}
 
 /// 一个纯内存的 [PlayerEngine]。
 ///
@@ -98,11 +51,11 @@ final class FakePlayerEngine implements PlayerEngine {
   final Duration _mediaDuration;
   final List<Track> _tracks;
 
-  final _state = _ValueStream<PlayerState>(PlayerState.idle);
-  final _position = _ValueStream<Duration>(Duration.zero);
-  final _duration = _ValueStream<Duration>(Duration.zero);
-  final _buffered = _ValueStream<List<DurationRange>>(const []);
-  final _mediaInfo = _ValueStream<MediaInfo>(MediaInfo.empty);
+  final _state = ValueStream<PlayerState>(PlayerState.idle);
+  final _position = ValueStream<Duration>(Duration.zero);
+  final _duration = ValueStream<Duration>(Duration.zero);
+  final _buffered = ValueStream<List<DurationRange>>(const []);
+  final _mediaInfo = ValueStream<MediaInfo>(MediaInfo.empty);
   final _logs = StreamController<PlayerLog>.broadcast();
   final _errors = StreamController<PlayerError>.broadcast();
 
