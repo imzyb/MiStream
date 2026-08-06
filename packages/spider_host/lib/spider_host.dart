@@ -3,6 +3,18 @@
 /// 见 `docs/08-RPC协议.md` 与 `docs/05-Spider引擎.md`。
 library;
 
+export 'src/host/spider_host.dart'
+    show
+        HandshakeResult,
+        ProcessLauncher,
+        SpiderHost,
+        defaultProcessLauncher,
+        kGracefulShutdownMs,
+        kHandshakeTimeout,
+        kHeartbeatInterval,
+        kHeartbeatMissLimit,
+        kMaxRestartAttempts;
+
 export 'src/rpc/frame_parser.dart'
     show
         FrameComplete,
@@ -12,6 +24,7 @@ export 'src/rpc/frame_parser.dart'
         LspFrameParser,
         kMaxHeaderBytes,
         kMaxMessageBytes;
+
 export 'src/rpc/stdio_rpc_channel.dart'
     show StdioRpcChannel, kDefaultRequestTimeout, kWriteQueueMax;
 
