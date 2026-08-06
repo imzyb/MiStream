@@ -1,0 +1,10 @@
+{
+  "comment": "libmpv 锁定版本与校验值。依据 docs/03-技术选型.md §2：锁版本 + SHA256，避免用户机器上的库悄悄漂移导致回归不可复现。升级记录见同级 CHANGELOG.md。sha256 为归档哈希（下载完整性），dllSha256 为解包后 libmpv-2.dll 的哈希（校验真正随包分发的文件）。",
+  "platform": "windows-x64",
+  "version": "2023-09-24",
+  "archive": "mpv-dev-x86_64-20230924-git-652a1dd.7z",
+  "url": "https://github.com/media-kit/libmpv-win32-video-build/releases/download/2023-09-24/mpv-dev-x86_64-20230924-git-652a1dd.7z",
+  "sha256": "DCE982222D7A23E4A1C6F0FB6CC39F6E899A6714624B95EA49CFF6558EE97572",
+  "dllSha256": "D5F0694B08C124E785D858D00082F3E3B158DD9138BFC48C0382BF1EB443A5FC",
+  "dll": "libmpv-2.dll"
+}

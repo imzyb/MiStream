@@ -33,6 +33,7 @@ workspace:
   - runtimes/sniffer
   - tools/arch_check
   - tools/commit_lint
+  - tools/libmpv_dist
 
 dev_dependencies:
   melos: ^8.2.2
@@ -95,3 +96,7 @@ melos:
         melos run analyze --no-select &&
         melos run check:arch --no-select &&
         melos run test --no-select
+
+    libmpv:install:
+      description: 下载并校验 libmpv（锁定版本 + SHA256），装进 build/libmpv
+      run: dart run tools/libmpv_dist/bin/libmpv_dist.dart install
