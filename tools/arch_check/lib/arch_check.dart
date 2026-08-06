@@ -285,7 +285,10 @@ bool _isSkippedDirectory(String segment) =>
     segment == '.dart_tool' ||
     segment == '.git' ||
     segment == 'build' ||
-    segment == 'ephemeral';
+    segment == 'ephemeral' ||
+    // drift schema 迁移验证代码（`melos run schema:update` 生成），
+    // 与 `*.g.dart` 同样视为生成物，不参与分层纪律检查。
+    segment == 'schema_versions.dart';
 
 int _lineOf(String content, int offset) =>
     '\n'.allMatches(content.substring(0, offset)).length + 1;
