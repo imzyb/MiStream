@@ -3,6 +3,8 @@
 /// 见 `docs/08-RPC协议.md` 与 `docs/05-Spider引擎.md`。
 library;
 
+export 'src/host/host_api.dart' show FetchResult, HostApi, HostFetchConfig;
+
 export 'src/host/spider_host.dart'
     show
         HandshakeResult,
