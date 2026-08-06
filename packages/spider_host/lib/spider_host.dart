@@ -12,6 +12,9 @@ export 'src/rpc/frame_parser.dart'
         LspFrameParser,
         kMaxHeaderBytes,
         kMaxMessageBytes;
+export 'src/rpc/stdio_rpc_channel.dart'
+    show StdioRpcChannel, kDefaultRequestTimeout, kWriteQueueMax;
+
 export 'src/rpc/rpc_message.dart'
     show
         RpcMessage,
