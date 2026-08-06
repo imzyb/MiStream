@@ -15,3 +15,12 @@ linter:
     always_put_required_named_parameters_first: false
 
 include: ../../analysis_options.yaml
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
