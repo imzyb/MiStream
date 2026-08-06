@@ -12,6 +12,13 @@ export 'package:drift/drift.dart'
         Expression,
         Table;
 
+export 'src/backup/backup_exporter.dart'
+    show
+        BackupExporter,
+        BackupManifest,
+        ImportConflictStrategy,
+        kBackupExtension,
+        kBackupFormatVersion;
 export 'src/backup/backup_manager.dart' show BackupManager;
 export 'src/dao/settings_dao.dart';
 export 'src/dao/site_cache_dao.dart';
