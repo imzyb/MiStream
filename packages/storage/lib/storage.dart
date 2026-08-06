@@ -13,6 +13,8 @@ export 'package:drift/drift.dart'
         Table;
 
 export 'src/backup/backup_manager.dart' show BackupManager;
+export 'src/dao/settings_dao.dart';
+export 'src/dao/site_cache_dao.dart';
 export 'src/database/database.dart' show AppDatabase, kCurrentSchemaVersion;
 export 'src/database/tables.dart';
 export 'src/database/type_converters.dart' show utcMillis;
