@@ -21,3 +21,6 @@ export 'src/drpy/local_storage.dart' show LocalStorage;
 export 'src/drpy/req.dart' show ReqOptions, ReqResult, req;
 
 export 'src/drpy/type0_script.dart' show type0Script;
+
+export 'src/engine/js_runtime.dart' show JsRuntime, JsRuntimeStatus;
+export 'src/engine/quickjs_bindings.dart' show isQuickJSAvailable, loadQuickJS;
