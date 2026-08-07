@@ -28,6 +28,7 @@ workspace:
   - packages/plugin_host
   - packages/search_engine
   - packages/play_engine
+  - packages/source_adapter
   - packages/theme_engine
   - runtimes/spider_js
   - runtimes/spider_python
