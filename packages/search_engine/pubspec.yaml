@@ -1,0 +1,18 @@
+name: search_engine
+description: >
+  聚合搜索编排：多源并发、流式结果、去重合并、失败折叠。
+  M5 应用层，见 docs/02-系统架构.md §3.1 与 docs/05-Spider引擎.md §7。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  core_domain:
+    path: ../core_domain
+  meta: ^1.18.0
+
+dev_dependencies:
+  test: ^1.31.0
