@@ -43,5 +43,8 @@ export 'src/rpc/rpc_message.dart'
         jsonRpcParseError,
         kJsonRpcVersion;
 
+export 'src/rpc/rpc_recorder.dart'
+    show RecordingRpcChannel, RpcRecorder, RpcRecordEvent, RpcReplayer;
+
 export 'src/runtime/http_runtime.dart'
     show HttpRequestParams, HttpResponseData, HttpRuntime;
