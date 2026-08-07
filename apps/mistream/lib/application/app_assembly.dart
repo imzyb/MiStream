@@ -6,30 +6,31 @@ library;
 
 import 'package:search_engine/search_engine.dart';
 import 'package:source_adapter/source_adapter.dart';
-import 'package:storage/src/database/database.dart';
+import 'package:storage/storage.dart';
 import 'package:storage/src/repository/repositories.dart';
 
 /// 应用层装配。
 class AppAssembly {
-  final AppDatabase database;
-  final Repositories repositories;
-
-  // UseCase
-  late final SearchUseCase searchUseCase;
-
-  bool _initialized = false;
-
   /// 构造并初始化。
   AppAssembly(this.database, this.repositories) {
     _wire();
   }
 
+  /// 底层数据库。
+  final AppDatabase database;
+
+  /// 仓储集合。
+  final Repositories repositories;
+
+  /// 聚合搜索用例。
+  late final SearchUseCase searchUseCase;
+
+  bool _initialized = false;
+
   void _wire() {
     if (_initialized) return;
 
-    // 搜索
     final sourceProvider = StorageSourceProvider(repositories.sites);
-    // 搜索用 HttpRuntime 需要 baseUrl，这里用占位，实际由 UI 按源配置传入
     searchUseCase = SearchUseCase(
       sourceProvider: sourceProvider,
       spiderSearcher: _DummySearcher(),
