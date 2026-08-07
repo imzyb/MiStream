@@ -16,4 +16,6 @@ export 'src/drpy/crypto.dart'
 
 export 'src/drpy/html_parser.dart' show pd, pdfa, pdfh, pdfl;
 
+export 'src/drpy/local_storage.dart' show LocalStorage;
+
 export 'src/drpy/req.dart' show ReqOptions, ReqResult, req;

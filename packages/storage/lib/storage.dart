@@ -20,6 +20,7 @@ export 'src/backup/backup_exporter.dart'
         kBackupExtension,
         kBackupFormatVersion;
 export 'src/backup/backup_manager.dart' show BackupManager;
+export 'src/dao/plugin_storage_dao.dart' show PluginStorageDao;
 export 'src/dao/settings_dao.dart';
 export 'src/dao/site_cache_dao.dart';
 export 'src/database/database.dart' show AppDatabase, kCurrentSchemaVersion;

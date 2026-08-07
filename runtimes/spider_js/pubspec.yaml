@@ -10,10 +10,14 @@ environment:
   sdk: ^3.12.0
 
 dependencies:
+  core_domain:
+    path: ../../packages/core_domain
   crypto: ^3.0.6
   encrypt: ^5.0.3
   html: ^0.15.6
   meta: ^1.18.0
+  storage:
+    path: ../../packages/storage
 
 dev_dependencies:
   test: ^1.31.0

@@ -1,3 +1,4 @@
+import 'package:storage/src/dao/plugin_storage_dao.dart';
 import 'package:storage/src/dao/settings_dao.dart';
 import 'package:storage/src/dao/site_cache_dao.dart';
 import 'package:storage/src/database/database.dart';
@@ -15,6 +16,7 @@ class Repositories {
   Repositories(this.db) {
     settings = SettingsDao(db);
     caches = SiteCacheDao(db);
+    pluginStorage = PluginStorageDao(db);
     histories = HistoryRepository(db);
     favorites = FavoriteRepository(db);
     searchHistories = SearchHistoryRepository(db);
@@ -30,6 +32,9 @@ class Repositories {
 
   /// 源数据缓存。
   late final SiteCacheDao caches;
+
+  /// 插件/源隔离存储。
+  late final PluginStorageDao pluginStorage;
 
   /// 播放历史。
   late final HistoryRepository histories;
