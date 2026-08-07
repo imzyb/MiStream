@@ -42,3 +42,6 @@ export 'src/rpc/rpc_message.dart'
         jsonRpcMethodNotFound,
         jsonRpcParseError,
         kJsonRpcVersion;
+
+export 'src/runtime/http_runtime.dart'
+    show HttpRequestParams, HttpResponseData, HttpRuntime;
