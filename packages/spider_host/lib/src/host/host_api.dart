@@ -75,6 +75,25 @@ class HostFetchConfig {
        isPrivateAddress = privateChecker ?? _defaultPrivateChecker;
 }
 
+/// 存储操作回调（host.storage 实现）。
+class HostStorage {
+  /// 读取值。
+  final Future<String?> Function(String owner, String key) get;
+
+  /// 写入值，返回字节数。
+  final Future<int> Function(String owner, String key, String value) set;
+
+  /// 删除值。
+  final Future<void> Function(String owner, String key) delete;
+
+  /// 构造存储操作。
+  const HostStorage({
+    required this.get,
+    required this.set,
+    required this.delete,
+  });
+}
+
 bool _defaultPrivateChecker(String host) {
   return false; // 默认不拦截私网，由上层按需配置
 }
@@ -85,9 +104,12 @@ bool _defaultPrivateChecker(String host) {
 /// 存储实现。
 class HostApi {
   final HostFetchConfig _config;
+  final HostStorage? _storage;
 
   /// 构造 Host API。
-  HostApi({HostFetchConfig? config}) : _config = config ?? HostFetchConfig();
+  HostApi({HostFetchConfig? config, HostStorage? storage})
+    : _config = config ?? HostFetchConfig(),
+      _storage = storage;
 
   /// 处理 `host.fetch` 请求。
   ///
@@ -246,6 +268,78 @@ class HostApi {
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       'locale': 'zh-CN',
     };
+  }
+
+  /// 按 RPC 方法名分发到对应处理器。
+  ///
+  /// 返回 `(result, error)` 元组，对应 JSON-RPC 的 `result` 和 `error`。
+  Future<(Object?, Object?)> handle(
+    String method,
+    Map<String, Object?> params,
+  ) async {
+    if (method == 'host.fetch') {
+      final result = await fetch(params);
+      return result.fold(
+        (ok) => (ok.toJson(), null),
+        (err) => (null, err),
+      );
+    }
+    if (method == 'host.env') {
+      return (env(params), null);
+    }
+    if (method == 'host.storage.get') {
+      return await _handleStorageGet(params);
+    }
+    if (method == 'host.storage.set') {
+      return await _handleStorageSet(params);
+    }
+    if (method == 'host.storage.delete') {
+      return await _handleStorageDelete(params);
+    }
+    return (null, '未知方法: $method');
+  }
+
+  Future<(Object?, Object?)> _handleStorageGet(
+    Map<String, Object?> params,
+  ) async {
+    if (_storage == null) return (null, '存储未配置');
+    final owner = params['instanceId'] as String? ?? '';
+    final key = params['key'] as String? ?? '';
+    try {
+      final value = await _storage.get(owner, key);
+      return (<String, Object?>{'value': value}, null);
+    } on Object catch (e) {
+      return (null, '存储读取失败: $e');
+    }
+  }
+
+  Future<(Object?, Object?)> _handleStorageSet(
+    Map<String, Object?> params,
+  ) async {
+    if (_storage == null) return (null, '存储未配置');
+    final owner = params['instanceId'] as String? ?? '';
+    final key = params['key'] as String? ?? '';
+    final value = params['value'] as String? ?? '';
+    try {
+      await _storage.set(owner, key, value);
+      return (<String, Object?>{}, null);
+    } on Object catch (e) {
+      return (null, '存储写入失败: $e');
+    }
+  }
+
+  Future<(Object?, Object?)> _handleStorageDelete(
+    Map<String, Object?> params,
+  ) async {
+    if (_storage == null) return (null, '存储未配置');
+    final owner = params['instanceId'] as String? ?? '';
+    final key = params['key'] as String? ?? '';
+    try {
+      await _storage.delete(owner, key);
+      return (<String, Object?>{}, null);
+    } on Object catch (e) {
+      return (null, '存储删除失败: $e');
+    }
   }
 
   static String _platformName() {
