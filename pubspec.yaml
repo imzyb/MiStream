@@ -36,6 +36,7 @@ workspace:
   - tools/arch_check
   - tools/commit_lint
   - tools/libmpv_dist
+  - tools/mock_source_server
 
 dev_dependencies:
   melos: ^8.2.2
