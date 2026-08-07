@@ -1,0 +1,18 @@
+name: play_engine
+description: >
+  起播编排：回退链（解析器→嗅探→换线路→报错）。M5 应用层，
+  见 docs/04-播放器设计.md §7。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  core_domain:
+    path: ../core_domain
+  meta: ^1.18.0
+
+dev_dependencies:
+  test: ^1.31.0
