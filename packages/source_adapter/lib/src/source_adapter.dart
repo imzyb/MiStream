@@ -7,20 +7,21 @@ import 'dart:convert';
 
 import 'package:search_engine/search_engine.dart';
 import 'package:spider_host/spider_host.dart';
-import 'package:storage/src/repository/site_repository.dart';
+import 'package:storage/storage.dart';
 
 /// 基于 storage 的 [SourceProvider] 实现。
 ///
 /// 从 `site` 表读取「已启用且可搜索」的站点。
 class StorageSourceProvider implements SourceProvider {
-  final SiteRepository sites;
-
   /// 构造适配器。
   StorageSourceProvider(this.sites);
 
+  /// 站点仓储。
+  final SiteRepository sites;
+
   @override
   Future<List<SearchableSource>> getEnabledSites() async {
-    final list = await sites.enabled(searchable: true);
+    final list = await sites.enabled();
     return list
         .map(
           (s) => SearchableSource(
@@ -37,10 +38,11 @@ class StorageSourceProvider implements SourceProvider {
 ///
 /// type=1 源直接通过 HTTP 调用 Spider API 的 search 方法。
 class HttpSpiderSearcher implements SpiderSearcher {
-  final HttpRuntime runtime;
-
   /// 构造适配器。
   HttpSpiderSearcher(this.runtime);
+
+  /// 底层 HTTP 运行时。
+  final HttpRuntime runtime;
 
   @override
   Future<SpiderSearchResult> search(int sourceId, String keyword) async {

@@ -4,7 +4,6 @@
 library;
 
 export 'src/host/host_api.dart' show FetchResult, HostApi, HostFetchConfig;
-
 export 'src/host/spider_host.dart'
     show
         HandshakeResult,
@@ -16,7 +15,6 @@ export 'src/host/spider_host.dart'
         kHeartbeatInterval,
         kHeartbeatMissLimit,
         kMaxRestartAttempts;
-
 export 'src/rpc/frame_parser.dart'
     show
         FrameComplete,
@@ -26,10 +24,6 @@ export 'src/rpc/frame_parser.dart'
         LspFrameParser,
         kMaxHeaderBytes,
         kMaxMessageBytes;
-
-export 'src/rpc/stdio_rpc_channel.dart'
-    show StdioRpcChannel, kDefaultRequestTimeout, kWriteQueueMax;
-
 export 'src/rpc/rpc_message.dart'
     show
         RpcMessage,
@@ -42,9 +36,9 @@ export 'src/rpc/rpc_message.dart'
         jsonRpcMethodNotFound,
         jsonRpcParseError,
         kJsonRpcVersion;
-
 export 'src/rpc/rpc_recorder.dart'
-    show RecordingRpcChannel, RpcRecorder, RpcRecordEvent, RpcReplayer;
-
+    show RecordingRpcChannel, RpcRecordEvent, RpcRecorder, RpcReplayer;
+export 'src/rpc/stdio_rpc_channel.dart'
+    show StdioRpcChannel, kDefaultRequestTimeout, kWriteQueueMax;
 export 'src/runtime/http_runtime.dart'
     show HttpRequestParams, HttpResponseData, HttpRuntime;

@@ -3,15 +3,16 @@ library;
 
 import 'dart:convert';
 
-import 'package:play_engine/src/models.dart';
+import 'package:play_engine/play_engine.dart';
 import 'package:spider_host/spider_host.dart';
 
 /// 基于 [HttpRuntime] 的 [SpiderPlayerApi] 实现。
 class HttpSpiderPlayerApi implements SpiderPlayerApi {
-  final HttpRuntime runtime;
-
   /// 构造适配器。
   HttpSpiderPlayerApi(this.runtime);
+
+  /// 底层 HTTP 运行时。
+  final HttpRuntime runtime;
 
   @override
   Future<PlayerContentResult> playerContent({
@@ -35,10 +36,10 @@ class HttpSpiderPlayerApi implements SpiderPlayerApi {
                 {},
           );
         } on Object {
-          return const PlayerContentResult(url: '');
+          return const PlayerContentResult();
         }
       },
-      (_) => const PlayerContentResult(url: ''),
+      (_) => const PlayerContentResult(),
     );
   }
 }

@@ -62,7 +62,7 @@ class LooseJsonParser {
     var inString = false;
     for (var i = 0; i < text.length; i++) {
       final ch = text[i];
-      if (ch == '"' && (i == 0 || text[i - 1] != '\\')) {
+      if (ch == '"' && (i == 0 || text[i - 1] != r'\')) {
         inString = !inString;
         buffer.write(ch);
       } else if (ch == "'" && !inString) {

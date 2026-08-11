@@ -5,15 +5,14 @@
 /// 按源隔离命名空间，走 `plugin_storage` 表（`docs/07 §3.7`）。
 library;
 
-import 'package:storage/src/dao/plugin_storage_dao.dart';
+import 'package:storage/storage.dart';
 
 /// 按源隔离的本地存储。
 class LocalStorage {
-  final PluginStorageDao _dao;
-  final String _owner;
-
   /// 构造本地存储。
   LocalStorage(this._dao, this._owner);
+  final PluginStorageDao _dao;
+  final String _owner;
 
   /// 读取一项存储。
   Future<String?> get(String key) => _dao.get(_owner, key);

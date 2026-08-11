@@ -5,48 +5,45 @@ import 'dart:io';
 import 'package:spider_host/src/runtime/http_runtime.dart';
 import 'package:test/test.dart';
 
+/// 写一条 JSON 响应并关闭。
+///
+/// 抽出来是因为 `..close()` 直接挂在级联末尾会丢弃它返回的 Future
+/// （`discarded_futures`），而这里的关闭确实无需等待。
+void _respondJson(HttpRequest request, String body, {int status = 200}) {
+  final response = request.response
+    ..statusCode = status
+    ..headers.contentType = ContentType.json
+    ..write(body);
+  unawaited(response.close());
+}
+
 /// 模拟一个 TVBox Spider API 服务。
 Future<HttpServer> startMockApi() async {
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
   server.listen((request) {
-    final uri = request.uri;
-    final action = uri.queryParameters['action'] ?? '';
+    final action = request.uri.queryParameters['action'] ?? '';
     switch (action) {
       case 'home':
-        request.response
-          ..statusCode = 200
-          ..headers.contentType = ContentType.json
-          ..write('{"list":[{"vod_id":"1","vod_name":"剧A"}]}')
-          ..close();
+        _respondJson(request, '{"list":[{"vod_id":"1","vod_name":"剧A"}]}');
       case 'category':
-        request.response
-          ..statusCode = 200
-          ..headers.contentType = ContentType.json
-          ..write('{"list":[{"type_id":"1","type_name":"电影"}]}')
-          ..close();
+        _respondJson(
+          request,
+          '{"list":[{"type_id":"1","type_name":"电影"}]}',
+        );
       case 'detail':
-        request.response
-          ..statusCode = 200
-          ..headers.contentType = ContentType.json
-          ..write('{"vod_id":"1","vod_name":"剧A","vod_play_from":"qiyi"}')
-          ..close();
+        _respondJson(
+          request,
+          '{"vod_id":"1","vod_name":"剧A","vod_play_from":"qiyi"}',
+        );
       case 'search':
-        request.response
-          ..statusCode = 200
-          ..headers.contentType = ContentType.json
-          ..write('{"list":[{"vod_id":"2","vod_name":"搜索结果"}]}')
-          ..close();
+        _respondJson(request, '{"list":[{"vod_id":"2","vod_name":"搜索结果"}]}');
       case 'play':
-        request.response
-          ..statusCode = 200
-          ..headers.contentType = ContentType.json
-          ..write('{"url":"https://example.com/play.m3u8"}')
-          ..close();
+        _respondJson(request, '{"url":"https://example.com/play.m3u8"}');
       default:
-        request.response
+        final response = request.response
           ..statusCode = 404
-          ..write('Unknown action')
-          ..close();
+          ..write('Unknown action');
+        unawaited(response.close());
     }
   });
   return server;
@@ -74,15 +71,15 @@ void main() {
       final data = result.valueOrNull!;
       expect(data.status, 200);
       final json = jsonDecode(data.body) as Map<String, Object?>;
-      expect((json['list'] as List<Object?>), hasLength(1));
+      expect(json['list']! as List<Object?>, hasLength(1));
     });
 
     test('category 返回分类列表', () async {
       final result = await runtime.category();
       expect(result.isOk, isTrue);
       final json = jsonDecode(result.valueOrNull!.body) as Map<String, Object?>;
-      final list = (json['list'] as List<Object?>);
-      expect((list.first as Map)['type_name'], '电影');
+      final list = json['list']! as List<Object?>;
+      expect((list.first! as Map)['type_name'], '电影');
     });
 
     test('detail 返回详情', () async {

@@ -32,15 +32,6 @@ const int kMaxRestartAttempts = 5;
 
 /// 握手结果。
 class HandshakeResult {
-  /// 对端协议版本。
-  final int protocolVersion;
-
-  /// 对端运行时版本。
-  final String runtimeVersion;
-
-  /// 对端能力位交集。
-  final List<String> features;
-
   /// 构造握手结果。
   const HandshakeResult({
     required this.protocolVersion,
@@ -59,12 +50,21 @@ class HandshakeResult {
       features: (map['features'] as List<Object?>?)?.cast<String>() ?? const [],
     );
   }
+
+  /// 对端协议版本。
+  final int protocolVersion;
+
+  /// 对端运行时版本。
+  final String runtimeVersion;
+
+  /// 对端能力位交集。
+  final List<String> features;
 }
 
 /// 启动子进程的抽象，便于测试注入 fake。
 ///
-/// 返回 [stdin]（写入子进程的输入）、[stdout]（读取子进程的输出）、
-/// [exitCode]（子进程退出码）和 [kill]（终止函数）。
+/// 返回 `stdin`（写入子进程的输入）、`stdout`（读取子进程的输出）、
+/// `exitCode`（子进程退出码）和 `kill`（终止函数）。
 typedef ProcessLauncher =
     Future<
       ({
@@ -95,7 +95,6 @@ defaultProcessLauncher(
   final process = await Process.start(
     executable,
     arguments,
-    mode: ProcessStartMode.normal,
   );
   return (
     stdin: process.stdin,
@@ -111,15 +110,6 @@ defaultProcessLauncher(
 /// 失联时自动按退避策略重启；超过 [kMaxRestartAttempts] 次后转为不可用
 /// （熔断），等待 [reset] 手动重试。
 class SpiderHost {
-  final String executable;
-  final List<String> arguments;
-  final ProcessLauncher _launcher;
-  final int localProtocolVersion;
-  final String appVersion;
-  final int maxRestartAttempts;
-  final Duration handshakeTimeout;
-  final Duration Function(int attempt) _backoffFor;
-
   /// 构造宿主。
   ///
   /// [maxRestartAttempts] 控制最大退避重启次数（默认 [kMaxRestartAttempts]）。
@@ -138,6 +128,27 @@ class SpiderHost {
        _backoffFor =
            backoffFor ??
            ((int attempt) => Duration(seconds: 1 << attempt.clamp(0, 4)));
+
+  /// 子进程可执行文件路径。
+  final String executable;
+
+  /// 传给子进程的参数。
+  final List<String> arguments;
+
+  /// 宿主侧支持的协议版本，握手时与子进程协商。
+  final int localProtocolVersion;
+
+  /// 宿主应用版本，握手时上报给子进程。
+  final String appVersion;
+
+  /// 最大退避重启次数，超过即熔断。
+  final int maxRestartAttempts;
+
+  /// 握手超时。
+  final Duration handshakeTimeout;
+
+  final ProcessLauncher _launcher;
+  final Duration Function(int attempt) _backoffFor;
 
   Future<int>? _exitCode;
   bool Function(ProcessSignal signal) _kill = (_) => false;
@@ -166,7 +177,7 @@ class SpiderHost {
   /// 启动子进程并握手。
   Future<Result<HandshakeResult, AppError>> start() async {
     if (_disposed) {
-      return Err(
+      return const Err(
         LocalError(
           code: ErrorCode.invalidState,
           message: 'SpiderHost 已释放',
@@ -177,14 +188,15 @@ class SpiderHost {
     try {
       final proc = await _launcher(executable, arguments);
       _exitCode = proc.exitCode;
-      _kill = (s) => proc.kill(s);
+      _kill = proc.kill;
 
       final channel = StdioRpcChannel(
         stdin: proc.stdout,
         stdout: proc.stdin,
       );
       _channel = channel;
-      proc.exitCode.then((_) => _onProcessExit('进程退出'));
+      // 进程退出是异步事件，这里只挂回调、不等它——等它就永远不会返回。
+      unawaited(proc.exitCode.then((_) => _onProcessExit('进程退出')));
 
       final handshake = await channel
           .call(
@@ -198,7 +210,7 @@ class SpiderHost {
           )
           .timeout(
             handshakeTimeout,
-            onTimeout: () => Err(
+            onTimeout: () => const Err(
               RemoteError(
                 code: ErrorCode.runtimeCrashed,
                 message: '握手超时',
@@ -220,7 +232,8 @@ class SpiderHost {
           RemoteError(
             code: ErrorCode.protocolVersionMismatch,
             message:
-                '协议版本不兼容: 本地 $localProtocolVersion vs 对端 ${result.protocolVersion}',
+                '协议版本不兼容: 本地 $localProtocolVersion '
+                'vs 对端 ${result.protocolVersion}',
           ),
         );
       }
@@ -243,7 +256,7 @@ class SpiderHost {
     Duration? timeout,
   }) async {
     if (!isReady || _channel == null) {
-      return Err(
+      return const Err(
         RemoteError(
           code: ErrorCode.runtimeNotReady,
           message: '运行时未就绪',
@@ -278,7 +291,7 @@ class SpiderHost {
       } else {
         _missedHeartbeats++;
         if (_missedHeartbeats >= kHeartbeatMissLimit) {
-          _onProcessExit('心跳连续 ${kHeartbeatMissLimit} 次无响应');
+          _onProcessExit('心跳连续 $kHeartbeatMissLimit 次无响应');
         }
       }
     });

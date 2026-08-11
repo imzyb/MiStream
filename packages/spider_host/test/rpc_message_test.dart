@@ -52,8 +52,8 @@ void main() {
       );
       final json = resp.toJson();
       expect(json['id'], 7);
-      expect((json['error'] as Map)['code'], -32101);
-      expect((json['error'] as Map)['message'], 'boom');
+      expect((json['error']! as Map)['code'], -32101);
+      expect((json['error']! as Map)['message'], 'boom');
     });
 
     test('fromJson 解码请求', () {

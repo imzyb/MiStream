@@ -4,14 +4,21 @@
 /// 供端到端集成测试使用，无需真实网络。
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 /// mock 源服务。
 class MockSourceServer {
   late final HttpServer _server;
+
+  /// 实际监听的端口（绑定 0 由系统分配）。
   int get port => _server.port;
+
+  /// 服务根地址。
   String get baseUrl => 'http://127.0.0.1:$port';
+
+  /// Spider API 入口地址。
   String get apiUrl => '$baseUrl/api.php';
 
   /// 启动服务。
@@ -73,7 +80,9 @@ class MockSourceServer {
               'vod_name': '测试电影',
               'vod_pic': 'http://example.com/pic1.jpg',
               'vod_play_from': 'qiyi',
-              'vod_play_url': '第1集' + 'https://example.com/ep1.m3u8',
+              'vod_play_url':
+                  '第1集'
+                  'https://example.com/ep1.m3u8',
             },
           ],
         });
@@ -105,7 +114,7 @@ class MockSourceServer {
         'key': 'mock',
         'name': 'Mock源',
         'type': 1,
-        'api': '$apiUrl',
+        'api': apiUrl,
       },
     ],
     'lives': [
@@ -129,11 +138,11 @@ class MockSourceServer {
     String contentType = 'text/plain; charset=utf-8',
   }) {
     final bytes = utf8.encode(body);
-    request.response
+    final response = request.response
       ..statusCode = status
       ..headers.contentType = ContentType.parse(contentType)
       ..contentLength = bytes.length
-      ..add(bytes)
-      ..close();
+      ..add(bytes);
+    unawaited(response.close());
   }
 }

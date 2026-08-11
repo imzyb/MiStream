@@ -28,13 +28,13 @@ class _FakeProcess {
   bool get isKilled => _killed;
 
   void close() {
-    stdoutCtrl.close();
+    unawaited(stdoutCtrl.close());
     exitCodeCompleter.complete(0);
   }
 
   void crash() {
     exitCodeCompleter.complete(-1);
-    stdoutCtrl.close();
+    unawaited(stdoutCtrl.close());
   }
 }
 
@@ -222,7 +222,7 @@ void main() {
       );
 
       // 启动后不给握手响应 → 10ms 超时 → 自动重启 → 再次失败 → 熔断
-      host.start();
+      unawaited(host.start());
       await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(host.isTripped, isTrue);
     });
@@ -238,7 +238,7 @@ void main() {
       );
 
       // 触发熔断
-      host.start();
+      unawaited(host.start());
       await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(host.isTripped, isTrue);
 

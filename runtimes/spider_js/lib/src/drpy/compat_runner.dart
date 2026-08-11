@@ -13,6 +13,26 @@ import 'package:spider_js/src/drpy/html_parser.dart';
 
 /// 一条兼容性测试用例。
 class CompatCase {
+  /// 构造测试用例。
+  const CompatCase({
+    required this.name,
+    required this.method,
+    required this.html,
+    required this.rule,
+    required this.expected,
+    this.baseUrl,
+  });
+
+  /// 从 JSON map 解码。
+  factory CompatCase.fromJson(Map<String, Object?> json) => CompatCase(
+    name: json['name'] as String? ?? '',
+    method: json['method'] as String? ?? 'pdfh',
+    html: json['html'] as String? ?? '',
+    rule: json['rule'] as String? ?? '',
+    baseUrl: json['baseUrl'] as String?,
+    expected: json['expected']!,
+  );
+
   /// 测试名称。
   final String name;
 
@@ -30,16 +50,6 @@ class CompatCase {
 
   /// 期望输出。
   final Object expected;
-
-  /// 构造测试用例。
-  const CompatCase({
-    required this.name,
-    required this.method,
-    required this.html,
-    required this.rule,
-    this.baseUrl,
-    required this.expected,
-  });
 
   /// 执行测试，返回 (通过, 实际输出, 错误信息)。
   (bool, Object?, String?) run() {
@@ -87,22 +97,12 @@ class CompatCase {
     return true;
   }
 
-  /// 从 JSON map 解码。
-  factory CompatCase.fromJson(Map<String, Object?> json) => CompatCase(
-    name: json['name'] as String? ?? '',
-    method: json['method'] as String? ?? 'pdfh',
-    html: json['html'] as String? ?? '',
-    rule: json['rule'] as String? ?? '',
-    baseUrl: json['baseUrl'] as String?,
-    expected: json['expected']!,
-  );
-
   /// 从 JSON 文件加载。
   static List<CompatCase> loadFromFile(String path) {
     final text = File(path).readAsStringSync();
     final list = jsonDecode(text) as List<Object?>;
     return list
-        .map((e) => CompatCase.fromJson(e as Map<String, Object?>))
+        .map((e) => CompatCase.fromJson(e! as Map<String, Object?>))
         .toList();
   }
 }

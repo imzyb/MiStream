@@ -5,8 +5,13 @@ import 'dart:async';
 
 import 'package:search_engine/src/models.dart';
 
+/// 全局并发上限：同时在跑的源不超过这个数（ROADMAP 风险 R9）。
 const int kGlobalConcurrency = 8;
+
+/// 单源超时：超过即折叠为失败，不阻塞其它源。
 const Duration kSourceTimeout = Duration(seconds: 8);
+
+/// 单源结果条数上限。
 const int kMaxResultsPerSource = 50;
 
 /// 标题归一化。
@@ -22,12 +27,7 @@ String normalizeTitle(String title) {
 
 /// 聚合搜索编排器。
 class SearchUseCase {
-  final SourceProvider sourceProvider;
-  final SpiderSearcher spiderSearcher;
-  final int concurrency;
-  final Duration timeout;
-  final int maxResultsPerSource;
-
+  /// 构造编排器。
   SearchUseCase({
     required this.sourceProvider,
     required this.spiderSearcher,
@@ -36,11 +36,26 @@ class SearchUseCase {
     this.maxResultsPerSource = kMaxResultsPerSource,
   });
 
+  /// 可搜索源的来源。
+  final SourceProvider sourceProvider;
+
+  /// 单源搜索的执行者。
+  final SpiderSearcher spiderSearcher;
+
+  /// 并发上限。
+  final int concurrency;
+
+  /// 单源超时。
+  final Duration timeout;
+
+  /// 单源结果条数上限。
+  final int maxResultsPerSource;
+
   /// 执行搜索，返回流式进度。
   Stream<SearchProgress> search(String keyword) {
     final controller = StreamController<SearchProgress>();
 
-    _doSearch(keyword, controller);
+    unawaited(_doSearch(keyword, controller));
     return controller.stream;
   }
 
@@ -215,6 +230,17 @@ class SearchUseCase {
 }
 
 class _MergedEntry {
+  _MergedEntry({
+    required this.title,
+    required SearchableSource source,
+    required String vodId,
+    this.originalTitle,
+    this.year,
+    this.coverUrl,
+    this.remarks,
+  }) {
+    addSource(source, vodId);
+  }
   final String title;
   final String? originalTitle;
   final String? year;
@@ -222,18 +248,6 @@ class _MergedEntry {
   final String? remarks;
   final List<SearchSourceRef> sources = [];
   int maxPriority = 0;
-
-  _MergedEntry({
-    required this.title,
-    this.originalTitle,
-    this.year,
-    this.coverUrl,
-    this.remarks,
-    required SearchableSource source,
-    required String vodId,
-  }) {
-    addSource(source, vodId);
-  }
 
   void addSource(SearchableSource source, String vodId) {
     sources.add(

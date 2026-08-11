@@ -19,7 +19,7 @@ void main() {
 
       // 用 mock 源测试 SearchUseCase
       final provider = _MockSourceProvider([
-        SearchableSource(id: 1, name: 'Mock源', priority: 5),
+        const SearchableSource(id: 1, name: 'Mock源', priority: 5),
       ]);
 
       searchUseCase = SearchUseCase(
@@ -68,8 +68,8 @@ void main() {
 }
 
 class _MockSourceProvider implements SourceProvider {
-  final List<SearchableSource> sources;
   _MockSourceProvider(this.sources);
+  final List<SearchableSource> sources;
 
   @override
   Future<List<SearchableSource>> getEnabledSites() async => sources;

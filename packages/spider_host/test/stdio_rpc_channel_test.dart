@@ -36,10 +36,11 @@ class _MockSink implements IOSink {
   void write(Object? object) => frames.add(utf8.encode('$object'));
 
   @override
-  void writeAll(
-    Iterable<Object?> iterable, [
-    String separator = '',
-  ]) => iterable.forEach((o) => frames.add(utf8.encode('$o$separator')));
+  void writeAll(Iterable<Object?> iterable, [String separator = '']) {
+    for (final o in iterable) {
+      frames.add(utf8.encode('$o$separator'));
+    }
+  }
 
   @override
   void writeCharCode(int charCode) =>

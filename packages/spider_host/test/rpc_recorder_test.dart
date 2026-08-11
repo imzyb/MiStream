@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:core_domain/core_domain.dart';
@@ -8,13 +7,13 @@ import 'package:test/test.dart';
 void main() {
   group('RpcRecorder', () {
     test('记录事件并保存到 JSONL', () async {
-      final recorder = RpcRecorder();
-      recorder.record(<String, Object?>{
-        'id': 1,
-        'method': 'spider.ping',
-        'params': {},
-      }, 'send');
-      recorder.record(<String, Object?>{'id': 1, 'result': 'pong'}, 'recv');
+      final recorder = RpcRecorder()
+        ..record(<String, Object?>{
+          'id': 1,
+          'method': 'spider.ping',
+          'params': <String, Object?>{},
+        }, 'send')
+        ..record(<String, Object?>{'id': 1, 'result': 'pong'}, 'recv');
       expect(recorder.events, hasLength(2));
       expect(recorder.events[0].method, 'spider.ping');
       expect(recorder.events[0].direction, 'send');
@@ -27,32 +26,32 @@ void main() {
       final tmp = Directory.systemTemp.createTempSync('rpc_test');
       final filePath = '${tmp.path}\\session.jsonl';
       try {
-        final recorder = RpcRecorder();
-        recorder.record(<String, Object?>{
-          'id': 1,
-          'method': 'spider.home',
-          'params': {},
-        }, 'send');
-        recorder.record(<String, Object?>{
-          'id': 1,
-          'result': {'list': []},
-        }, 'recv');
+        final recorder = RpcRecorder()
+          ..record(<String, Object?>{
+            'id': 1,
+            'method': 'spider.home',
+            'params': <String, Object?>{},
+          }, 'send')
+          ..record(<String, Object?>{
+            'id': 1,
+            'result': {'list': <Object?>[]},
+          }, 'recv');
         await recorder.saveToFile(filePath);
 
         final loaded = await RpcRecorder.loadFromFile(filePath);
         expect(loaded, hasLength(2));
         expect(loaded[0].method, 'spider.home');
-        expect(loaded[1].result, {'list': []});
+        expect(loaded[1].result, {'list': <Object?>[]});
       } finally {
         tmp.deleteSync(recursive: true);
       }
     });
 
     test('错误事件记录', () async {
-      final recorder = RpcRecorder();
-      recorder.record({
-        'error': {'code': -32101, 'message': '脚本错误'},
-      }, 'recv');
+      final recorder = RpcRecorder()
+        ..record({
+          'error': {'code': -32101, 'message': '脚本错误'},
+        }, 'recv');
       expect(recorder.events[0].type, 'error');
       expect(recorder.events[0].errorCode, -32101);
       expect(recorder.events[0].errorMessage, '脚本错误');
@@ -64,13 +63,13 @@ void main() {
       final tmp = Directory.systemTemp.createTempSync('rpc_replay');
       final filePath = '${tmp.path}\\session.jsonl';
       try {
-        final recorder = RpcRecorder();
-        recorder.record(<String, Object?>{
-          'id': 1,
-          'method': 'spider.ping',
-          'params': {},
-        }, 'send');
-        recorder.record(<String, Object?>{'id': 1, 'result': 'pong'}, 'recv');
+        final recorder = RpcRecorder()
+          ..record(<String, Object?>{
+            'id': 1,
+            'method': 'spider.ping',
+            'params': <String, Object?>{},
+          }, 'send')
+          ..record(<String, Object?>{'id': 1, 'result': 'pong'}, 'recv');
         await recorder.saveToFile(filePath);
 
         final replayer = await RpcReplayer.fromFile(filePath);
@@ -85,16 +84,16 @@ void main() {
       final tmp = Directory.systemTemp.createTempSync('rpc_inject');
       final filePath = '${tmp.path}\\session.jsonl';
       try {
-        final recorder = RpcRecorder();
-        recorder.record(<String, Object?>{
-          'id': 1,
-          'method': 'spider.search',
-          'params': {'wd': 'test'},
-        }, 'send');
-        recorder.record(<String, Object?>{
-          'id': 1,
-          'result': {'list': []},
-        }, 'recv');
+        final recorder = RpcRecorder()
+          ..record(<String, Object?>{
+            'id': 1,
+            'method': 'spider.search',
+            'params': {'wd': 'test'},
+          }, 'send')
+          ..record(<String, Object?>{
+            'id': 1,
+            'result': {'list': <Object?>[]},
+          }, 'recv');
         await recorder.saveToFile(filePath);
 
         final replayer = await RpcReplayer.fromFile(filePath);
@@ -103,7 +102,7 @@ void main() {
           'wd': 'test',
         });
         expect(result, isA<RemoteError>());
-        expect((result as RemoteError).message, contains('注入错误'));
+        expect((result! as RemoteError).message, contains('注入错误'));
       } finally {
         tmp.deleteSync(recursive: true);
       }

@@ -32,6 +32,14 @@ coverage/
 # 生成代码（ADR-008：drift 产物不提交，CI 走 build_runner）
 **/*.g.dart
 
+# QuickJS native 产物（runtimes/spider_js/native/build.bat 本地构建，不入库）。
+# 源码与构建脚本在 native/ 下受版本管理；二进制不进仓库，理由见 docs/10 §10
+# 与 ROADMAP 风险 R5（体积预算）。
+runtimes/spider_js/**/*.dll
+runtimes/spider_js/**/*.obj
+runtimes/spider_js/**/*.lib
+runtimes/spider_js/**/*.exp
+
 # 系统
 .DS_Store
 Thumbs.db

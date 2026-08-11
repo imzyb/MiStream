@@ -1,8 +1,12 @@
+/// 首页：展示分类与推荐内容。
+library;
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 /// 首页：展示分类与推荐内容。
 class HomePage extends StatelessWidget {
+  /// 构造首页。
   const HomePage({super.key});
 
   @override
@@ -19,11 +23,11 @@ class HomePage extends StatelessWidget {
         ],
       ),
       body: ListView(
-        children: [
-          const _SectionHeader('推荐'),
-          const _PlaceholderGrid(),
-          const _SectionHeader('分类'),
-          const _CategoryList(),
+        children: const [
+          _SectionHeader('推荐'),
+          _PlaceholderGrid(),
+          _SectionHeader('分类'),
+          _CategoryList(),
         ],
       ),
     );
@@ -31,8 +35,8 @@ class HomePage extends StatelessWidget {
 }
 
 class _SectionHeader extends StatelessWidget {
-  final String title;
   const _SectionHeader(this.title);
+  final String title;
 
   @override
   Widget build(BuildContext context) {
@@ -77,8 +81,8 @@ class _MediaCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: Container(
-              color: Theme.of(context).colorScheme.surfaceVariant,
+            child: ColoredBox(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
               child: const Center(child: Icon(Icons.movie, size: 40)),
             ),
           ),

@@ -14,6 +14,15 @@ import 'package:core_domain/core_domain.dart';
 
 /// HTTP 请求参数。
 class HttpRequestParams {
+  /// 构造请求参数。
+  const HttpRequestParams({
+    required this.url,
+    this.method = 'GET',
+    this.headers = const {},
+    this.body,
+    this.timeoutMs = 15000,
+  });
+
   /// 请求 URL。
   final String url;
 
@@ -28,19 +37,19 @@ class HttpRequestParams {
 
   /// 超时（毫秒）。
   final int timeoutMs;
-
-  /// 构造请求参数。
-  const HttpRequestParams({
-    required this.url,
-    this.method = 'GET',
-    this.headers = const {},
-    this.body,
-    this.timeoutMs = 15000,
-  });
 }
 
 /// HTTP 响应结果。
 class HttpResponseData {
+  /// 构造响应。
+  const HttpResponseData({
+    required this.status,
+    required this.headers,
+    required this.body,
+    required this.finalUrl,
+    required this.elapsedMs,
+  });
+
   /// 状态码。
   final int status;
 
@@ -55,15 +64,6 @@ class HttpResponseData {
 
   /// 耗时（毫秒）。
   final int elapsedMs;
-
-  /// 构造响应。
-  const HttpResponseData({
-    required this.status,
-    required this.headers,
-    required this.body,
-    required this.finalUrl,
-    required this.elapsedMs,
-  });
 }
 
 /// HTTP 运行时 —— 直接调用远端 Spider API。
@@ -71,10 +71,11 @@ class HttpResponseData {
 /// 使用 [baseUrl] 作为 API 入口，附加 `?action=...&...` 参数。
 /// 支持 `home`、`category`、`detail`、`search`、`play` 等标准方法。
 class HttpRuntime {
-  final String baseUrl;
-
   /// 构造 HTTP 运行时。
   HttpRuntime(this.baseUrl);
+
+  /// API 入口地址。
+  final String baseUrl;
 
   /// 发送 HTTP 请求并解析 JSON 响应。
   Future<Result<HttpResponseData, AppError>> request(
@@ -134,7 +135,7 @@ class HttpRuntime {
         ),
       );
     } on TimeoutException {
-      return Err(
+      return const Err(
         RemoteError(
           code: ErrorCode.networkTimeout,
           message: '请求超时',

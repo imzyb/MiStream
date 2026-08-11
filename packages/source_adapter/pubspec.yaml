@@ -12,6 +12,7 @@ environment:
 dependencies:
   core_domain:
     path: ../core_domain
+  meta: ^1.18.0
   play_engine:
     path: ../play_engine
   search_engine:
@@ -20,7 +21,6 @@ dependencies:
     path: ../spider_host
   storage:
     path: ../storage
-  meta: ^1.18.0
 
 dev_dependencies:
   mock_source_server:

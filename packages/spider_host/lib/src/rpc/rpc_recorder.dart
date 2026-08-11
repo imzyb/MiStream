@@ -8,21 +8,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:core_domain/core_domain.dart';
-
 import 'package:spider_host/src/rpc/stdio_rpc_channel.dart';
 
 /// 一条录制的 RPC 事件。
 class RpcRecordEvent {
-  final int timestamp;
-  final String direction;
-  final String type;
-  final int? id;
-  final String? method;
-  final Object? result;
-  final int? errorCode;
-  final String? errorMessage;
-  final Map<String, Object?>? params;
-
+  /// 构造事件。
   const RpcRecordEvent({
     required this.timestamp,
     required this.direction,
@@ -35,6 +25,47 @@ class RpcRecordEvent {
     this.params,
   });
 
+  /// 从 JSONL 的一行还原。
+  factory RpcRecordEvent.fromJson(Map<String, Object?> json) => RpcRecordEvent(
+    timestamp: (json['ts']! as num).toInt(),
+    direction: json['direction']! as String,
+    type: json['type']! as String,
+    id: json['id'] as int?,
+    method: json['method'] as String?,
+    result: json['result'],
+    errorCode: json['errorCode'] as int?,
+    errorMessage: json['errorMessage'] as String?,
+    params: json['params'] as Map<String, Object?>?,
+  );
+
+  /// 事件发生时刻（毫秒时间戳）。
+  final int timestamp;
+
+  /// 方向：`send` 或 `recv`。
+  final String direction;
+
+  /// 类型：`request` / `notification` / `response` / `error`。
+  final String type;
+
+  /// 请求 ID；通知没有。
+  final int? id;
+
+  /// 方法名；响应没有。
+  final String? method;
+
+  /// 响应结果。
+  final Object? result;
+
+  /// 错误码。
+  final int? errorCode;
+
+  /// 错误信息。
+  final String? errorMessage;
+
+  /// 请求参数。
+  final Map<String, Object?>? params;
+
+  /// 序列化为 JSONL 的一行。
   Map<String, Object?> toJson() => {
     'ts': timestamp,
     'direction': direction,
@@ -46,24 +77,14 @@ class RpcRecordEvent {
     if (errorMessage != null) 'errorMessage': errorMessage,
     if (params != null) 'params': params,
   };
-
-  factory RpcRecordEvent.fromJson(Map<String, Object?> json) => RpcRecordEvent(
-    timestamp: (json['ts'] as num).toInt(),
-    direction: json['direction'] as String,
-    type: json['type'] as String,
-    id: json['id'] as int?,
-    method: json['method'] as String?,
-    result: json['result'],
-    errorCode: json['errorCode'] as int?,
-    errorMessage: json['errorMessage'] as String?,
-    params: json['params'] as Map<String, Object?>?,
-  );
 }
 
 /// 录制 RPC 会话。
 class RpcRecorder {
+  /// 已录制的事件，按发生顺序。
   final List<RpcRecordEvent> events = [];
 
+  /// 记录一条消息 [msg]，[direction] 取 `send` 或 `recv`。
   void record(Map<String, Object?> msg, String direction) {
     final type = msg.containsKey('method')
         ? (msg.containsKey('id') ? 'request' : 'notification')
@@ -96,6 +117,7 @@ class RpcRecorder {
     );
   }
 
+  /// 把已录制的事件写成 JSONL 落到 [filePath]。
   Future<void> saveToFile(String filePath) async {
     final file = File(filePath);
     await file.parent.create(recursive: true);
@@ -107,9 +129,10 @@ class RpcRecorder {
     await sink.close();
   }
 
+  /// 从 [filePath] 读回录制；文件不存在返回空列表。
   static Future<List<RpcRecordEvent>> loadFromFile(String filePath) async {
     final file = File(filePath);
-    if (!await file.exists()) return [];
+    if (!file.existsSync()) return [];
     final lines = await file.readAsLines();
     return lines
         .where((l) => l.trim().isNotEmpty)
@@ -126,11 +149,16 @@ class RpcRecorder {
 ///
 /// 包装 [StdioRpcChannel]，记录所有收发消息，不干扰正常通信。
 class RecordingRpcChannel {
-  final StdioRpcChannel channel;
-  final RpcRecorder recorder;
-
+  /// 用 [channel] 与 [recorder] 构造。
   RecordingRpcChannel(this.channel, this.recorder);
 
+  /// 被包装的底层通道。
+  final StdioRpcChannel channel;
+
+  /// 录制器。
+  final RpcRecorder recorder;
+
+  /// 转发一次请求并录制收发两侧。
   Future<Result<Object?, RemoteError>> call(
     String method, {
     Map<String, Object?> params = const {},
@@ -153,6 +181,7 @@ class RecordingRpcChannel {
     return result;
   }
 
+  /// 转发一次通知并录制。
   Future<void> notify(String method, {Map<String, Object?> params = const {}}) {
     recorder.record(<String, Object?>{
       'method': method,
@@ -164,17 +193,23 @@ class RecordingRpcChannel {
 
 /// RPC 回放器。
 class RpcReplayer {
-  final List<RpcRecordEvent> events;
-  int _index = 0;
-  int injectDelayMs = 0;
-  final Set<String> injectErrorMethods = {};
-
+  /// 用已加载的 [events] 构造。
   RpcReplayer(this.events);
 
-  static Future<RpcReplayer> fromFile(String filePath) async {
-    final events = await RpcRecorder.loadFromFile(filePath);
-    return RpcReplayer(events);
-  }
+  /// 从录制文件构造。
+  static Future<RpcReplayer> fromFile(String filePath) async =>
+      RpcReplayer(await RpcRecorder.loadFromFile(filePath));
+
+  /// 录制的事件。
+  final List<RpcRecordEvent> events;
+
+  /// 注入延迟（毫秒），用于测试超时路径。
+  int injectDelayMs = 0;
+
+  /// 对这些方法注入错误，用于测试失败路径。
+  final Set<String> injectErrorMethods = {};
+
+  int _index = 0;
 
   /// 查找下一个匹配的响应。
   Future<Object?> findResponse(

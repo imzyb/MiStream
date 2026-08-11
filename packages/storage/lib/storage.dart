@@ -10,7 +10,8 @@ export 'package:drift/drift.dart'
         // 常用表/列类型与查询基类，供调用方组合查询。
         // 不导出一整包，避免命名冲突。
         Expression,
-        Table;
+        Table,
+        Value;
 
 export 'src/backup/backup_exporter.dart'
     show
@@ -23,7 +24,14 @@ export 'src/backup/backup_manager.dart' show BackupManager;
 export 'src/dao/plugin_storage_dao.dart' show PluginStorageDao;
 export 'src/dao/settings_dao.dart';
 export 'src/dao/site_cache_dao.dart';
-export 'src/database/database.dart' show AppDatabase, kCurrentSchemaVersion;
+export 'src/database/database.dart';
 export 'src/database/tables.dart';
 export 'src/database/type_converters.dart' show utcMillis;
+export 'src/repository/config_source_repository.dart'
+    show ConfigSourceRepository;
+export 'src/repository/favorite_repository.dart' show FavoriteRepository;
+export 'src/repository/history_repository.dart' show HistoryRepository;
 export 'src/repository/repositories.dart' show Repositories;
+export 'src/repository/search_history_repository.dart'
+    show SearchHistoryRepository;
+export 'src/repository/site_repository.dart' show SiteRepository;

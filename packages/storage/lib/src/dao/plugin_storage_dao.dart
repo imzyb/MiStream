@@ -50,7 +50,8 @@ class PluginStorageDao {
   Future<int> totalBytes(String owner) async {
     final row = await db
         .customSelect(
-          'SELECT COALESCE(SUM(bytes), 0) AS total FROM plugin_storage WHERE owner = ?',
+          'SELECT COALESCE(SUM(bytes), 0) AS total '
+          'FROM plugin_storage WHERE owner = ?',
           variables: [Variable.withString(owner)],
         )
         .getSingle();

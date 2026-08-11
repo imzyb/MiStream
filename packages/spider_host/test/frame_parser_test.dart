@@ -52,7 +52,7 @@ void main() {
     });
 
     test('超大消息体：超过 32MB 返回 FrameError', () {
-      final huge = 33 * 1024 * 1024;
+      const huge = 33 * 1024 * 1024;
       final header = utf8.encode('Content-Length: $huge\r\n\r\n');
       final result = parser.add(
         header.followedBy(utf8.encode('{"a":1}')).toList(),
@@ -81,7 +81,7 @@ void main() {
     });
 
     test('畸形 header 无限增长超过上限', () {
-      final hugeHeader = utf8.encode('X: ' + 'x' * 17000);
+      final hugeHeader = utf8.encode('X: ${'x' * 17000}');
       final result = parser.add(hugeHeader);
       expect(result, isA<FrameError>());
       expect((result as FrameError).reason, contains('超过上限'));

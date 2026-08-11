@@ -8,19 +8,14 @@ import 'package:play_engine/src/models.dart';
 
 /// 解析器成功解析出的结果。
 class _ResolvedPlay {
+  const _ResolvedPlay(this.url, this.parserName);
+
   final String url;
   final String parserName;
-  const _ResolvedPlay(this.url, this.parserName);
 }
 
 /// 起播编排器。
 class PlayCoordinator {
-  final SpiderPlayerApi spiderApi;
-  final ParserResolver parserResolver;
-  final SnifferLauncher sniffer;
-  final PlayExecutor executor;
-  final Duration playTimeout;
-
   /// 构造编排器。
   PlayCoordinator({
     required this.spiderApi,
@@ -29,6 +24,21 @@ class PlayCoordinator {
     required this.executor,
     this.playTimeout = const Duration(seconds: 8),
   });
+
+  /// 取播放信息的 Spider 接口。
+  final SpiderPlayerApi spiderApi;
+
+  /// 解析器链。
+  final ParserResolver parserResolver;
+
+  /// 嗅探器，回退链的最后一手。
+  final SnifferLauncher sniffer;
+
+  /// 实际执行播放的执行器。
+  final PlayExecutor executor;
+
+  /// 单个候选的起播超时。
+  final Duration playTimeout;
 
   /// 执行起播编排，返回结果或结构化的失败信息。
   Future<Result<PlayResult, PlayFailure>> play({
@@ -68,7 +78,6 @@ class PlayCoordinator {
           url: baseUrl,
           flag: flag.name,
           headers: headers,
-          isDirect: true,
         );
         final error = await executor.tryPlay(candidate);
         if (error == null) {
@@ -100,7 +109,6 @@ class PlayCoordinator {
           url: resolved.url,
           flag: flag.name,
           headers: headers,
-          isDirect: true,
         );
         final error = await executor.tryPlay(candidate);
         if (error == null) {
@@ -134,7 +142,6 @@ class PlayCoordinator {
           url: sniffedUrl,
           flag: flag.name,
           headers: headers,
-          isDirect: true,
         );
         final error = await executor.tryPlay(candidate);
         if (error == null) {

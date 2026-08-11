@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -14,11 +15,11 @@ void main() {
       server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       port = server.port;
       server.listen((request) {
-        request.response
+        final response = request.response
           ..statusCode = 200
           ..headers.contentType = ContentType.json
-          ..write('{"ok":true}')
-          ..close();
+          ..write('{"ok":true}');
+        unawaited(response.close());
       });
     });
 
@@ -83,10 +84,10 @@ void main() {
       final bigServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final bigPort = bigServer.port;
       final sub = bigServer.listen((request) {
-        request.response
+        final response = request.response
           ..statusCode = 200
-          ..write('x' * 1000)
-          ..close();
+          ..write('x' * 1000);
+        unawaited(response.close());
       });
 
       final api = HostApi(

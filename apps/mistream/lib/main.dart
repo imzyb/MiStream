@@ -1,13 +1,26 @@
 /// MiStream 桌面客户端的进程入口。
 ///
-/// 这里只负责把根 widget 挂起来。启动流程（配置加载、数据库迁移、插件扫描）
-/// 在 M5 落地时作为 [MiStreamApp] 之前的独立 bootstrap 阶段接入，而不是堆进
-/// main —— 堆在这里的初始化没办法在 widget 测试里跳过。
+/// 这里是**唯一**建库的地方：解析路径 → 打开库 → 装配 → 读引导状态 → 起 UI。
+/// 早先 main / app / 引导页 / 详情页各自 `AppDatabase.inMemory()`，
+/// 五个互不相干的空库，写进去的东西下一帧就没了。
 library;
 
 import 'package:flutter/widgets.dart';
 import 'package:mistream/app/app.dart';
+import 'package:mistream/application/app_assembly.dart';
+import 'package:mistream/application/app_paths.dart';
+import 'package:storage/storage.dart';
 
-void main() {
-  runApp(const MiStreamApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final database = AppDatabase.open(await resolveDatabasePath());
+  final assembly = AppAssembly(database, Repositories(database));
+
+  runApp(
+    MiStreamApp(
+      assembly: assembly,
+      onboardingDone: await assembly.configInstaller.isOnboardingDone(),
+    ),
+  );
 }

@@ -1,19 +1,11 @@
 /// QuickJS C API 的 dart:ffi 绑定。
 ///
-/// 当 `quickjs.dll`（Windows）或 `libquickjs.so`（Linux）可用时，
-/// 通过 [FFI] 加载并调用。需先编译 QuickJS 源码为共享库。
+/// 在 Windows 上使用 MSVC 编译的 wrapper DLL（quickjs_wrapper.dll）来避免
+/// MinGW/Dart FFI 之间的 Windows x64 ABI 不兼容问题。
+/// wrapper DLL 动态加载 MinGW 编译的 libquickjs.dll 并封装函数调用。
+/// wrapper 的 C 源码与构建脚本在 `runtimes/spider_js/native/`，产物不入库。
 ///
-/// 编译 QuickJS（Windows）：
-/// ```sh
-/// git clone https://github.com/bellard/quickjs
-/// cd quickjs
-/// cl /LD quickjs.c libbf.c /I. /Fequickjs.dll
-/// ```
-///
-/// 编译 QuickJS（Linux）：
-/// ```sh
-/// make libquickjs.so
-/// ```
+/// 在 Linux/macOS 上直接使用 QuickJS 共享库。
 library;
 
 import 'dart:ffi';
@@ -23,105 +15,132 @@ import 'package:ffi/ffi.dart';
 
 // ---- C 类型定义 ----
 
-/// JS 值类型（Opaque handle）。
-final class JSValue extends Opaque {}
-
-/// JS 上下文。
+/// JS 上下文（不透明句柄）。
 final class JSContext extends Opaque {}
 
-/// JS 运行时。
+/// JS 运行时（不透明句柄）。
 final class JSRuntime extends Opaque {}
 
-/// JS 值（C 结构体，两个指针大小）。
-final class JSValueConst extends Struct {
-  @IntPtr()
-  external int tag;
+// ---- Wrapper DLL 函数类型 ----
 
-  @IntPtr()
-  external int u;
-}
+/// `qs_init(dll_path) -> int`（1 = 成功，0 = 失败）的 C 签名。
+typedef QsInitC = Int32 Function(Pointer<Utf8> dllPath);
 
-// ---- C 函数声明 ----
+/// [QsInitC] 的 Dart 签名。
+typedef QsInitDart = int Function(Pointer<Utf8> dllPath);
 
-/// JS_NewRuntime
-typedef JS_NewRuntimeC = Pointer<JSRuntime> Function();
-typedef JS_NewRuntimeDart = Pointer<JSRuntime> Function();
+/// `qs_new_runtime() -> void*` 的 C 签名。
+typedef QsNewRuntimeC = Pointer<Void> Function();
 
-/// JS_FreeRuntime
-typedef JS_FreeRuntimeC = Void Function(Pointer<JSRuntime> rt);
-typedef JS_FreeRuntimeDart = void Function(Pointer<JSRuntime> rt);
+/// [QsNewRuntimeC] 的 Dart 签名。
+typedef QsNewRuntimeDart = Pointer<Void> Function();
 
-/// JS_NewContext
-typedef JS_NewContextC = Pointer<JSContext> Function(Pointer<JSRuntime> rt);
-typedef JS_NewContextDart = Pointer<JSContext> Function(Pointer<JSRuntime> rt);
+/// `qs_free_runtime(rt)` 的 C 签名。
+typedef QsFreeRuntimeC = Void Function(Pointer<Void> rt);
 
-/// JS_FreeContext
-typedef JS_FreeContextC = Void Function(Pointer<JSContext> ctx);
-typedef JS_FreeContextDart = void Function(Pointer<JSContext> ctx);
+/// [QsFreeRuntimeC] 的 Dart 签名。
+typedef QsFreeRuntimeDart = void Function(Pointer<Void> rt);
 
-/// JS_Eval
-/// JSValue JS_Eval(JSContext *ctx, const char *input, size_t input_len,
-///                  const char *filename, int flags);
-typedef JS_EvalC =
-    JSValueConst Function(
-      Pointer<JSContext> ctx,
+/// `qs_new_context(rt) -> void*` 的 C 签名。
+typedef QsNewContextC = Pointer<Void> Function(Pointer<Void> rt);
+
+/// [QsNewContextC] 的 Dart 签名。
+typedef QsNewContextDart = Pointer<Void> Function(Pointer<Void> rt);
+
+/// `qs_free_context(ctx)` 的 C 签名。
+typedef QsFreeContextC = Void Function(Pointer<Void> ctx);
+
+/// [QsFreeContextC] 的 Dart 签名。
+typedef QsFreeContextDart = void Function(Pointer<Void> ctx);
+
+/// `qs_eval(ctx, input, input_len, filename, flags, &tag, &u) -> int` 的 C 签名。
+typedef QsEvalC =
+    Int32 Function(
+      Pointer<Void> ctx,
       Pointer<Utf8> input,
-      Size inputLen,
+      Int32 inputLen,
       Pointer<Utf8> filename,
       Int32 flags,
+      Pointer<Int64> resultTag,
+      Pointer<Uint64> resultU,
     );
-typedef JS_EvalDart =
-    JSValueConst Function(
-      Pointer<JSContext> ctx,
+
+/// [QsEvalC] 的 Dart 签名。
+typedef QsEvalDart =
+    int Function(
+      Pointer<Void> ctx,
       Pointer<Utf8> input,
       int inputLen,
       Pointer<Utf8> filename,
       int flags,
+      Pointer<Int64> resultTag,
+      Pointer<Uint64> resultU,
     );
 
-/// 全局 eval 标记。
-const int JS_EVAL_TYPE_GLOBAL = 0;
+/// `qs_to_cstring(ctx, val_tag, val_u) -> const char*` 的 C 签名。
+typedef QsToCStringC =
+    Pointer<Utf8> Function(Pointer<Void> ctx, Int64 valTag, Uint64 valU);
 
-/// 模块 eval 标记。
-const int JS_EVAL_TYPE_MODULE = 1;
+/// [QsToCStringC] 的 Dart 签名。
+typedef QsToCStringDart =
+    Pointer<Utf8> Function(Pointer<Void> ctx, int valTag, int valU);
 
-/// JS_ToCStringLen2
-/// const char *JS_ToCStringLen2(JSContext *ctx, size_t *plen, JSValueConst val, int flags);
-typedef JS_ToCStringLen2C =
-    Pointer<Utf8> Function(
-      Pointer<JSContext> ctx,
-      Pointer<Size> plen,
-      JSValueConst val,
-      Int32 flags,
-    );
-typedef JS_ToCStringLen2Dart =
-    Pointer<Utf8> Function(
-      Pointer<JSContext> ctx,
-      Pointer<Size> plen,
-      JSValueConst val,
-      int flags,
-    );
+/// `qs_free_cstring(ctx, str)` 的 C 签名。
+typedef QsFreeCStringC = Void Function(Pointer<Void> ctx, Pointer<Utf8> str);
 
-/// JS_FreeCString
-typedef JS_FreeCStringC =
-    Void Function(Pointer<JSContext> ctx, Pointer<Utf8> ptr);
-typedef JS_FreeCStringDart =
-    void Function(Pointer<JSContext> ctx, Pointer<Utf8> ptr);
+/// [QsFreeCStringC] 的 Dart 签名。
+typedef QsFreeCStringDart = void Function(Pointer<Void> ctx, Pointer<Utf8> str);
 
-/// JS_FreeValue
-typedef JS_FreeValueC = Void Function(Pointer<JSContext> ctx, JSValueConst v);
-typedef JS_FreeValueDart =
-    void Function(Pointer<JSContext> ctx, JSValueConst v);
+/// `qs_free_value(ctx, val_tag, val_u)` 的 C 签名。
+typedef QsFreeValueC =
+    Void Function(Pointer<Void> ctx, Int64 valTag, Uint64 valU);
 
-/// JS_IsException
-/// 内联函数，需要手动实现
-bool JS_IsException(JSValueConst v) => v.tag == 0 - 1; // JS_TAG_EXCEPTION
+/// [QsFreeValueC] 的 Dart 签名。
+typedef QsFreeValueDart =
+    void Function(Pointer<Void> ctx, int valTag, int valU);
 
-/// 尝试加载 QuickJS 共享库。
-DynamicLibrary? loadQuickJS() {
+// ---- 全局标记 ----
+
+/// 全局 eval 标记（`JS_EVAL_TYPE_GLOBAL`）。
+const int jsEvalTypeGlobal = 0;
+
+/// 模块 eval 标记（`JS_EVAL_TYPE_MODULE`）。
+const int jsEvalTypeModule = 1;
+
+/// 尝试加载 QuickJS wrapper 共享库。
+DynamicLibrary? _loadWrapperLibrary() {
   try {
     if (Platform.isWindows) {
-      return DynamicLibrary.open('quickjs.dll');
+      // 在 Windows 上使用 wrapper DLL
+      // Platform.script.path 在 Windows 上可能含正斜杠，需要规范化
+      var scriptDir = '';
+      if (Platform.script.scheme == 'file') {
+        scriptDir = Directory(Platform.script.toFilePath()).parent.path;
+      }
+
+      final candidates = <String>[
+        // 1. 当前工作目录
+        'quickjs_wrapper.dll',
+        // 2. 可执行文件所在目录
+        '${Directory.current.path}\\quickjs_wrapper.dll',
+        // 3. 环境变量指定的路径
+        if (Platform.environment.containsKey('QUICKJS_DLL_PATH'))
+          '${Platform.environment['QUICKJS_DLL_PATH']}\\quickjs_wrapper.dll',
+        // 4. 包 lib/src/engine 目录（相对于脚本路径）
+        if (scriptDir.isNotEmpty)
+          '$scriptDir\\lib\\src\\engine\\quickjs_wrapper.dll',
+        // 5. 引擎目录（相对于包根）
+        if (scriptDir.isNotEmpty) '$scriptDir\\engine\\quickjs_wrapper.dll',
+      ];
+
+      for (final path in candidates) {
+        if (File(path).existsSync()) {
+          return DynamicLibrary.open(path);
+        }
+      }
+
+      // 最后尝试直接打开
+      return DynamicLibrary.open('quickjs_wrapper.dll');
     }
     if (Platform.isMacOS) {
       return DynamicLibrary.open('libquickjs.dylib');
@@ -133,94 +152,126 @@ DynamicLibrary? loadQuickJS() {
   }
 }
 
-/// 已加载的 QuickJS 绑定。
-final DynamicLibrary? _lib = loadQuickJS();
+/// 已加载的 wrapper 库。
+final DynamicLibrary? _wrapperLib = _loadWrapperLibrary();
 
-/// 是否可用。
-bool get isQuickJSAvailable => _lib != null;
+/// native QuickJS 库是否已成功加载。
+bool get isQuickJSAvailable => _wrapperLib != null;
 
-// ---- 绑定的函数 ----
+// ---- Wrapper 绑定的函数 ----
 
-final JS_NewRuntimeDart? _jsNewRuntime = _lib != null
-    ? _lib!.lookupFunction<JS_NewRuntimeC, JS_NewRuntimeDart>('JS_NewRuntime')
-    : null;
+final QsInitDart? _qsInit = _wrapperLib?.lookupFunction<QsInitC, QsInitDart>(
+  'qs_init',
+);
 
-final JS_FreeRuntimeDart? _jsFreeRuntime = _lib != null
-    ? _lib!.lookupFunction<JS_FreeRuntimeC, JS_FreeRuntimeDart>(
-        'JS_FreeRuntime',
-      )
-    : null;
+final QsNewRuntimeDart? _qsNewRuntime = _wrapperLib
+    ?.lookupFunction<QsNewRuntimeC, QsNewRuntimeDart>('qs_new_runtime');
 
-final JS_NewContextDart? _jsNewContext = _lib != null
-    ? _lib!.lookupFunction<JS_NewContextC, JS_NewContextDart>('JS_NewContext')
-    : null;
+final QsFreeRuntimeDart? _qsFreeRuntime = _wrapperLib
+    ?.lookupFunction<QsFreeRuntimeC, QsFreeRuntimeDart>('qs_free_runtime');
 
-final JS_FreeContextDart? _jsFreeContext = _lib != null
-    ? _lib!.lookupFunction<JS_FreeContextC, JS_FreeContextDart>(
-        'JS_FreeContext',
-      )
-    : null;
+final QsNewContextDart? _qsNewContext = _wrapperLib
+    ?.lookupFunction<QsNewContextC, QsNewContextDart>('qs_new_context');
 
-final JS_EvalDart? _jsEval = _lib != null
-    ? _lib!.lookupFunction<JS_EvalC, JS_EvalDart>('JS_Eval')
-    : null;
+final QsFreeContextDart? _qsFreeContext = _wrapperLib
+    ?.lookupFunction<QsFreeContextC, QsFreeContextDart>('qs_free_context');
 
-final JS_ToCStringLen2Dart? _jsToCString = _lib != null
-    ? _lib!.lookupFunction<JS_ToCStringLen2C, JS_ToCStringLen2Dart>(
-        'JS_ToCStringLen2',
-      )
-    : null;
+final QsEvalDart? _qsEval = _wrapperLib?.lookupFunction<QsEvalC, QsEvalDart>(
+  'qs_eval',
+);
 
-final JS_FreeCStringDart? _jsFreeCString = _lib != null
-    ? _lib!.lookupFunction<JS_FreeCStringC, JS_FreeCStringDart>(
-        'JS_FreeCString',
-      )
-    : null;
+final QsToCStringDart? _qsToCString = _wrapperLib
+    ?.lookupFunction<QsToCStringC, QsToCStringDart>('qs_to_cstring');
 
-final JS_FreeValueDart? _jsFreeValue = _lib != null
-    ? _lib!.lookupFunction<JS_FreeValueC, JS_FreeValueDart>('JS_FreeValue')
-    : null;
+final QsFreeCStringDart? _qsFreeCString = _wrapperLib
+    ?.lookupFunction<QsFreeCStringC, QsFreeCStringDart>('qs_free_cstring');
 
-/// 创建 QuickJS 运行时。
-Pointer<JSRuntime>? newRuntime() => _jsNewRuntime?.call();
+final QsFreeValueDart? _qsFreeValue = _wrapperLib
+    ?.lookupFunction<QsFreeValueC, QsFreeValueDart>('qs_free_value');
+
+/// 初始化 QuickJS wrapper。必须在使用其他函数之前调用。
+///
+/// [dllPath] 是 libquickjs.dll 的完整路径。
+/// 返回 true 表示初始化成功。wrapper 侧自身幂等，重复调用无害。
+bool initQuickJS(String dllPath) {
+  final init = _qsInit;
+  if (init == null) return false;
+  final nativePath = dllPath.toNativeUtf8();
+  try {
+    return init(nativePath) == 1;
+  } finally {
+    calloc.free(nativePath);
+  }
+}
+
+/// 创建 QuickJS 运行时。native 不可用时返回 null。
+///
+/// 句柄的所有权归调用方——每个 `JsRuntime` 实例各持各的，
+/// 这里刻意不留模块级缓存，否则多实例会互相覆盖。
+Pointer<Void>? newRuntime() => _qsNewRuntime?.call();
 
 /// 释放运行时。
-void freeRuntime(Pointer<JSRuntime> rt) => _jsFreeRuntime?.call(rt);
+void freeRuntime(Pointer<Void> rt) => _qsFreeRuntime?.call(rt);
 
-/// 创建 JS 上下文。
-Pointer<JSContext>? newContext(Pointer<JSRuntime> rt) =>
-    _jsNewContext?.call(rt);
+/// 在 [rt] 上创建 JS 上下文。native 不可用时返回 null。
+Pointer<Void>? newContext(Pointer<Void> rt) => _qsNewContext?.call(rt);
 
 /// 释放上下文。
-void freeContext(Pointer<JSContext> ctx) => _jsFreeContext?.call(ctx);
+void freeContext(Pointer<Void> ctx) => _qsFreeContext?.call(ctx);
 
-/// 执行 JS 代码。返回 JSON 字符串，失败返回 null。
-String? eval(Pointer<JSContext> ctx, String code) {
-  if (_jsEval == null || _jsToCString == null || _jsFreeCString == null) {
+/// 在 [ctx] 中执行 JS 代码 [code]。返回结果字符串，失败返回 null。
+String? eval(Pointer<Void> ctx, String code) {
+  final evalFn = _qsEval;
+  final toCString = _qsToCString;
+  final freeCString = _qsFreeCString;
+  final freeValue = _qsFreeValue;
+  if (evalFn == null ||
+      toCString == null ||
+      freeCString == null ||
+      freeValue == null) {
     return null;
   }
+
   final input = code.toNativeUtf8();
   final filename = 'eval'.toNativeUtf8();
-  final result = _jsEval!(
-    ctx,
-    input,
-    code.length,
-    filename,
-    JS_EVAL_TYPE_GLOBAL,
-  );
-  calloc.free(input);
-  calloc.free(filename);
+  final resultTag = calloc<Int64>();
+  final resultU = calloc<Uint64>();
 
-  if (JS_IsException(result)) {
-    final errStr = _jsToCString!(ctx, nullptr, result, 0);
-    _jsFreeCString!(ctx, errStr);
-    _jsFreeValue!(ctx, result);
-    return null;
+  try {
+    final evalResult = evalFn(
+      ctx,
+      input,
+      code.length,
+      filename,
+      jsEvalTypeGlobal,
+      resultTag,
+      resultU,
+    );
+
+    if (evalResult == -1) {
+      final errStr = toCString(ctx, resultTag.value, resultU.value);
+      if (errStr != nullptr) {
+        freeCString(ctx, errStr);
+      }
+      freeValue(ctx, resultTag.value, resultU.value);
+      return null;
+    }
+
+    final str = toCString(ctx, resultTag.value, resultU.value);
+    if (str == nullptr) {
+      freeValue(ctx, resultTag.value, resultU.value);
+      return null;
+    }
+
+    final output = str.toDartString();
+    freeCString(ctx, str);
+    freeValue(ctx, resultTag.value, resultU.value);
+    return output;
+  } finally {
+    calloc
+      ..free(input)
+      ..free(filename)
+      ..free(resultTag)
+      ..free(resultU);
   }
-
-  final str = _jsToCString!(ctx, nullptr, result, 0);
-  final output = str.toDartString();
-  _jsFreeCString!(ctx, str);
-  _jsFreeValue!(ctx, result);
-  return output;
 }

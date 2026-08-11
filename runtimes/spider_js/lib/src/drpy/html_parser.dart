@@ -1,8 +1,8 @@
 /// drpy 宿主 API：伪 XPath HTML 解析器。
 library;
 
-import 'package:html/parser.dart' as html;
 import 'package:html/dom.dart' as dom;
+import 'package:html/parser.dart' as html;
 
 /// 解析规则字符串，返回 (selectors, extractor)。
 /// selectors: 标签名/类名/id 链，extractor: Text 或属性名。
@@ -47,7 +47,7 @@ String pdfh(String htmlInput, String rule) {
   final root = doc.documentElement!;
   final (selectors, extractor) = _parseRule(rule);
 
-  List<dom.Element> current = [root];
+  var current = <dom.Element>[root];
   for (final sel in selectors) {
     final next = <dom.Element>[];
     for (final el in current) {
@@ -67,7 +67,7 @@ List<String> pdfa(String htmlInput, String rule) {
   final root = doc.documentElement!;
   final (selectors, extractor) = _parseRule(rule);
 
-  List<dom.Element> current = [root];
+  var current = <dom.Element>[root];
   for (final sel in selectors) {
     final next = <dom.Element>[];
     for (final el in current) {

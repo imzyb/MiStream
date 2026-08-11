@@ -27,6 +27,17 @@ int _nextRequestId = 0;
 
 /// 通过 stdio 与子进程交互的 JSON-RPC 管道。
 class StdioRpcChannel {
+  /// 通过 [stdin] 流（子进程输出）与 [_stdout] sink（子进程输入）构造管道。
+  StdioRpcChannel({
+    required Stream<List<int>> stdin,
+    required this._stdout,
+  }) {
+    _stdinSub = stdin.listen(
+      _onData,
+      onError: _onChannelError,
+      onDone: _onDone,
+    );
+  }
   late final StreamSubscription<List<int>> _stdinSub;
   final IOSink _stdout;
   final LspFrameParser _parser = LspFrameParser();
@@ -38,30 +49,21 @@ class StdioRpcChannel {
   bool _closed = false;
   int _writeQueueLength = 0;
 
-  /// 通过 [stdin] 流（子进程输出）与 [stdout] sink（子进程输入）构造管道。
-  StdioRpcChannel({
-    required Stream<List<int>> stdin,
-    required IOSink stdout,
-  }) : _stdout = stdout {
-    _stdinSub = stdin.listen(
-      _onData,
-      onError: _onChannelError,
-      onDone: _onDone,
-    );
-  }
-
   void _onData(List<int> data) {
     if (_closed) return;
     _processChunk(data);
   }
 
   void _processChunk(List<int> data) {
+    // 首轮把新到的字节喂给分帧器；此后分帧器已缓存剩余字节，
+    // 再喂原始 data 会重复消费，所以后续轮次传空。
+    var pending = data;
     for (;;) {
-      final result = _parser.add(data);
+      final result = _parser.add(pending);
       switch (result) {
         case FrameComplete(:final body):
           _handleMessage(body);
-          data = const [];
+          pending = const [];
         case FrameNeedMore():
           return;
         case FrameError(:final reason):
@@ -110,10 +112,10 @@ class StdioRpcChannel {
     Duration? timeout,
   }) async {
     if (_writeQueueLength >= kWriteQueueMax) {
-      return Err(
+      return const Err(
         RemoteError(
           code: ErrorCode.runtimeBusy,
-          message: '写队列已满 (${kWriteQueueMax}条)',
+          message: '写队列已满 ($kWriteQueueMax条)',
         ),
       );
     }
@@ -166,7 +168,8 @@ class StdioRpcChannel {
   }
 
   void _reply(RpcResponse resp) {
-    _send(resp);
+    // 回复失败无处上报（管道已坏时 _send 自身会短路），刻意不阻塞调用方。
+    unawaited(_send(resp));
   }
 
   void _onDone() {
@@ -201,11 +204,11 @@ class StdioRpcChannel {
     if (_closed) return;
     _closed = true;
     await _stdinSub.cancel();
-    _notificationController.close();
-    _requestController.close();
+    await _notificationController.close();
+    await _requestController.close();
     for (final entry in _pending.entries) {
       entry.value.complete(
-        Err(
+        const Err(
           RemoteError(
             code: ErrorCode.requestCancelled,
             message: '管道已关闭',

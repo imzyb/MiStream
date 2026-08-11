@@ -12,6 +12,15 @@ import 'package:core_domain/core_domain.dart';
 
 /// `host.fetch` 响应。
 class FetchResult {
+  /// 构造抓取结果。
+  const FetchResult({
+    required this.status,
+    required this.headers,
+    required this.body,
+    required this.finalUrl,
+    required this.elapsedMs,
+  });
+
   /// HTTP 状态码。
   final int status;
 
@@ -27,15 +36,6 @@ class FetchResult {
   /// 耗时（毫秒）。
   final int elapsedMs;
 
-  /// 构造抓取结果。
-  const FetchResult({
-    required this.status,
-    required this.headers,
-    required this.body,
-    required this.finalUrl,
-    required this.elapsedMs,
-  });
-
   /// 序列化为 JSON 映射。
   Map<String, Object?> toJson() => {
     'status': status,
@@ -48,6 +48,17 @@ class FetchResult {
 
 /// `host.fetch` 的配置。
 class HostFetchConfig {
+  /// 构造抓取配置。
+  HostFetchConfig({
+    this.allowedHosts = const [],
+    this.maxResponseBytes = 10 * 1024 * 1024,
+    this.defaultTimeoutMs = 15000,
+    bool Function(String protocol)? protocolChecker,
+    bool Function(String host)? privateChecker,
+  }) : isProtocolAllowed =
+           protocolChecker ?? ((p) => p == 'http' || p == 'https'),
+       isPrivateAddress = privateChecker ?? _defaultPrivateChecker;
+
   /// 域名白名单。空列表表示允许所有（默认）。
   final List<String> allowedHosts;
 
@@ -62,21 +73,17 @@ class HostFetchConfig {
 
   /// 私网 / 回环地址拦截。
   bool Function(String host) isPrivateAddress;
-
-  /// 构造抓取配置。
-  HostFetchConfig({
-    this.allowedHosts = const [],
-    this.maxResponseBytes = 10 * 1024 * 1024,
-    this.defaultTimeoutMs = 15000,
-    bool Function(String protocol)? protocolChecker,
-    bool Function(String host)? privateChecker,
-  }) : isProtocolAllowed =
-           protocolChecker ?? ((p) => p == 'http' || p == 'https'),
-       isPrivateAddress = privateChecker ?? _defaultPrivateChecker;
 }
 
 /// 存储操作回调（host.storage 实现）。
 class HostStorage {
+  /// 构造存储操作。
+  const HostStorage({
+    required this.get,
+    required this.set,
+    required this.delete,
+  });
+
   /// 读取值。
   final Future<String?> Function(String owner, String key) get;
 
@@ -85,13 +92,6 @@ class HostStorage {
 
   /// 删除值。
   final Future<void> Function(String owner, String key) delete;
-
-  /// 构造存储操作。
-  const HostStorage({
-    required this.get,
-    required this.set,
-    required this.delete,
-  });
 }
 
 bool _defaultPrivateChecker(String host) {
@@ -103,23 +103,22 @@ bool _defaultPrivateChecker(String host) {
 /// 处理 `host.fetch`、`host.env` 等请求。`host.storage.*` 需外部注入
 /// 存储实现。
 class HostApi {
+  /// 构造 Host API。
+  HostApi({HostFetchConfig? config, this._storage})
+    : _config = config ?? HostFetchConfig();
   final HostFetchConfig _config;
   final HostStorage? _storage;
 
-  /// 构造 Host API。
-  HostApi({HostFetchConfig? config, HostStorage? storage})
-    : _config = config ?? HostFetchConfig(),
-      _storage = storage;
-
   /// 处理 `host.fetch` 请求。
   ///
-  /// params: `{instanceId, url, method, headers, body, timeoutMs, redirect, responseType}`
+  /// params: `{instanceId, url, method, headers, body, timeoutMs, redirect,
+  /// responseType}`
   Future<Result<FetchResult, AppError>> fetch(
     Map<String, Object?> params,
   ) async {
     final urlStr = params['url'] as String?;
     if (urlStr == null || urlStr.isEmpty) {
-      return Err(
+      return const Err(
         LocalError(
           code: ErrorCode.invalidArgument,
           message: 'url 必填',
@@ -183,14 +182,14 @@ class HostApi {
 
       // 设置请求头
       if (params['headers'] is Map) {
-        for (final entry in (params['headers'] as Map).entries) {
+        for (final entry in (params['headers']! as Map).entries) {
           request.headers.set(entry.key.toString(), entry.value.toString());
         }
       }
 
       // 设置请求体
       if (params['body'] != null && method != 'GET') {
-        request.write(utf8.encode(params['body'] as String));
+        request.write(utf8.encode(params['body']! as String));
       }
 
       final response = await request.close().timeout(
@@ -208,7 +207,7 @@ class HostApi {
         bodyBytes.addAll(chunk);
         if (bodyBytes.length > _config.maxResponseBytes) {
           client.close(force: true);
-          return Err(
+          return const Err(
             RemoteError(
               code: ErrorCode.responseTooLarge,
               message: '响应超过大小上限',
@@ -246,7 +245,7 @@ class HostApi {
         ),
       );
     } on TimeoutException {
-      return Err(
+      return const Err(
         RemoteError(
           code: ErrorCode.networkTimeout,
           message: '请求超时',
@@ -288,13 +287,13 @@ class HostApi {
       return (env(params), null);
     }
     if (method == 'host.storage.get') {
-      return await _handleStorageGet(params);
+      return _handleStorageGet(params);
     }
     if (method == 'host.storage.set') {
-      return await _handleStorageSet(params);
+      return _handleStorageSet(params);
     }
     if (method == 'host.storage.delete') {
-      return await _handleStorageDelete(params);
+      return _handleStorageDelete(params);
     }
     return (null, '未知方法: $method');
   }

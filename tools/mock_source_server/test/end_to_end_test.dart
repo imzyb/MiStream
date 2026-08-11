@@ -49,7 +49,7 @@ void main() {
       final list = detail['list'] as List<Object?>?;
       expect(list, isNotNull);
       expect(list, hasLength(1));
-      final first = list!.first as Map<String, Object?>;
+      final first = list!.first! as Map<String, Object?>;
       expect(first['vod_name'], '测试电影');
     });
 
@@ -57,7 +57,7 @@ void main() {
       final search = await fetch('/api.php?action=search&wd=海贼王');
       final list = search['list'] as List<Object?>?;
       expect(list, isNotEmpty);
-      final first = list!.first as Map<String, Object?>;
+      final first = list!.first! as Map<String, Object?>;
       expect(first['vod_name'], contains('海贼王'));
     });
 
@@ -76,7 +76,7 @@ void main() {
       final homeList = home['list'] as List<Object?>?;
       expect(homeList, isNotEmpty);
       final vodId =
-          (homeList!.first as Map<String, Object?>)['vod_id'] as String?;
+          (homeList!.first! as Map<String, Object?>)['vod_id'] as String?;
       expect(vodId, isNotEmpty);
 
       final search = await fetch('/api.php?action=search&wd=test');

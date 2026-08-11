@@ -1,7 +1,7 @@
 import 'dart:convert';
 
-import 'package:core_config/src/config_parser.dart';
 import 'package:core_config/src/config_import_service.dart';
+import 'package:core_config/src/config_parser.dart';
 import 'package:core_domain/core_domain.dart';
 import 'package:test/test.dart';
 

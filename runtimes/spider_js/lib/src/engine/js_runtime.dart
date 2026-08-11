@@ -20,8 +20,8 @@ enum JsRuntimeStatus {
 ///
 /// 每个源独立实例，提供 JS 执行能力。
 class JsRuntime {
-  Pointer<qjs.JSRuntime>? _rt;
-  Pointer<qjs.JSContext>? _ctx;
+  Pointer<Void>? _rt;
+  Pointer<Void>? _ctx;
   JsRuntimeStatus _status = JsRuntimeStatus.unavailable;
 
   /// 当前状态。
@@ -32,8 +32,9 @@ class JsRuntime {
 
   /// 初始化 QuickJS 引擎。
   ///
+  /// [dllPath] 是 libquickjs.dll 的完整路径（仅 Windows 需要）。
   /// 返回 true 表示成功，false 表示 native 库不可用。
-  bool init() {
+  bool init([String? dllPath]) {
     if (_rt != null) return true;
 
     if (!qjs.isQuickJSAvailable) {
@@ -41,16 +42,25 @@ class JsRuntime {
       return false;
     }
 
-    _rt = qjs.newRuntime();
-    if (_rt == null) return false;
-
-    _ctx = qjs.newContext(_rt!);
-    if (_ctx == null) {
-      qjs.freeRuntime(_rt!);
-      _rt = null;
+    // wrapper 侧的 qs_init 自身幂等（已加载则直接返回 1），所以这里不再用
+    // 静态标志去重——那样第二个实例会跳过初始化，反而在 wrapper 尚未加载
+    // 成功时留下一个「以为初始化过了」的坏状态。
+    if (dllPath != null && !qjs.initQuickJS(dllPath)) {
+      _status = JsRuntimeStatus.unavailable;
       return false;
     }
 
+    final rt = qjs.newRuntime();
+    if (rt == null) return false;
+
+    final ctx = qjs.newContext(rt);
+    if (ctx == null) {
+      qjs.freeRuntime(rt);
+      return false;
+    }
+
+    _rt = rt;
+    _ctx = ctx;
     _status = JsRuntimeStatus.available;
     return true;
   }
@@ -59,18 +69,21 @@ class JsRuntime {
   ///
   /// 返回 JSON 字符串结果，失败返回 null。
   String? eval(String code) {
-    if (_ctx == null || !isAvailable) return null;
-    return qjs.eval(_ctx!, code);
+    final ctx = _ctx;
+    if (ctx == null || !isAvailable) return null;
+    return qjs.eval(ctx, code);
   }
 
   /// 释放资源。
   void dispose() {
-    if (_ctx != null) {
-      qjs.freeContext(_ctx!);
+    final ctx = _ctx;
+    if (ctx != null) {
+      qjs.freeContext(ctx);
       _ctx = null;
     }
-    if (_rt != null) {
-      qjs.freeRuntime(_rt!);
+    final rt = _rt;
+    if (rt != null) {
+      qjs.freeRuntime(rt);
       _rt = null;
     }
     _status = JsRuntimeStatus.unavailable;

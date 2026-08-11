@@ -5,7 +5,7 @@ export 'src/models.dart';
 export 'src/search_use_case.dart'
     show
         SearchUseCase,
-        normalizeTitle,
         kGlobalConcurrency,
+        kMaxResultsPerSource,
         kSourceTimeout,
-        kMaxResultsPerSource;
+        normalizeTitle;

@@ -18,7 +18,7 @@ class _MockSpiderApi implements SpiderPlayerApi {
     List<String> vipFlags = const [],
   }) async {
     calls++;
-    return _results[flag] ?? const PlayerContentResult(url: '');
+    return _results[flag] ?? const PlayerContentResult();
   }
 }
 
@@ -70,11 +70,11 @@ void main() {
 
   group('PlayCoordinator', () {
     test('直链直接播放成功', () async {
-      final api = _MockSpiderApi();
-      api.setResult(
-        'qiyi',
-        const PlayerContentResult(parse: 0, url: 'https://direct.m3u8'),
-      );
+      final api = _MockSpiderApi()
+        ..setResult(
+          'qiyi',
+          const PlayerContentResult(url: 'https://direct.m3u8'),
+        );
       final executor = _MockExecutor();
 
       final coordinator = PlayCoordinator(
@@ -96,15 +96,15 @@ void main() {
     });
 
     test('直链失败后换下一个 flag', () async {
-      final api = _MockSpiderApi();
-      api.setResult(
-        'qiyi',
-        const PlayerContentResult(parse: 0, url: 'https://bad1.m3u8'),
-      );
-      api.setResult(
-        'youku',
-        const PlayerContentResult(parse: 0, url: 'https://good2.m3u8'),
-      );
+      final api = _MockSpiderApi()
+        ..setResult(
+          'qiyi',
+          const PlayerContentResult(url: 'https://bad1.m3u8'),
+        )
+        ..setResult(
+          'youku',
+          const PlayerContentResult(url: 'https://good2.m3u8'),
+        );
       final executor = _MockExecutor()..failReason = '403';
 
       final coordinator = PlayCoordinator(
@@ -126,11 +126,11 @@ void main() {
     });
 
     test('需解析走解析器链成功', () async {
-      final api = _MockSpiderApi();
-      api.setResult(
-        'qiyi',
-        const PlayerContentResult(parse: 1, url: 'https://page.html'),
-      );
+      final api = _MockSpiderApi()
+        ..setResult(
+          'qiyi',
+          const PlayerContentResult(parse: 1, url: 'https://page.html'),
+        );
       final parser = _MockParser()..setResult('官解', 'https://resolved.m3u8');
       final executor = _MockExecutor();
 
@@ -153,11 +153,11 @@ void main() {
     });
 
     test('解析器失败后嗅探', () async {
-      final api = _MockSpiderApi();
-      api.setResult(
-        'qiyi',
-        const PlayerContentResult(parse: 1, url: 'https://page.html'),
-      );
+      final api = _MockSpiderApi()
+        ..setResult(
+          'qiyi',
+          const PlayerContentResult(parse: 1, url: 'https://page.html'),
+        );
       final parser = _MockParser(); // 不返回结果
       final sniffer = _MockSniffer()..result = 'https://sniffed.m3u8';
       final executor = _MockExecutor();
@@ -182,9 +182,9 @@ void main() {
     });
 
     test('全部失败返回结构化错误', () async {
-      final api = _MockSpiderApi();
-      api.setResult('qiyi', const PlayerContentResult(parse: 0, url: ''));
-      api.setResult('youku', const PlayerContentResult(parse: 0, url: ''));
+      final api = _MockSpiderApi()
+        ..setResult('qiyi', const PlayerContentResult())
+        ..setResult('youku', const PlayerContentResult());
       final coordinator = PlayCoordinator(
         spiderApi: api,
         parserResolver: _MockParser(),
@@ -204,11 +204,11 @@ void main() {
     });
 
     test('解析器按 flag 过滤', () async {
-      final api = _MockSpiderApi();
-      api.setResult(
-        'youku',
-        const PlayerContentResult(parse: 1, url: 'https://page.html'),
-      );
+      final api = _MockSpiderApi()
+        ..setResult(
+          'youku',
+          const PlayerContentResult(parse: 1, url: 'https://page.html'),
+        );
       // 官解只适用于 qiyi，不适用于 youku
       final parser = _MockParser()..setResult('官解', 'https://resolved.m3u8');
       final sniffer = _MockSniffer()..result = null;

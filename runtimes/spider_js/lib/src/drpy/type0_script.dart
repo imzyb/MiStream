@@ -27,7 +27,7 @@ library;
 ///   "searchRule": "body&&.list&&a&&href"
 /// }
 /// ```
-const String type0Script = r'''
+const String type0Script = '''
 // type=0 内置通用脚本 — XPath/CSP 网页解析器
 // 由源配置 'ext' 字段驱动，通过 req + pdfh/pdfa 提取页面数据
 

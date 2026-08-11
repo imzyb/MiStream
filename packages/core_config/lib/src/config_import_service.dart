@@ -10,15 +10,21 @@ import 'package:core_domain/core_domain.dart';
 
 /// 配置导入结果。
 class ConfigImportResult {
-  final TvBoxConfig config;
-  final String format;
-  final int siteCount;
-
+  /// 构造导入结果。
   const ConfigImportResult({
     required this.config,
     required this.format,
     required this.siteCount,
   });
+
+  /// 解析后的配置。
+  final TvBoxConfig config;
+
+  /// 命中的解码格式（plain / base64 / aes）。
+  final String format;
+
+  /// 站点数，等于 `config.sites.length`，便于 UI 直接展示。
+  final int siteCount;
 }
 
 /// 配置导入服务。
@@ -51,7 +57,7 @@ class ConfigImportService {
 
     // 3. 校验：必须有至少一个站点
     if (config.sites.isEmpty) {
-      return Err(
+      return const Err(
         LocalError(
           code: ErrorCode.configEmpty,
           message: '解析成功但无可用站点',

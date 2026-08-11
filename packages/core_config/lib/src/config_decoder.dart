@@ -11,14 +11,14 @@ import 'package:encrypt/encrypt.dart' as enc;
 
 /// 解码结果。
 class DecodeResult {
+  /// 构造解码结果。
+  const DecodeResult({required this.json, required this.format});
+
   /// 解码后的 JSON 文本。
   final String json;
 
   /// 使用的解码格式。
   final String format;
-
-  /// 构造解码结果。
-  const DecodeResult({required this.json, required this.format});
 }
 
 /// TVBox 配置解码器。
@@ -47,7 +47,7 @@ class ConfigDecoder {
       if (aes != null) return Ok(aes);
     }
 
-    return Err(
+    return const Err(
       LocalError(
         code: ErrorCode.configDecodeFailed,
         message: '明文/Base64/AES 三条解码路径全部失败',

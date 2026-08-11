@@ -23,6 +23,7 @@ sealed class FrameResult {
 
 /// 完整解析出的一条消息（其 JSON 文本）。
 class FrameComplete extends FrameResult {
+  /// 以消息体 [body] 构造。
   const FrameComplete(this.body);
 
   /// 消息体 JSON 文本。
@@ -37,6 +38,7 @@ class FrameNeedMore extends FrameResult {
 
 /// 输入非法（畸形 header / 超大包 / 非法 UTF-8），流已不可用。
 class FrameError extends FrameResult {
+  /// 以错误原因 [reason] 构造。
   const FrameError(this.reason);
 
   /// 错误原因。
@@ -71,7 +73,7 @@ class LspFrameParser {
             return const FrameError('畸形 Content-Length');
           }
           if (contentLength > kMaxMessageBytes) {
-            return FrameError('消息体超过上限 $kMaxMessageBytes 字节');
+            return const FrameError('消息体超过上限 $kMaxMessageBytes 字节');
           }
           _frameLength = _headerEnd() + contentLength;
         } else {
@@ -84,7 +86,7 @@ class LspFrameParser {
         return const FrameNeedMore();
       }
 
-      final frame = bytes.sublist(0, _frameLength!);
+      final frame = bytes.sublist(0, _frameLength);
       // 记住 header 结束位置，buffer 清空后再也找不到了。
       final headerEnd = _headerEnd();
       _buffer.clear();

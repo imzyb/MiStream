@@ -13,14 +13,7 @@ import 'package:core_domain/core_domain.dart';
 
 /// req 函数的选项，对齐 drpy 的 options 对象。
 class ReqOptions {
-  final String method;
-  final Map<String, String> headers;
-  final String? body;
-  final int timeoutMs;
-  final bool followRedirect;
-  final bool buffer;
-  final String? postType;
-
+  /// 构造选项。
   const ReqOptions({
     this.method = 'GET',
     this.headers = const {},
@@ -30,16 +23,32 @@ class ReqOptions {
     this.buffer = false,
     this.postType,
   });
+
+  /// HTTP 方法。
+  final String method;
+
+  /// 请求头。
+  final Map<String, String> headers;
+
+  /// 请求体。
+  final String? body;
+
+  /// 超时（毫秒）。drpy 源普遍不带超时，这里给一个兜底值。
+  final int timeoutMs;
+
+  /// 是否跟随重定向。重定向到私网仍会被宿主拦截。
+  final bool followRedirect;
+
+  /// 是否按二进制读取响应体。
+  final bool buffer;
+
+  /// 表单编码类型（`form` / `form-data` 等）。
+  final String? postType;
 }
 
 /// req 响应结果。
 class ReqResult {
-  final int status;
-  final Map<String, String> headers;
-  final String body;
-  final String finalUrl;
-  final int elapsedMs;
-
+  /// 构造结果。
   const ReqResult({
     required this.status,
     required this.headers,
@@ -47,6 +56,21 @@ class ReqResult {
     required this.finalUrl,
     required this.elapsedMs,
   });
+
+  /// HTTP 状态码。
+  final int status;
+
+  /// 响应头。
+  final Map<String, String> headers;
+
+  /// 响应体。
+  final String body;
+
+  /// 跟随重定向后的最终地址。
+  final String finalUrl;
+
+  /// 耗时（毫秒），供源诊断面板统计。
+  final int elapsedMs;
 }
 
 /// drpy req 函数实现。
@@ -123,7 +147,7 @@ Future<Result<ReqResult, AppError>> req(
       ),
     );
   } on TimeoutException {
-    return Err(
+    return const Err(
       RemoteError(
         code: ErrorCode.networkTimeout,
         message: '请求超时',
