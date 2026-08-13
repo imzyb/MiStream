@@ -161,6 +161,30 @@ typedef QsRegisterHostDart =
       Pointer<NativeFunction<HostReleaseC>> release,
     );
 
+/// `qs_set_memory_limit(rt, bytes) -> int` / `qs_set_max_stack_size` 的 C 签名。
+typedef QsSetLimitC = Int32 Function(Pointer<Void> rt, Uint64 bytes);
+
+/// [QsSetLimitC] 的 Dart 签名。
+typedef QsSetLimitDart = int Function(Pointer<Void> rt, int bytes);
+
+/// `qs_arm_deadline(rt, timeout_ms) -> int` 的 C 签名。
+typedef QsArmDeadlineC = Int32 Function(Pointer<Void> rt, Int32 timeoutMs);
+
+/// [QsArmDeadlineC] 的 Dart 签名。
+typedef QsArmDeadlineDart = int Function(Pointer<Void> rt, int timeoutMs);
+
+/// `qs_disarm_deadline(rt)` 的 C 签名。
+typedef QsDisarmDeadlineC = Void Function(Pointer<Void> rt);
+
+/// [QsDisarmDeadlineC] 的 Dart 签名。
+typedef QsDisarmDeadlineDart = void Function(Pointer<Void> rt);
+
+/// `qs_deadline_tripped(rt) -> int` 的 C 签名。
+typedef QsDeadlineTrippedC = Int32 Function(Pointer<Void> rt);
+
+/// [QsDeadlineTrippedC] 的 Dart 签名。
+typedef QsDeadlineTrippedDart = int Function(Pointer<Void> rt);
+
 // ---- 全局标记 ----
 
 /// 全局 eval 标记（`JS_EVAL_TYPE_GLOBAL`）。
@@ -295,6 +319,68 @@ final QsRegisterHostDart? _qsRegisterHost = _lookupOptional(
     'qs_register_host',
   ),
 );
+
+final QsSetLimitDart? _qsSetMemoryLimit = _lookupOptional(
+  () => _wrapperLib?.lookupFunction<QsSetLimitC, QsSetLimitDart>(
+    'qs_set_memory_limit',
+  ),
+);
+
+final QsSetLimitDart? _qsSetMaxStackSize = _lookupOptional(
+  () => _wrapperLib?.lookupFunction<QsSetLimitC, QsSetLimitDart>(
+    'qs_set_max_stack_size',
+  ),
+);
+
+final QsArmDeadlineDart? _qsArmDeadline = _lookupOptional(
+  () => _wrapperLib?.lookupFunction<QsArmDeadlineC, QsArmDeadlineDart>(
+    'qs_arm_deadline',
+  ),
+);
+
+final QsDisarmDeadlineDart? _qsDisarmDeadline = _lookupOptional(
+  () => _wrapperLib?.lookupFunction<QsDisarmDeadlineC, QsDisarmDeadlineDart>(
+    'qs_disarm_deadline',
+  ),
+);
+
+final QsDeadlineTrippedDart? _qsDeadlineTripped = _lookupOptional(
+  () => _wrapperLib?.lookupFunction<QsDeadlineTrippedC, QsDeadlineTrippedDart>(
+    'qs_deadline_tripped',
+  ),
+);
+
+/// wrapper 是否导出了时限相关符号。
+///
+/// **测试必须先问这个再跑死循环**：旧的 wrapper DLL 没有 `qs_arm_deadline`，
+/// 此时 [armDeadline] 恒返回 false，`while(true){}` 会真的一直跑下去，把整个
+/// 测试进程挂死——那比一条红用例难查得多。
+bool get supportsDeadline => _qsArmDeadline != null;
+
+/// 给 [rt] 设堆内存上限（字节）。返回 false 表示这份 libquickjs 没导出
+/// `JS_SetMemoryLimit`，限制**未生效**——调用方必须据此如实报告，不能假装设上了。
+bool setMemoryLimit(Pointer<Void> rt, int bytes) =>
+    _qsSetMemoryLimit?.call(rt, bytes) == 1;
+
+/// 给 [rt] 设 JS 栈深度上限（字节）。返回 false 同 [setMemoryLimit]。
+bool setMaxStackSize(Pointer<Void> rt, int bytes) =>
+    _qsSetMaxStackSize?.call(rt, bytes) == 1;
+
+/// 为接下来的一次求值设墙钟时限，到点由 interrupt 处理器中断脚本。
+///
+/// 返回 false 表示时限**没设上**（缺 `JS_SetInterruptHandler`，或槽位表满）。
+bool armDeadline(Pointer<Void> rt, int timeoutMs) =>
+    _qsArmDeadline?.call(rt, timeoutMs) == 1;
+
+/// 撤掉时限。tripped 标记会保留，供 [deadlineTripped] 事后读取。
+void disarmDeadline(Pointer<Void> rt) => _qsDisarmDeadline?.call(rt);
+
+/// 上一次时限是否真的触发过。
+///
+/// 用来把「脚本自己抛的异常」和「我们掐掉的」分开——两者在 [eval] 的返回值里
+/// 长得一模一样，只有这个标记能区分，也才谈得上回 `SCRIPT_TIMEOUT` 而不是
+/// 笼统的 `SCRIPT_RUNTIME_ERROR`。
+bool deadlineTripped(Pointer<Void> rt) => _qsDeadlineTripped?.call(rt) == 1;
 
 /// 把宿主分发回调装进 [ctx] 的全局对象（JS 侧可见为 `__qs_host`）。
 ///

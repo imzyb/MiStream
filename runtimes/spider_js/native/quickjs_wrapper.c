@@ -78,6 +78,9 @@ static HMODULE hQuickJS = NULL;
 /* Defined with the host bridge below; needed by qs_free_context. */
 static void qs_host_forget(JSContext* ctx);
 
+/* Defined with the resource limits below; needed by qs_free_runtime. */
+static void qs_limit_forget(JSRuntime* rt);
+
 /* Exported functions using stdcall-compatible ABI with output parameters */
 
 __declspec(dllexport) int qs_init(const char* dll_path) {
@@ -105,6 +108,16 @@ __declspec(dllexport) int qs_init(const char* dll_path) {
     pJS_NewStringLen = (PFN_JS_NewStringLen)GetProcAddress(hQuickJS, "JS_NewStringLen");
     pJS_NewCFunction2 = (PFN_JS_NewCFunction2)GetProcAddress(hQuickJS, "JS_NewCFunction2");
 
+    /* Optional: resource limits. A build without them still runs scripts, it
+     * just cannot bound them -- qs_set_* report failure so Dart can say so
+     * instead of silently pretending a runaway script will be stopped. */
+    pJS_SetInterruptHandler =
+        (PFN_JS_SetInterruptHandler)GetProcAddress(hQuickJS, "JS_SetInterruptHandler");
+    pJS_SetMemoryLimit =
+        (PFN_JS_SetMemoryLimit)GetProcAddress(hQuickJS, "JS_SetMemoryLimit");
+    pJS_SetMaxStackSize =
+        (PFN_JS_SetMaxStackSize)GetProcAddress(hQuickJS, "JS_SetMaxStackSize");
+
     if (!pJS_NewRuntime || !pJS_FreeRuntime || !pJS_NewContext ||
         !pJS_FreeContext || !pJS_Eval || !pJS_ToCStringLen2 ||
         !pJS_FreeCString || !pJS_FreeValue) {
@@ -122,7 +135,11 @@ __declspec(dllexport) void* qs_new_runtime(void) {
 }
 
 __declspec(dllexport) void qs_free_runtime(void* rt) {
-    if (pJS_FreeRuntime && rt) pJS_FreeRuntime((JSRuntime*)rt);
+    if (!rt) return;
+    /* Drop the limit entry first, for the same reason qs_free_context drops the
+     * host entry: the allocator will hand this address back out. */
+    qs_limit_forget((JSRuntime*)rt);
+    if (pJS_FreeRuntime) pJS_FreeRuntime((JSRuntime*)rt);
 }
 
 __declspec(dllexport) void* qs_new_context(void* rt) {
@@ -488,10 +505,156 @@ __declspec(dllexport) int qs_register_host(
     return 1;
 }
 
+/* ---- Resource limits ---------------------------------------------------- */
+
+/**
+ * Deadlines are per-runtime, for the same reason host dispatch is per-context:
+ * one process hosts many sources. A process-global deadline would let one
+ * source's runaway loop abort a different source's healthy script, which is
+ * exactly what the "does not affect other sources in the same process" exit
+ * criterion forbids.
+ *
+ * Memory limits need no table -- JS_SetMemoryLimit already stores them on the
+ * runtime -- but the interrupt handler gets no useful opaque pointer here (it
+ * is installed once per runtime, before Dart has anything to hand it), so the
+ * deadline has to be looked up by JSRuntime*.
+ */
+#define QS_MAX_RUNTIMES 64
+
+typedef struct {
+    JSRuntime* rt;
+    ULONGLONG deadline; /* GetTickCount64 value; 0 = disarmed */
+    int tripped;        /* 1 once the handler actually aborted a script */
+} QsLimitEntry;
+
+static QsLimitEntry g_limits[QS_MAX_RUNTIMES];
+static CRITICAL_SECTION g_limits_lock;
+
+static QsLimitEntry* qs_limit_find(JSRuntime* rt) {
+    for (int i = 0; i < QS_MAX_RUNTIMES; i++) {
+        if (g_limits[i].rt == rt) return &g_limits[i];
+    }
+    return NULL;
+}
+
+static void qs_limit_forget(JSRuntime* rt) {
+    EnterCriticalSection(&g_limits_lock);
+    QsLimitEntry* e = qs_limit_find(rt);
+    if (e) {
+        e->rt = NULL;
+        e->deadline = 0;
+        e->tripped = 0;
+    }
+    LeaveCriticalSection(&g_limits_lock);
+}
+
+/* Claim (or reuse) this runtime's slot. Returns NULL when the table is full. */
+static QsLimitEntry* qs_limit_claim(JSRuntime* rt) {
+    QsLimitEntry* e = qs_limit_find(rt);
+    if (!e) {
+        e = qs_limit_find(NULL); /* first free slot */
+        if (e) {
+            e->rt = rt;
+            e->deadline = 0;
+            e->tripped = 0;
+        }
+    }
+    return e;
+}
+
+/**
+ * QuickJS calls this periodically while executing bytecode. Returning non-zero
+ * unwinds the script with an InterruptedError exception, which qs_eval then
+ * reports the usual way -- so an interrupted script is indistinguishable from
+ * any other throwing script at the FFI boundary, and Dart tells them apart via
+ * qs_deadline_tripped.
+ */
+static int qs_interrupt_handler(JSRuntime* rt, void* opaque) {
+    (void)opaque;
+
+    EnterCriticalSection(&g_limits_lock);
+    QsLimitEntry* e = qs_limit_find(rt);
+    int abort = 0;
+    if (e && e->deadline && GetTickCount64() >= e->deadline) {
+        e->tripped = 1;
+        abort = 1;
+    }
+    LeaveCriticalSection(&g_limits_lock);
+
+    return abort;
+}
+
+/**
+ * Cap the runtime's heap. Exceeding it makes allocations fail, which surfaces
+ * as a normal JS OutOfMemory exception -- the context dies, the process lives.
+ * Returns 1 when the limit was applied.
+ */
+__declspec(dllexport) int qs_set_memory_limit(void* rt, uint64_t bytes) {
+    if (!rt || !pJS_SetMemoryLimit) return 0;
+    pJS_SetMemoryLimit((JSRuntime*)rt, (size_t)bytes);
+    return 1;
+}
+
+/** Cap JS stack depth, so runaway recursion throws instead of smashing the
+ *  native stack and taking the process with it. Returns 1 on success. */
+__declspec(dllexport) int qs_set_max_stack_size(void* rt, uint64_t bytes) {
+    if (!rt || !pJS_SetMaxStackSize) return 0;
+    pJS_SetMaxStackSize((JSRuntime*)rt, (size_t)bytes);
+    return 1;
+}
+
+/**
+ * Arm a wall-clock deadline for the next evaluation and install the interrupt
+ * handler if it is not already there. Returns 1 when the deadline is in force.
+ *
+ * Installing lazily (rather than at qs_new_runtime) keeps a build without
+ * JS_SetInterruptHandler working: it just cannot arm deadlines, and says so.
+ */
+__declspec(dllexport) int qs_arm_deadline(void* rt, int timeout_ms) {
+    if (!rt || !pJS_SetInterruptHandler || timeout_ms <= 0) return 0;
+
+    JSRuntime* r = (JSRuntime*)rt;
+
+    EnterCriticalSection(&g_limits_lock);
+    QsLimitEntry* e = qs_limit_claim(r);
+    int ok = 0;
+    if (e) {
+        e->deadline = GetTickCount64() + (ULONGLONG)timeout_ms;
+        e->tripped = 0;
+        ok = 1;
+    }
+    LeaveCriticalSection(&g_limits_lock);
+
+    if (ok) pJS_SetInterruptHandler(r, qs_interrupt_handler, NULL);
+    return ok;
+}
+
+/** Disarm the deadline. The tripped flag survives so Dart can read it after
+ *  the failing eval returns. */
+__declspec(dllexport) void qs_disarm_deadline(void* rt) {
+    if (!rt) return;
+    EnterCriticalSection(&g_limits_lock);
+    QsLimitEntry* e = qs_limit_find((JSRuntime*)rt);
+    if (e) e->deadline = 0;
+    LeaveCriticalSection(&g_limits_lock);
+}
+
+/** 1 when the last armed deadline actually fired. Distinguishes "script threw"
+ *  from "we killed it" -- they look identical in qs_eval's return value. */
+__declspec(dllexport) int qs_deadline_tripped(void* rt) {
+    if (!rt) return 0;
+    EnterCriticalSection(&g_limits_lock);
+    QsLimitEntry* e = qs_limit_find((JSRuntime*)rt);
+    int tripped = e ? e->tripped : 0;
+    LeaveCriticalSection(&g_limits_lock);
+    return tripped;
+}
+
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
     switch (fdwReason) {
         case DLL_PROCESS_ATTACH:
             InitializeCriticalSection(&g_hosts_lock);
+            InitializeCriticalSection(&g_limits_lock);
             break;
         case DLL_PROCESS_DETACH:
             if (hQuickJS) {
@@ -499,6 +662,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
                 hQuickJS = NULL;
             }
             DeleteCriticalSection(&g_hosts_lock);
+            DeleteCriticalSection(&g_limits_lock);
             break;
     }
     return TRUE;
