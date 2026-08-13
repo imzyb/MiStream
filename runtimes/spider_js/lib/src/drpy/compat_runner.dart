@@ -105,6 +105,24 @@ class CompatCase {
         .map((e) => CompatCase.fromJson(e! as Map<String, Object?>))
         .toList();
   }
+
+  /// 加载目录下全部 `*.json` 用例，按文件名排序以保证结果稳定。
+  ///
+  /// 用例按主题分文件（selector / index / url / extract / edge…），新增一种
+  /// 真实源写法时往对应文件里追加即可，不必改任何 Dart 代码。
+  static List<CompatCase> loadFromDirectory(String dir) {
+    final files =
+        Directory(dir)
+            .listSync()
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.json'))
+            .toList()
+          ..sort((a, b) => a.path.compareTo(b.path));
+
+    return <CompatCase>[
+      for (final f in files) ...loadFromFile(f.path),
+    ];
+  }
 }
 
 /// 运行一组兼容性测试。

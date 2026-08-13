@@ -1,0 +1,128 @@
+[
+  {
+    "name": "空 HTML pdfh 返回空串",
+    "method": "pdfh",
+    "html": "",
+    "rule": "a&&href",
+    "expected": ""
+  },
+  {
+    "name": "空 HTML pdfa 返回空列表",
+    "method": "pdfa",
+    "html": "",
+    "rule": "a&&href",
+    "expected": []
+  },
+  {
+    "name": "纯文本输入不崩",
+    "method": "pdfh",
+    "html": "这不是 HTML",
+    "rule": "a&&href",
+    "expected": ""
+  },
+  {
+    "name": "只有提取器没有选择器时作用于根",
+    "method": "pdfh",
+    "html": "<p>x</p>",
+    "rule": "Text",
+    "expected": "x"
+  },
+  {
+    "name": "空规则返回空串",
+    "method": "pdfh",
+    "html": "<p>x</p>",
+    "rule": "",
+    "expected": ""
+  },
+  {
+    "name": "多余的 && 被当作空选择器跳过",
+    "method": "pdfh",
+    "html": "<a href=\"u\">x</a>",
+    "rule": "a&&&&href",
+    "expected": "u"
+  },
+  {
+    "name": "畸形选择器不抛异常，返回空串",
+    "method": "pdfh",
+    "html": "<div class=\"a\"><p>x</p></div>",
+    "rule": ".a&&>>>&&Text",
+    "expected": ""
+  },
+  {
+    "name": "畸形选择器 pdfa 返回空列表",
+    "method": "pdfa",
+    "html": "<div class=\"a\"><p>x</p></div>",
+    "rule": "&&&##&&Text",
+    "expected": []
+  },
+  {
+    "name": ":eq 实参非数字返回空",
+    "method": "pdfh",
+    "html": "<a href=\"u1\">1</a><a href=\"u2\">2</a>",
+    "rule": "a:eq(abc)&&href",
+    "expected": ""
+  },
+  {
+    "name": "未闭合标签被解析器补全",
+    "method": "pdfh",
+    "html": "<div class=\"a\"><p>x</div>",
+    "rule": ".a&&p&&Text",
+    "expected": "x"
+  },
+  {
+    "name": "标签与属性名大小写混写",
+    "method": "pdfh",
+    "html": "<DIV CLASS=\"a\"><A HREF=\"u\">x</A></DIV>",
+    "rule": ".a&&a&&href",
+    "expected": "u"
+  },
+  {
+    "name": "重复 id 取文档序第一个",
+    "method": "pdfh",
+    "html": "<p id=\"t\">一</p><p id=\"t\">二</p>",
+    "rule": "#t&&Text",
+    "expected": "一"
+  },
+  {
+    "name": "缺失属性的元素在 pdfa 中占位空串",
+    "method": "pdfa",
+    "html": "<a href=\"u1\">1</a><a>2</a><a href=\"u3\">3</a>",
+    "rule": "a&&href",
+    "expected": ["u1", "", "u3"]
+  },
+  {
+    "name": "属性值含换行",
+    "method": "pdfh",
+    "html": "<a title=\"第1集\n第2集\" href=\"u\">x</a>",
+    "rule": "a&&title",
+    "expected": "第1集\n第2集"
+  },
+  {
+    "name": "深层嵌套十级仍可命中",
+    "method": "pdfh",
+    "html": "<div class=\"l\"><div><div><div><div><div><div><div><div><span class=\"deep\">底</span></div></div></div></div></div></div></div></div></div>",
+    "rule": ".l&&.deep&&Text",
+    "expected": "底"
+  },
+  {
+    "name": "同名 class 大量元素全部取出",
+    "method": "pdfa",
+    "html": "<i class=\"n\">1</i><i class=\"n\">2</i><i class=\"n\">3</i><i class=\"n\">4</i><i class=\"n\">5</i><i class=\"n\">6</i>",
+    "rule": ".n&&Text",
+    "expected": ["1", "2", "3", "4", "5", "6"]
+  },
+  {
+    "name": "选择器命中根以外无匹配时不回退",
+    "method": "pdfh",
+    "html": "<div class=\"a\"><span>x</span></div>",
+    "rule": ".a&&em&&Text",
+    "expected": ""
+  },
+  {
+    "name": "规则大小写敏感的 class 名",
+    "method": "pdfh",
+    "html": "<div class=\"Item\">对</div><div class=\"item\">错</div>",
+    "rule": ".Item&&Text",
+    "expected": "对"
+  }
+]

@@ -1,0 +1,170 @@
+[
+  {
+    "name": ":eq(0) 取第一个",
+    "method": "pdfh",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li><li><a href=\"/p/3\">第3集</a></li><li><a href=\"/p/4\">第4集</a></li><li><a href=\"/p/5\">第5集</a></li></ul>",
+    "rule": "a:eq(0)&&href",
+    "expected": "/p/1"
+  },
+  {
+    "name": ":eq(2) 取第三个",
+    "method": "pdfh",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li><li><a href=\"/p/3\">第3集</a></li><li><a href=\"/p/4\">第4集</a></li><li><a href=\"/p/5\">第5集</a></li></ul>",
+    "rule": "a:eq(2)&&href",
+    "expected": "/p/3"
+  },
+  {
+    "name": ":eq(-1) 取最后一个",
+    "method": "pdfh",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li><li><a href=\"/p/3\">第3集</a></li><li><a href=\"/p/4\">第4集</a></li><li><a href=\"/p/5\">第5集</a></li></ul>",
+    "rule": "a:eq(-1)&&href",
+    "expected": "/p/5"
+  },
+  {
+    "name": ":eq(-2) 倒数第二个",
+    "method": "pdfh",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li><li><a href=\"/p/3\">第3集</a></li><li><a href=\"/p/4\">第4集</a></li><li><a href=\"/p/5\">第5集</a></li></ul>",
+    "rule": "a:eq(-2)&&href",
+    "expected": "/p/4"
+  },
+  {
+    "name": ":eq 越界返回空",
+    "method": "pdfh",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li></ul>",
+    "rule": "a:eq(99)&&href",
+    "expected": ""
+  },
+  {
+    "name": ":eq 负数越界返回空",
+    "method": "pdfh",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li></ul>",
+    "rule": "a:eq(-99)&&href",
+    "expected": ""
+  },
+  {
+    "name": ":eq 结果在 pdfa 下是单元素列表",
+    "method": "pdfa",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li><li><a href=\"/p/3\">第3集</a></li></ul>",
+    "rule": "a:eq(1)&&href",
+    "expected": ["/p/2"]
+  },
+  {
+    "name": ":first 取第一个",
+    "method": "pdfh",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li><li><a href=\"/p/3\">第3集</a></li></ul>",
+    "rule": "a:first&&href",
+    "expected": "/p/1"
+  },
+  {
+    "name": ":last 取最后一个",
+    "method": "pdfh",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li><li><a href=\"/p/3\">第3集</a></li></ul>",
+    "rule": "a:last&&href",
+    "expected": "/p/3"
+  },
+  {
+    "name": ":first 用在中间层",
+    "method": "pdfh",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li></ul>",
+    "rule": "li:first&&a&&Text",
+    "expected": "第1集"
+  },
+  {
+    "name": ":gt(n) 取其后全部",
+    "method": "pdfa",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li><li><a href=\"/p/3\">第3集</a></li><li><a href=\"/p/4\">第4集</a></li><li><a href=\"/p/5\">第5集</a></li></ul>",
+    "rule": "a:gt(2)&&href",
+    "expected": ["/p/4", "/p/5"]
+  },
+  {
+    "name": ":lt(n) 取其前全部",
+    "method": "pdfa",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li><li><a href=\"/p/3\">第3集</a></li><li><a href=\"/p/4\">第4集</a></li><li><a href=\"/p/5\">第5集</a></li></ul>",
+    "rule": "a:lt(2)&&href",
+    "expected": ["/p/1", "/p/2"]
+  },
+  {
+    "name": ":gt 与 :lt 串联按书写顺序生效",
+    "method": "pdfa",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li><li><a href=\"/p/3\">第3集</a></li><li><a href=\"/p/4\">第4集</a></li><li><a href=\"/p/5\">第5集</a></li></ul>",
+    "rule": "a:gt(0):lt(3)&&href",
+    "expected": ["/p/2", "/p/3", "/p/4"]
+  },
+  {
+    "name": ":gt 越界返回空列表",
+    "method": "pdfa",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li></ul>",
+    "rule": "a:gt(4)&&href",
+    "expected": []
+  },
+  {
+    "name": ":lt(0) 返回空列表",
+    "method": "pdfa",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li></ul>",
+    "rule": "a:lt(0)&&href",
+    "expected": []
+  },
+  {
+    "name": ":eq 作用在合并后的集合而非逐父节点",
+    "method": "pdfh",
+    "html": "<div class=\"g\"><a href=\"1\">a</a><a href=\"2\">b</a></div><div class=\"g\"><a href=\"3\">c</a></div>",
+    "rule": ".g&&a:eq(2)&&href",
+    "expected": "3"
+  },
+  {
+    "name": ":last 跨父节点取全局最后一个",
+    "method": "pdfh",
+    "html": "<div class=\"g\"><a href=\"1\">a</a><a href=\"2\">b</a></div><div class=\"g\"><a href=\"3\">c</a></div>",
+    "rule": ".g&&a:last&&href",
+    "expected": "3"
+  },
+  {
+    "name": ":contains 按文本筛选",
+    "method": "pdfh",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li><li><a href=\"/p/3\">第3集</a></li></ul>",
+    "rule": "a:contains(第3集)&&href",
+    "expected": "/p/3"
+  },
+  {
+    "name": ":contains 实参可带单引号",
+    "method": "pdfh",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li></ul>",
+    "rule": "a:contains('第2集')&&href",
+    "expected": "/p/2"
+  },
+  {
+    "name": ":contains 实参可带双引号",
+    "method": "pdfh",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li></ul>",
+    "rule": "a:contains(\"第1集\")&&href",
+    "expected": "/p/1"
+  },
+  {
+    "name": ":contains 无命中返回空",
+    "method": "pdfh",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li></ul>",
+    "rule": "a:contains(不存在)&&href",
+    "expected": ""
+  },
+  {
+    "name": ":contains 部分匹配取全部",
+    "method": "pdfa",
+    "html": "<ul class=\"v\"><li><a href=\"/p/1\">第1集</a></li><li><a href=\"/p/2\">第2集</a></li><li><a href=\"/p/3\">预告</a></li></ul>",
+    "rule": "a:contains(集)&&href",
+    "expected": ["/p/1", "/p/2"]
+  },
+  {
+    "name": ":contains 用于挑选线路块",
+    "method": "pdfh",
+    "html": "<div class=\"tab\"><span>线路一</span><a href=\"/l/1\">播放</a></div><div class=\"tab\"><span>线路二</span><a href=\"/l/2\">播放</a></div>",
+    "rule": ".tab:contains(线路二)&&a&&href",
+    "expected": "/l/2"
+  },
+  {
+    "name": "伪类与复合选择器同用",
+    "method": "pdfh",
+    "html": "<div class=\"x\">错</div><p class=\"x\">一</p><p class=\"x\">二</p>",
+    "rule": "p.x:eq(1)&&Text",
+    "expected": "二"
+  }
+]

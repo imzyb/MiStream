@@ -1,0 +1,193 @@
+[
+  {
+    "name": "pd 根相对路径拼成绝对地址",
+    "method": "pd",
+    "html": "<a href=\"/vod/play/1.html\">播放</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": "https://www.example.com/vod/play/1.html"
+  },
+  {
+    "name": "pd 同级相对路径按所在目录拼接",
+    "method": "pd",
+    "html": "<a href=\"play/2.html\">播放</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": "https://www.example.com/vod/detail/play/2.html"
+  },
+  {
+    "name": "pd 已是 https 绝对地址原样返回",
+    "method": "pd",
+    "html": "<a href=\"https://cdn.other.com/p/3.html\">播放</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": "https://cdn.other.com/p/3.html"
+  },
+  {
+    "name": "pd 已是 http 绝对地址原样返回",
+    "method": "pd",
+    "html": "<a href=\"http://old.example.com/x\">播放</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": "http://old.example.com/x"
+  },
+  {
+    "name": "pd 协议相对地址继承 base 的协议",
+    "method": "pd",
+    "html": "<img src=\"//img.example.com/x.jpg\">",
+    "rule": "img&&src",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": "https://img.example.com/x.jpg"
+  },
+  {
+    "name": "pd 上级相对路径 ../",
+    "method": "pd",
+    "html": "<a href=\"../up/5.html\">播放</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": "https://www.example.com/vod/up/5.html"
+  },
+  {
+    "name": "pd 当前目录相对路径 ./",
+    "method": "pd",
+    "html": "<a href=\"./x.html\">播放</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": "https://www.example.com/vod/detail/x.html"
+  },
+  {
+    "name": "pd 纯查询串沿用 base 的路径",
+    "method": "pd",
+    "html": "<a href=\"?id=6\">播放</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": "https://www.example.com/vod/detail/1.html?id=6"
+  },
+  {
+    "name": "pd 纯锚点沿用 base 的路径",
+    "method": "pd",
+    "html": "<a href=\"#play\">播放</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": "https://www.example.com/vod/detail/1.html#play"
+  },
+  {
+    "name": "pd base 带查询串时被相对路径覆盖",
+    "method": "pd",
+    "html": "<a href=\"/a.html\">播放</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html?from=home",
+    "expected": "https://www.example.com/a.html"
+  },
+  {
+    "name": "pd base 以斜杠结尾时按目录拼接",
+    "method": "pd",
+    "html": "<a href=\"play/1.html\">播放</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/vod/",
+    "expected": "https://www.example.com/vod/play/1.html"
+  },
+  {
+    "name": "pd 保留 base 的端口",
+    "method": "pd",
+    "html": "<a href=\"/p/2\">播放</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com:8080/vod/1.html",
+    "expected": "https://www.example.com:8080/p/2"
+  },
+  {
+    "name": "pd baseUrl 为空时原样返回",
+    "method": "pd",
+    "html": "<a href=\"/vod/play/1.html\">播放</a>",
+    "rule": "a&&href",
+    "baseUrl": "",
+    "expected": "/vod/play/1.html"
+  },
+  {
+    "name": "pd 无命中返回空串而不是拼出 base",
+    "method": "pd",
+    "html": "<a href=\"/vod/play/1.html\">播放</a>",
+    "rule": ".missing&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": ""
+  },
+  {
+    "name": "pd 属性为空串时不拼 base",
+    "method": "pd",
+    "html": "<a href=\"\">播放</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": ""
+  },
+  {
+    "name": "pd 配合索引伪类取指定集数",
+    "method": "pd",
+    "html": "<a href=\"/p/1\">第1集</a><a href=\"/p/2\">第2集</a><a href=\"/p/3\">第3集</a>",
+    "rule": "a:eq(1)&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": "https://www.example.com/p/2"
+  },
+  {
+    "name": "pdfl 批量拼成绝对地址",
+    "method": "pdfl",
+    "html": "<a href=\"/p/1\">1</a><a href=\"/p/2\">2</a><a href=\"/p/3\">3</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": [
+      "https://www.example.com/p/1",
+      "https://www.example.com/p/2",
+      "https://www.example.com/p/3"
+    ]
+  },
+  {
+    "name": "pdfl 绝对与相对混排各按各的规则",
+    "method": "pdfl",
+    "html": "<a href=\"/p/1\">1</a><a href=\"https://cdn.x.com/2\">2</a><a href=\"../p/3\">3</a>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": [
+      "https://www.example.com/p/1",
+      "https://cdn.x.com/2",
+      "https://www.example.com/vod/p/3"
+    ]
+  },
+  {
+    "name": "pdfl 无命中返回空列表",
+    "method": "pdfl",
+    "html": "<a href=\"/p/1\">1</a>",
+    "rule": ".missing&&href",
+    "baseUrl": "https://www.example.com/vod/detail/1.html",
+    "expected": []
+  },
+  {
+    "name": "pdfl baseUrl 为空时整列原样返回",
+    "method": "pdfl",
+    "html": "<a href=\"/p/1\">1</a><a href=\"/p/2\">2</a>",
+    "rule": "a&&href",
+    "baseUrl": "",
+    "expected": ["/p/1", "/p/2"]
+  },
+  {
+    "name": "pdfl 保持文档顺序",
+    "method": "pdfl",
+    "html": "<ul><li><a href=\"/p/3\">3</a></li><li><a href=\"/p/1\">1</a></li><li><a href=\"/p/2\">2</a></li></ul>",
+    "rule": "a&&href",
+    "baseUrl": "https://www.example.com/",
+    "expected": [
+      "https://www.example.com/p/3",
+      "https://www.example.com/p/1",
+      "https://www.example.com/p/2"
+    ]
+  },
+  {
+    "name": "pdfl 提取懒加载图并补全域名",
+    "method": "pdfl",
+    "html": "<img data-original=\"/pic/1.jpg\"><img data-original=\"/pic/2.jpg\">",
+    "rule": "img&&data-original",
+    "baseUrl": "https://www.example.com/vod/",
+    "expected": [
+      "https://www.example.com/pic/1.jpg",
+      "https://www.example.com/pic/2.jpg"
+    ]
+  }
+]

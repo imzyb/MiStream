@@ -81,6 +81,34 @@ void main() {
       );
     });
 
+    test('pd 把相对地址补成绝对地址', () {
+      const html = '<div class="list"><a href="/vod/1.html">片</a></div>';
+      expect(
+        bridge.invoke('pd', <Object?>[
+          html,
+          '.list&&a&&href',
+          'https://s.com/x/y.html',
+        ])['v'],
+        'https://s.com/vod/1.html',
+      );
+    });
+
+    test('pdfl 批量补全，baseUrl 缺省时原样返回', () {
+      const html = '<a href="/p/1">1</a><a href="/p/2">2</a>';
+      expect(
+        bridge.invoke('pdfl', <Object?>[
+          html,
+          'a&&href',
+          'https://s.com/',
+        ])['v'],
+        <String>['https://s.com/p/1', 'https://s.com/p/2'],
+      );
+      expect(
+        bridge.invoke('pdfl', <Object?>[html, 'a&&href'])['v'],
+        <String>['/p/1', '/p/2'],
+      );
+    });
+
     test('base64 往返', () {
       final enc = bridge.invoke('base64Encode', <Object?>['中文 abc'])['v'];
       expect(enc, isA<String>());
@@ -161,6 +189,27 @@ void main() {
           'Array.isArray(pdfa(${jsonEncode(_html)}, ${jsonEncode(_rule)}))',
         ),
         'true',
+      );
+    });
+
+    test('脚本里 pd 把相对地址拼成绝对地址', () {
+      const html = '<div class="list"><a href="/vod/1.html">片</a></div>';
+      expect(
+        runtime.eval(
+          'pd(${jsonEncode(html)}, ".list&&a&&href", '
+          '"https://s.com/x/y.html")',
+        ),
+        'https://s.com/vod/1.html',
+      );
+    });
+
+    test('脚本里 pdfl 批量补全后仍是 JS 数组', () {
+      const html = '<a href="/p/1">1</a><a href="/p/2">2</a>';
+      expect(
+        runtime.eval(
+          'pdfl(${jsonEncode(html)}, "a&&href", "https://s.com/").join("|")',
+        ),
+        'https://s.com/p/1|https://s.com/p/2',
       );
     });
 
