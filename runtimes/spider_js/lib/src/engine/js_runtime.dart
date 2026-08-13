@@ -315,6 +315,20 @@ class JsRuntime {
     return false;
   }
 
+  /// 尽快掐断正在执行的脚本。
+  ///
+  /// 做法是把时限压到 1ms 而不是新增一个 native 导出——`qs_arm_deadline` 本就
+  /// 会重置 tripped 标记并（必要时）装上 interrupt 处理器，压时限等价于「立刻
+  /// 到期」。收到 `$/cancelRequest` 时用它。
+  ///
+  /// 能力边界：interrupt 只在字节码执行时被检查。脚本卡在一次宿主调用的阻塞
+  /// 等待里时，要等那次调用返回后才会被掐断。
+  void cancel() {
+    final rt = _rt;
+    if (rt == null) return;
+    qjs.armDeadline(rt, 1);
+  }
+
   /// 释放资源。
   void dispose() {
     final ctx = _ctx;
