@@ -12,6 +12,7 @@ library;
 import 'dart:convert';
 
 import 'package:core_domain/core_domain.dart';
+import 'package:spider_js/src/child/drpy_host_functions.dart';
 import 'package:spider_js/src/child/sync_frame_io.dart';
 import 'package:spider_js/src/engine/js_runtime.dart';
 
@@ -42,14 +43,18 @@ class ChildPipeClosed implements Exception {
 
 /// 子进程主循环。
 class RuntimeChild {
-  /// 构造。[codec] 与 [createRuntime] 可注入，供测试在没有真管道、没有 native
-  /// 的情况下驱动整个循环。
+  /// 构造。[codec]、[createRuntime] 与 [installHostFunctions] 可注入，供测试在
+  /// 没有真管道、没有 native 的情况下驱动整个循环。
   RuntimeChild({
     SyncFrameCodec? codec,
     JsRuntime Function(JsRuntimeLimits limits)? createRuntime,
+    void Function(JsRuntime runtime, String instanceId, RuntimeChild child)?
+    installHostFunctions,
   }) : _codec = codec ?? SyncFrameCodec(),
        _createRuntime =
-           createRuntime ?? ((limits) => JsRuntime(limits: limits));
+           createRuntime ?? ((limits) => JsRuntime(limits: limits)),
+       _installHostFunctionsFn =
+           installHostFunctions ?? installDrpyHostFunctions;
 
   final SyncFrameCodec _codec;
   final JsRuntime Function(JsRuntimeLimits limits) _createRuntime;
@@ -335,16 +340,12 @@ class RuntimeChild {
   }
 
   /// 把走宿主的 drpy 函数装进这个实例的桥。
-  ///
-  /// A4 会在这里接上 `req` 与 `local.*`；此刻先留一个可被测试替换的挂点，
-  /// 让重入与取消这两条路可以独立于网络先验证。
   void _installHostFunctions(JsRuntime runtime, String instanceId) {
-    hostFunctionsFor?.call(runtime, instanceId, this);
+    _installHostFunctionsFn(runtime, instanceId, this);
   }
 
-  /// 装配宿主函数的钩子，由 A4 或测试注入。
-  void Function(JsRuntime runtime, String instanceId, RuntimeChild child)?
-  hostFunctionsFor;
+  final void Function(JsRuntime runtime, String instanceId, RuntimeChild child)
+  _installHostFunctionsFn;
 
   // ---- 收发 ---------------------------------------------------------------
 

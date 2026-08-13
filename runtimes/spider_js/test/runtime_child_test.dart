@@ -70,6 +70,11 @@ class _FakeRuntime implements JsRuntime {
   int cancelCount = 0;
   bool disposed = false;
 
+  /// 真的给一个桥：这样 `installDrpyHostFunctions` 的默认路径也被这些用例走到，
+  /// 而不是被一个 no-op 替身绕过去。
+  @override
+  final HostBridge bridge = HostBridge();
+
   @override
   String? eval(String code) {
     evaluated.add(code);

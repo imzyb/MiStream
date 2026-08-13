@@ -378,6 +378,16 @@ class JsRuntime {
   g.base64Decode = function (s) { return H('base64Decode', [s]); };
   g.joinUrl = function (b, p) { return H('joinUrl', [b, p]); };
 
+  // req 与 local.* 必须过宿主（ADR-001），只有子进程装了对应的处理器时才可用。
+  // 进程内直接用 JsRuntime 时它们会抛「未登记的宿主函数」——这是如实报告，
+  // 好过让脚本以为发出去了。
+  g.req = function (url, options) { return H('req', [url, options || {}]); };
+  g.local = {
+    get: function (k) { return H('local.get', [k]); },
+    set: function (k, v) { return H('local.set', [k, v]); },
+    'delete': function (k) { return H('local.delete', [k]); }
+  };
+
   g.aes = function (o) {
     o = o || {};
     return H('aes', [

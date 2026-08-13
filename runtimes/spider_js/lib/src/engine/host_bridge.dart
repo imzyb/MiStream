@@ -45,6 +45,12 @@ class HostBridge {
   /// 已登记的宿主函数名，按字母序。
   Iterable<String> get handlerNames => _handlers.keys.toList()..sort();
 
+  /// 事后追加或覆盖一个宿主函数。
+  ///
+  /// 给子进程用：`req` / `local.*` 要绑定到具体实例的 RPC 通道上，而通道在
+  /// `JsRuntime` 构造时还不存在，只能等实例建好再注册。
+  void register(String name, HostHandler handler) => _handlers[name] = handler;
+
   /// 把 `__qs_host` 装进 [ctx] 的全局对象。返回 false 表示 native 侧缺少
   /// 必要导出，此时 drpy API 在脚本里不可用（引擎本身仍可跑纯计算脚本）。
   bool install(Pointer<Void> ctx) {
