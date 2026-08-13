@@ -199,6 +199,12 @@ class StdioRpcChannel {
   /// 订阅来自对端的请求流（Runtime → Host 调用）。
   Stream<RpcRequest> get incomingRequests => _requestController.stream;
 
+  /// 回应一条来自对端的请求。
+  ///
+  /// [incomingRequests] 只把请求送出来，不替调用方决定怎么答；宿主 API 的分发
+  /// 是异步的（`host.fetch` 要真发网络），所以应答必须是独立的一步。
+  void respond(RpcResponse response) => _reply(response);
+
   /// 关闭管道。
   Future<void> close() async {
     if (_closed) return;

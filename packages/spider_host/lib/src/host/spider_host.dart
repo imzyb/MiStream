@@ -13,6 +13,8 @@ import 'dart:io';
 
 import 'package:core_domain/core_domain.dart';
 
+import 'package:spider_host/src/host/host_api.dart';
+import 'package:spider_host/src/rpc/rpc_message.dart';
 import 'package:spider_host/src/rpc/stdio_rpc_channel.dart';
 
 /// 心跳间隔（docs/08 §6：Host 每 15s 发 ping）。
@@ -122,6 +124,7 @@ class SpiderHost {
     this.appVersion = 'dev',
     this.maxRestartAttempts = kMaxRestartAttempts,
     this.handshakeTimeout = kHandshakeTimeout,
+    this.hostApi,
     Duration Function(int attempt)? backoffFor,
     ProcessLauncher? launcher,
   }) : _launcher = launcher ?? defaultProcessLauncher,
@@ -147,8 +150,16 @@ class SpiderHost {
   /// 握手超时。
   final Duration handshakeTimeout;
 
+  /// 宿主 API 实现，服务子进程发来的 `host.*` 请求。
+  ///
+  /// 可空是为了让只做 Host → Runtime 单向调用的测试不必造一个；生产装配必须
+  /// 传，否则脚本里的 `req` / `local.*` 全部拿到 METHOD_NOT_FOUND。
+  final HostApi? hostApi;
+
   final ProcessLauncher _launcher;
   final Duration Function(int attempt) _backoffFor;
+
+  StreamSubscription<RpcRequest>? _hostApiSub;
 
   Future<int>? _exitCode;
   bool Function(ProcessSignal signal) _kill = (_) => false;
@@ -195,6 +206,7 @@ class SpiderHost {
         stdout: proc.stdin,
       );
       _channel = channel;
+      _serveHostApi(channel);
       // 进程退出是异步事件，这里只挂回调、不等它——等它就永远不会返回。
       unawaited(proc.exitCode.then((_) => _onProcessExit('进程退出')));
 
@@ -276,6 +288,68 @@ class SpiderHost {
     return _channel?.notify(method, params: params) ?? Future.value();
   }
 
+  /// 把子进程发来的宿主 API 请求接到 [hostApi] 上。
+  ///
+  /// 这是宿主 API 的**唯一**服务点：脚本里的 `req` / `local.*` 最终都落到这里。
+  /// 没注入 [hostApi] 时一律回 METHOD_NOT_FOUND，而不是让子进程一直等——
+  /// 悬着的请求会把子进程卡在阻塞读上，比明确报错难查得多。
+  void _serveHostApi(StdioRpcChannel channel) {
+    unawaited(_hostApiSub?.cancel());
+    _hostApiSub = channel.incomingRequests.listen((request) async {
+      final api = hostApi;
+      if (api == null) {
+        channel.respond(
+          RpcResponse.error(
+            id: request.id,
+            error: const RemoteError(
+              code: ErrorCode.methodNotFound,
+              message: '未注入 HostApi，宿主 API 不可用',
+            ),
+          ),
+        );
+        return;
+      }
+
+      final (result, error) = await _handleSafely(api, request);
+      channel.respond(
+        error != null
+            ? RpcResponse.error(id: request.id, error: error)
+            : RpcResponse.result(id: request.id, result: result),
+      );
+    });
+  }
+
+  /// 调 [HostApi.handle] 并把各种失败形态归一成 [RemoteError]。
+  ///
+  /// `handle` 的错误位可能是 `AppError`，也可能是「未知方法」那种裸字符串；
+  /// 处理器本身还可能抛。任何一种都必须变成一条应答——子进程在同步阻塞读上
+  /// 等着，少回一条它就永远醒不过来。
+  Future<(Object?, RemoteError?)> _handleSafely(
+    HostApi api,
+    RpcRequest request,
+  ) async {
+    try {
+      final (result, error) = await api.handle(request.method, request.params);
+      if (error == null) return (result, null);
+      return (
+        null,
+        switch (error) {
+          final RemoteError e => e,
+          final AppError e => RemoteError(code: e.code, message: e.message),
+          _ => RemoteError(
+            code: ErrorCode.methodNotFound,
+            message: error.toString(),
+          ),
+        },
+      );
+    } on Object catch (e) {
+      return (
+        null,
+        RemoteError(code: ErrorCode.internalError, message: '宿主 API 处理失败: $e'),
+      );
+    }
+  }
+
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(kHeartbeatInterval, (_) async {
@@ -354,6 +428,8 @@ class SpiderHost {
     _disposed = true;
     _heartbeatTimer?.cancel();
     _restartTimer?.cancel();
+    await _hostApiSub?.cancel();
+    _hostApiSub = null;
     await _channel?.notify('runtime.shutdown', params: {'graceMs': 3000});
     await _killProcess();
     await _channel?.close();
