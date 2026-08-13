@@ -99,6 +99,68 @@ typedef QsFreeValueC =
 typedef QsFreeValueDart =
     void Function(Pointer<Void> ctx, int valTag, int valU);
 
+/// `qs_get_exception(ctx, &tag, &u) -> int` 的 C 签名。
+typedef QsGetExceptionC =
+    Int32 Function(
+      Pointer<Void> ctx,
+      Pointer<Int64> outTag,
+      Pointer<Uint64> outU,
+    );
+
+/// [QsGetExceptionC] 的 Dart 签名。
+typedef QsGetExceptionDart =
+    int Function(
+      Pointer<Void> ctx,
+      Pointer<Int64> outTag,
+      Pointer<Uint64> outU,
+    );
+
+/// `qs_get_prop_str(ctx, tag, u, prop, &tag, &u) -> int` 的 C 签名。
+typedef QsGetPropStrC =
+    Int32 Function(
+      Pointer<Void> ctx,
+      Int64 valTag,
+      Uint64 valU,
+      Pointer<Utf8> prop,
+      Pointer<Int64> outTag,
+      Pointer<Uint64> outU,
+    );
+
+/// [QsGetPropStrC] 的 Dart 签名。
+typedef QsGetPropStrDart =
+    int Function(
+      Pointer<Void> ctx,
+      int valTag,
+      int valU,
+      Pointer<Utf8> prop,
+      Pointer<Int64> outTag,
+      Pointer<Uint64> outU,
+    );
+
+/// `const char* dispatch(const char* name, const char* argsJson)` 的 C 签名。
+///
+/// 返回的指针由 native 侧拷进 JS 字符串后立刻交回 [HostReleaseC] 释放。
+typedef HostDispatchC = Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>);
+
+/// `void release(const char*)` 的 C 签名。
+typedef HostReleaseC = Void Function(Pointer<Utf8>);
+
+/// `qs_register_host(ctx, dispatch, release) -> int` 的 C 签名。
+typedef QsRegisterHostC =
+    Int32 Function(
+      Pointer<Void> ctx,
+      Pointer<NativeFunction<HostDispatchC>> dispatch,
+      Pointer<NativeFunction<HostReleaseC>> release,
+    );
+
+/// [QsRegisterHostC] 的 Dart 签名。
+typedef QsRegisterHostDart =
+    int Function(
+      Pointer<Void> ctx,
+      Pointer<NativeFunction<HostDispatchC>> dispatch,
+      Pointer<NativeFunction<HostReleaseC>> release,
+    );
+
 // ---- 全局标记 ----
 
 /// 全局 eval 标记（`JS_EVAL_TYPE_GLOBAL`）。
@@ -107,40 +169,57 @@ const int jsEvalTypeGlobal = 0;
 /// 模块 eval 标记（`JS_EVAL_TYPE_MODULE`）。
 const int jsEvalTypeModule = 1;
 
+/// 在候选目录里找 native 库文件 [name]，返回第一个存在的路径，找不到返回 null。
+///
+/// wrapper 与 libquickjs 两个 DLL 总是并排放，所以共用同一份候选顺序，只差文件名。
+String? findNativeLibrary(String name) {
+  var scriptDir = '';
+  if (Platform.script.scheme == 'file') {
+    try {
+      scriptDir = Directory(Platform.script.toFilePath()).parent.path;
+    } on Object {
+      scriptDir = '';
+    }
+  }
+  final cwd = Directory.current.path;
+  final sep = Platform.pathSeparator;
+  final engineRel = 'lib${sep}src${sep}engine';
+  final envDir = Platform.environment['QUICKJS_DLL_PATH'];
+
+  final candidates = <String>[
+    // 1. 裸名与当前目录：打包产物里 DLL 与 exe 并排。
+    name,
+    '$cwd$sep$name',
+    // 2. 环境变量显式指定的目录。
+    if (envDir != null && envDir.isNotEmpty) '$envDir$sep$name',
+    // 3. 包内引擎目录，相对 cwd——`dart test` 与 `melos exec` 都在包根跑，
+    //    只认 Platform.script 的话测试进程里会解析不到。
+    '$cwd$sep$engineRel$sep$name',
+    // 4. 同上但相对脚本位置（`dart run` 直接跑包内文件时）。
+    if (scriptDir.isNotEmpty) '$scriptDir$sep$engineRel$sep$name',
+    if (scriptDir.isNotEmpty) '$scriptDir${sep}engine$sep$name',
+  ];
+
+  for (final path in candidates) {
+    if (File(path).existsSync()) return path;
+  }
+  return null;
+}
+
+/// libquickjs 本体的默认路径。
+///
+/// Windows 上 wrapper 要靠 [initQuickJS] 把这个路径 `LoadLibrary` 进来才能拿到
+/// 函数指针；其它平台直接链接本体，不需要这一步，返回 null。
+String? defaultQuickJSLibraryPath() =>
+    Platform.isWindows ? findNativeLibrary('libquickjs.dll') : null;
+
 /// 尝试加载 QuickJS wrapper 共享库。
 DynamicLibrary? _loadWrapperLibrary() {
   try {
     if (Platform.isWindows) {
-      // 在 Windows 上使用 wrapper DLL
-      // Platform.script.path 在 Windows 上可能含正斜杠，需要规范化
-      var scriptDir = '';
-      if (Platform.script.scheme == 'file') {
-        scriptDir = Directory(Platform.script.toFilePath()).parent.path;
-      }
-
-      final candidates = <String>[
-        // 1. 当前工作目录
-        'quickjs_wrapper.dll',
-        // 2. 可执行文件所在目录
-        '${Directory.current.path}\\quickjs_wrapper.dll',
-        // 3. 环境变量指定的路径
-        if (Platform.environment.containsKey('QUICKJS_DLL_PATH'))
-          '${Platform.environment['QUICKJS_DLL_PATH']}\\quickjs_wrapper.dll',
-        // 4. 包 lib/src/engine 目录（相对于脚本路径）
-        if (scriptDir.isNotEmpty)
-          '$scriptDir\\lib\\src\\engine\\quickjs_wrapper.dll',
-        // 5. 引擎目录（相对于包根）
-        if (scriptDir.isNotEmpty) '$scriptDir\\engine\\quickjs_wrapper.dll',
-      ];
-
-      for (final path in candidates) {
-        if (File(path).existsSync()) {
-          return DynamicLibrary.open(path);
-        }
-      }
-
-      // 最后尝试直接打开
-      return DynamicLibrary.open('quickjs_wrapper.dll');
+      // 找不到就退回裸名，交给系统的 DLL 搜索路径。
+      final path = findNativeLibrary('quickjs_wrapper.dll');
+      return DynamicLibrary.open(path ?? 'quickjs_wrapper.dll');
     }
     if (Platform.isMacOS) {
       return DynamicLibrary.open('libquickjs.dylib');
@@ -189,6 +268,48 @@ final QsFreeCStringDart? _qsFreeCString = _wrapperLib
 final QsFreeValueDart? _qsFreeValue = _wrapperLib
     ?.lookupFunction<QsFreeValueC, QsFreeValueDart>('qs_free_value');
 
+/// 诊断用符号，旧版 wrapper DLL 上可能不存在——查不到就降级成「异常无文本」，
+/// 不能让整个引擎因此不可用。
+T? _lookupOptional<T>(T? Function() lookup) {
+  try {
+    return lookup();
+  } on Object {
+    return null;
+  }
+}
+
+final QsGetExceptionDart? _qsGetException = _lookupOptional(
+  () => _wrapperLib?.lookupFunction<QsGetExceptionC, QsGetExceptionDart>(
+    'qs_get_exception',
+  ),
+);
+
+final QsGetPropStrDart? _qsGetPropStr = _lookupOptional(
+  () => _wrapperLib?.lookupFunction<QsGetPropStrC, QsGetPropStrDart>(
+    'qs_get_prop_str',
+  ),
+);
+
+final QsRegisterHostDart? _qsRegisterHost = _lookupOptional(
+  () => _wrapperLib?.lookupFunction<QsRegisterHostC, QsRegisterHostDart>(
+    'qs_register_host',
+  ),
+);
+
+/// 把宿主分发回调装进 [ctx] 的全局对象（JS 侧可见为 `__qs_host`）。
+///
+/// 返回 false 表示 wrapper 或 libquickjs 缺少必要导出，此时脚本里没有 drpy
+/// API，但引擎本身照常可用。
+bool registerHost(
+  Pointer<Void> ctx,
+  Pointer<NativeFunction<HostDispatchC>> dispatch,
+  Pointer<NativeFunction<HostReleaseC>> release,
+) {
+  final register = _qsRegisterHost;
+  if (register == null) return false;
+  return register(ctx, dispatch, release) == 1;
+}
+
 /// 初始化 QuickJS wrapper。必须在使用其他函数之前调用。
 ///
 /// [dllPath] 是 libquickjs.dll 的完整路径。
@@ -204,23 +325,39 @@ bool initQuickJS(String dllPath) {
   }
 }
 
-/// 创建 QuickJS 运行时。native 不可用时返回 null。
+/// 创建 QuickJS 运行时。native 不可用或创建失败时返回 null。
 ///
 /// 句柄的所有权归调用方——每个 `JsRuntime` 实例各持各的，
 /// 这里刻意不留模块级缓存，否则多实例会互相覆盖。
-Pointer<Void>? newRuntime() => _qsNewRuntime?.call();
+Pointer<Void>? newRuntime() => _orNull(_qsNewRuntime?.call());
 
 /// 释放运行时。
 void freeRuntime(Pointer<Void> rt) => _qsFreeRuntime?.call(rt);
 
-/// 在 [rt] 上创建 JS 上下文。native 不可用时返回 null。
-Pointer<Void>? newContext(Pointer<Void> rt) => _qsNewContext?.call(rt);
+/// 在 [rt] 上创建 JS 上下文。native 不可用或创建失败时返回 null。
+Pointer<Void>? newContext(Pointer<Void> rt) => _orNull(_qsNewContext?.call(rt));
+
+/// 把 C 侧的失败值归一成 Dart null。
+///
+/// C 函数失败返回的是 `NULL`，到 Dart 这边是 `nullptr`——一个地址为 0 的
+/// **合法** Pointer，不是 Dart `null`。调用方若写 `ptr == null` 会把失败当成功
+/// 放过去，随后所有调用都打在空指针上却毫无征兆（引擎报告 available 而
+/// `eval` 恒返回 null）。归一在这里做一次，调用方就只需判 null。
+Pointer<Void>? _orNull(Pointer<Void>? ptr) =>
+    (ptr == null || ptr == nullptr) ? null : ptr;
 
 /// 释放上下文。
 void freeContext(Pointer<Void> ctx) => _qsFreeContext?.call(ctx);
 
-/// 在 [ctx] 中执行 JS 代码 [code]。返回结果字符串，失败返回 null。
-String? eval(Pointer<Void> ctx, String code) {
+/// 一次 [eval] 的结果：`value` 与 `error` 恰有一个非 null。
+typedef EvalOutcome = ({String? value, String? error});
+
+/// 在 [ctx] 中执行 JS 代码 [code]。
+///
+/// 失败时把 JS 异常文本放进 `error` 一并返回——以前这里取出异常字符串后立刻
+/// free 掉就丢弃，失败时连诊断都没有，而 `docs/05-Spider引擎.md` 要求脚本异常
+/// 能带信息上抛成 `SCRIPT_RUNTIME_ERROR`。
+EvalOutcome eval(Pointer<Void> ctx, String code) {
   final evalFn = _qsEval;
   final toCString = _qsToCString;
   final freeCString = _qsFreeCString;
@@ -229,7 +366,7 @@ String? eval(Pointer<Void> ctx, String code) {
       toCString == null ||
       freeCString == null ||
       freeValue == null) {
-    return null;
+    return (value: null, error: 'QuickJS wrapper 未导出所需符号');
   }
 
   final input = code.toNativeUtf8();
@@ -241,7 +378,9 @@ String? eval(Pointer<Void> ctx, String code) {
     final evalResult = evalFn(
       ctx,
       input,
-      code.length,
+      // JS_Eval 要的是 UTF-8 字节数，不是 UTF-16 码元数。含中文的脚本按
+      // code.length 传会被截断在半个字符上。
+      input.length,
       filename,
       jsEvalTypeGlobal,
       resultTag,
@@ -249,29 +388,84 @@ String? eval(Pointer<Void> ctx, String code) {
     );
 
     if (evalResult == -1) {
-      final errStr = toCString(ctx, resultTag.value, resultU.value);
-      if (errStr != nullptr) {
-        freeCString(ctx, errStr);
-      }
+      // 先放掉 JS_EXCEPTION 哨兵本身——它不携带任何信息，真正的 Error 对象
+      // 挂在 ctx 上，要单独 claim 回来。
       freeValue(ctx, resultTag.value, resultU.value);
-      return null;
+      return (value: null, error: _takeException(ctx) ?? 'JS 异常（无文本）');
     }
 
-    final str = toCString(ctx, resultTag.value, resultU.value);
-    if (str == nullptr) {
-      freeValue(ctx, resultTag.value, resultU.value);
-      return null;
-    }
-
-    final output = str.toDartString();
-    freeCString(ctx, str);
+    final text = _valueToString(ctx, resultTag.value, resultU.value);
     freeValue(ctx, resultTag.value, resultU.value);
-    return output;
+    if (text == null) {
+      return (value: null, error: '结果无法转成字符串');
+    }
+    return (value: text, error: null);
   } finally {
     calloc
       ..free(input)
       ..free(filename)
       ..free(resultTag)
       ..free(resultU);
+  }
+}
+
+/// 把 JSValue 转成 Dart 字符串，失败返回 null。不释放该 JSValue。
+String? _valueToString(Pointer<Void> ctx, int tag, int u) {
+  final toCString = _qsToCString;
+  final freeCString = _qsFreeCString;
+  if (toCString == null || freeCString == null) return null;
+
+  final str = toCString(ctx, tag, u);
+  if (str == nullptr) return null;
+  final out = str.toDartString();
+  freeCString(ctx, str);
+  return out;
+}
+
+/// 取回并释放挂在 [ctx] 上的待处理异常，尽量拼上 `Error.stack`。
+String? _takeException(Pointer<Void> ctx) {
+  final getExc = _qsGetException;
+  final freeValue = _qsFreeValue;
+  if (getExc == null || freeValue == null) return null;
+
+  final tag = calloc<Int64>();
+  final u = calloc<Uint64>();
+  try {
+    if (getExc(ctx, tag, u) != 1) return null;
+
+    final message = _valueToString(ctx, tag.value, u.value);
+    final stack = _readStack(ctx, tag.value, u.value);
+    freeValue(ctx, tag.value, u.value);
+
+    if (message == null) return stack;
+    if (stack == null || stack.isEmpty) return message;
+    return '$message\n$stack';
+  } finally {
+    calloc
+      ..free(tag)
+      ..free(u);
+  }
+}
+
+/// 读取 Error 对象的 `stack` 属性，没有则返回 null。
+String? _readStack(Pointer<Void> ctx, int tag, int u) {
+  final getProp = _qsGetPropStr;
+  final freeValue = _qsFreeValue;
+  if (getProp == null || freeValue == null) return null;
+
+  final prop = 'stack'.toNativeUtf8();
+  final outTag = calloc<Int64>();
+  final outU = calloc<Uint64>();
+  try {
+    if (getProp(ctx, tag, u, prop, outTag, outU) != 1) return null;
+    final text = _valueToString(ctx, outTag.value, outU.value);
+    freeValue(ctx, outTag.value, outU.value);
+    // 非 Error 对象抛出来时 stack 是 undefined，转成字符串没有意义。
+    return (text == null || text == 'undefined' || text.isEmpty) ? null : text;
+  } finally {
+    calloc
+      ..free(prop)
+      ..free(outTag)
+      ..free(outU);
   }
 }

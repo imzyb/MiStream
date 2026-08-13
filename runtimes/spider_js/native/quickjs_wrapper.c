@@ -8,6 +8,7 @@
 
 #include <windows.h>
 #include <stdint.h>
+#include <string.h>
 
 /* Forward declarations for QuickJS types */
 typedef struct JSRuntime JSRuntime;
@@ -35,6 +36,23 @@ typedef JSValue (*PFN_JS_Eval)(JSContext*, const char*, size_t, const char*, int
 typedef const char* (*PFN_JS_ToCStringLen2)(JSContext*, size_t*, JSValue, int);
 typedef void (*PFN_JS_FreeCString)(JSContext*, const char*);
 typedef void (*PFN_JS_FreeValue)(JSContext*, JSValue);
+typedef JSValue (*PFN_JS_GetException)(JSContext*);
+typedef JSValue (*PFN_JS_GetPropertyStr)(JSContext*, JSValue, const char*);
+typedef JSValue (*PFN_JS_GetGlobalObject)(JSContext*);
+typedef int (*PFN_JS_SetPropertyStr)(JSContext*, JSValue, const char*, JSValue);
+typedef JSValue (*PFN_JS_NewStringLen)(JSContext*, const char*, size_t);
+
+/* JSCFunction: JSValue f(ctx, this_val, argc, argv) */
+typedef JSValue (*PFN_JSCFunction)(JSContext*, JSValue, int, JSValue*);
+typedef JSValue (*PFN_JS_NewCFunction2)(
+    JSContext*, PFN_JSCFunction, const char*, int, int, int);
+
+/* Resource limits. JSInterruptHandler returns non-zero to abort execution. */
+typedef int (*PFN_JSInterruptHandler)(JSRuntime*, void*);
+typedef void (*PFN_JS_SetInterruptHandler)(
+    JSRuntime*, PFN_JSInterruptHandler, void*);
+typedef void (*PFN_JS_SetMemoryLimit)(JSRuntime*, size_t);
+typedef void (*PFN_JS_SetMaxStackSize)(JSRuntime*, size_t);
 
 /* Global function pointers */
 static PFN_JS_NewRuntime pJS_NewRuntime = NULL;
@@ -45,8 +63,20 @@ static PFN_JS_Eval pJS_Eval = NULL;
 static PFN_JS_ToCStringLen2 pJS_ToCStringLen2 = NULL;
 static PFN_JS_FreeCString pJS_FreeCString = NULL;
 static PFN_JS_FreeValue pJS_FreeValue = NULL;
+static PFN_JS_GetException pJS_GetException = NULL;
+static PFN_JS_GetPropertyStr pJS_GetPropertyStr = NULL;
+static PFN_JS_GetGlobalObject pJS_GetGlobalObject = NULL;
+static PFN_JS_SetPropertyStr pJS_SetPropertyStr = NULL;
+static PFN_JS_NewStringLen pJS_NewStringLen = NULL;
+static PFN_JS_NewCFunction2 pJS_NewCFunction2 = NULL;
+static PFN_JS_SetInterruptHandler pJS_SetInterruptHandler = NULL;
+static PFN_JS_SetMemoryLimit pJS_SetMemoryLimit = NULL;
+static PFN_JS_SetMaxStackSize pJS_SetMaxStackSize = NULL;
 
 static HMODULE hQuickJS = NULL;
+
+/* Defined with the host bridge below; needed by qs_free_context. */
+static void qs_host_forget(JSContext* ctx);
 
 /* Exported functions using stdcall-compatible ABI with output parameters */
 
@@ -64,6 +94,16 @@ __declspec(dllexport) int qs_init(const char* dll_path) {
     pJS_ToCStringLen2 = (PFN_JS_ToCStringLen2)GetProcAddress(hQuickJS, "JS_ToCStringLen2");
     pJS_FreeCString = (PFN_JS_FreeCString)GetProcAddress(hQuickJS, "JS_FreeCString");
     pJS_FreeValue = (PFN_JS_FreeValue)GetProcAddress(hQuickJS, "__JS_FreeValue");
+
+    /* Optional: only used for exception diagnostics. A libquickjs build that
+     * lacks them degrades to "exception without text" rather than failing
+     * init outright, so they stay out of the mandatory check below. */
+    pJS_GetException = (PFN_JS_GetException)GetProcAddress(hQuickJS, "JS_GetException");
+    pJS_GetPropertyStr = (PFN_JS_GetPropertyStr)GetProcAddress(hQuickJS, "JS_GetPropertyStr");
+    pJS_GetGlobalObject = (PFN_JS_GetGlobalObject)GetProcAddress(hQuickJS, "JS_GetGlobalObject");
+    pJS_SetPropertyStr = (PFN_JS_SetPropertyStr)GetProcAddress(hQuickJS, "JS_SetPropertyStr");
+    pJS_NewStringLen = (PFN_JS_NewStringLen)GetProcAddress(hQuickJS, "JS_NewStringLen");
+    pJS_NewCFunction2 = (PFN_JS_NewCFunction2)GetProcAddress(hQuickJS, "JS_NewCFunction2");
 
     if (!pJS_NewRuntime || !pJS_FreeRuntime || !pJS_NewContext ||
         !pJS_FreeContext || !pJS_Eval || !pJS_ToCStringLen2 ||
@@ -91,7 +131,12 @@ __declspec(dllexport) void* qs_new_context(void* rt) {
 }
 
 __declspec(dllexport) void qs_free_context(void* ctx) {
-    if (pJS_FreeContext && ctx) pJS_FreeContext((JSContext*)ctx);
+    if (!ctx) return;
+    /* Drop the host entry first: once the context is gone its slot must not
+     * be matched again, and the slot has to be reusable by the next context
+     * (the allocator happily hands back the same address). */
+    qs_host_forget((JSContext*)ctx);
+    if (pJS_FreeContext) pJS_FreeContext((JSContext*)ctx);
 }
 
 /**
@@ -148,38 +193,312 @@ __declspec(dllexport) void qs_free_cstring(void* ctx, const char* str) {
 }
 
 /**
- * Free a JSValue. The JSValue is reconstructed from tag and u components.
+ * Claim the pending exception. Returns 1 if one was retrieved.
  *
- * ABI note: __JS_FreeValue takes JSValue by value. When called across the
- * MSVC wrapper → MinGW QuickJS boundary, this can cause hangs due to
- * struct-passing ABI differences. We mitigate by inlining the fast path:
- * tag >= 0 (INT=0, BOOL=1, NULL=2, UNDEFINED=3, ...) are non-heap values
- * that don't need reference counting, so we skip the call entirely.
- * Only tag < 0 (STRING=-7, OBJECT=-1, etc.) actually need the call.
+ * qs_eval can only hand back the JS_EXCEPTION sentinel, which carries no
+ * information at all — the actual Error object lives on the context and has
+ * to be claimed with JS_GetException. Without this, a failing script is
+ * indistinguishable from one returning undefined.
+ *
+ * Caller owns the returned value and must release it with qs_free_value.
  */
-__declspec(dllexport) void qs_free_value(void* ctx, int64_t val_tag, uint64_t val_u) {
-    if (!ctx) return;
+__declspec(dllexport) int qs_get_exception(
+    void* ctx,
+    int64_t* out_tag,
+    uint64_t* out_u
+) {
+    if (!pJS_GetException || !ctx) return 0;
 
-    /* Non-ref-counted values (tag >= 0): INT, BOOL, NULL, UNDEFINED, etc.
-     * These don't hold heap references — nothing to free. */
-    if (val_tag >= 0) return;
+    JSValue exc = pJS_GetException((JSContext*)ctx);
+    *out_tag = exc.tag;
+    *out_u = exc.u.uint64;
+    return 1;
+}
 
-    if (!pJS_FreeValue) return;
+/**
+ * Read property [prop] off a JSValue. Returns 1 on success.
+ *
+ * Used to reach Error.stack for the stack-carrying SCRIPT_RUNTIME_ERROR that
+ * docs/05-Spider引擎.md requires. Caller must release the result.
+ */
+__declspec(dllexport) int qs_get_prop_str(
+    void* ctx,
+    int64_t val_tag,
+    uint64_t val_u,
+    const char* prop,
+    int64_t* out_tag,
+    uint64_t* out_u
+) {
+    if (!pJS_GetPropertyStr || !ctx) return 0;
 
     JSValue val;
     val.tag = val_tag;
     val.u.uint64 = val_u;
 
-    pJS_FreeValue((JSContext*)ctx, val);
+    JSValue res = pJS_GetPropertyStr((JSContext*)ctx, val, prop);
+    *out_tag = res.tag;
+    *out_u = res.u.uint64;
+    return 1;
+}
+
+/**
+ * Free a JSValue, reconstructed from tag and u.
+ *
+ * The only symbol libquickjs exports is __JS_FreeValue — the *finalizer*,
+ * which asserts ref_count == 0 on entry. The public JS_FreeValue is a static
+ * inline (no symbol to bind), so its body has to be reproduced here:
+ *
+ *     if (has_ref_count(v) && --p->ref_count <= 0) __JS_FreeValue(ctx, v);
+ *
+ * Doing that needs to know where ref_count sits, and this DLL does not match
+ * mainline QuickJS on that point. Measured against the shipped libquickjs.dll:
+ *
+ *   - strings (tag -7): first int32 IS the refcount ('a'+'b' -> 2, an
+ *     interned literal -> 0x80000003, i.e. 3 with a flag bit set)
+ *   - objects (tag -1): first 8 bytes are a LIST POINTER, not ref_count —
+ *     three objects allocated in a row read back 0x…fc9db40 / …fc9db88 /
+ *     …fc9dbd0, i.e. neighbouring gc_obj_list nodes
+ *
+ * So neither hand-rolled strategy works for objects against this DLL:
+ *   - decrementing writes into what is actually a list pointer (corruption)
+ *   - calling the finalizer directly access-violates
+ *
+ * The way out is to never do the arithmetic ourselves for objects and instead
+ * hand the reference back to QuickJS, which knows its own layout.
+ * JS_SetPropertyStr *consumes* the value it stores, so stashing the object in
+ * a scratch slot and then overwriting that slot with undefined makes QuickJS
+ * run its own JS_FreeValue on it. See qs_release_object.
+ *
+ * If those symbols are missing we fall back to leaking the object: on an
+ * assert-enabled libquickjs the leak trips `list_empty(&rt->gc_obj_list)` at
+ * JS_FreeRuntime, which is still better than corruption or an access
+ * violation. Callers should keep values that reach Dart to strings and
+ * primitives regardless — see JsRuntime._wrap.
+ *
+ * tag >= 0 (INT, BOOL, NULL, UNDEFINED, EXCEPTION) hold no heap reference.
+ */
+typedef struct JSRefCountHeader {
+    int ref_count;
+} JSRefCountHeader;
+
+#define QS_TAG_OBJECT (-1)
+#define QS_TAG_UNDEFINED (3)
+#define QS_SINK_PROP "__qs_sink"
+
+static JSValue qs_undefined(void) {
+    JSValue v;
+    v.u.uint64 = 0;
+    v.tag = QS_TAG_UNDEFINED;
+    return v;
+}
+
+static int qs_can_sink(void) {
+    return pJS_GetGlobalObject && pJS_SetPropertyStr;
+}
+
+/**
+ * Give an owned object reference back to QuickJS without touching ref_count.
+ *
+ * JS_SetPropertyStr consumes its value argument, so storing `val` in a scratch
+ * property transfers our reference to the property slot; overwriting the slot
+ * with undefined then makes QuickJS release it through its own JS_FreeValue.
+ * The same two-step returns the reference JS_GetGlobalObject handed us —
+ * passing the global as `this_obj` is a borrow, and the context keeps it alive
+ * throughout.
+ */
+static void qs_release_object(JSContext* ctx, JSValue val) {
+    if (!qs_can_sink()) return; /* leak; see comment above */
+
+    JSValue g = pJS_GetGlobalObject(ctx);
+
+    pJS_SetPropertyStr(ctx, g, QS_SINK_PROP, val);
+    pJS_SetPropertyStr(ctx, g, QS_SINK_PROP, qs_undefined());
+
+    /* now return our reference to the global object itself */
+    pJS_SetPropertyStr(ctx, g, QS_SINK_PROP, g);
+    pJS_SetPropertyStr(ctx, g, QS_SINK_PROP, qs_undefined());
+}
+
+__declspec(dllexport) void qs_free_value(void* ctx, int64_t val_tag, uint64_t val_u) {
+    if (!ctx) return;
+    if (val_tag >= 0) return;
+    if (!pJS_FreeValue) return;
+
+    JSValue val;
+    val.tag = val_tag;
+    val.u.uint64 = val_u;
+    if (!val.u.ptr) return;
+
+    if (val_tag == QS_TAG_OBJECT) {
+        qs_release_object((JSContext*)ctx, val);
+        return;
+    }
+
+    JSRefCountHeader* p = (JSRefCountHeader*)val.u.ptr;
+    if (--p->ref_count <= 0) {
+        pJS_FreeValue((JSContext*)ctx, val);
+    }
+}
+
+/* ---- Host bridge ------------------------------------------------------- */
+
+/**
+ * Dart-side dispatcher: takes a method name and a JSON argument array, returns
+ * a freshly allocated JSON result string (or NULL). qs_host_release hands that
+ * allocation back to Dart once it has been copied into a JS string.
+ */
+typedef const char* (*PFN_HOST_DISPATCH)(const char* name, const char* args_json);
+typedef void (*PFN_HOST_RELEASE)(const char* ptr);
+
+/**
+ * Dispatch targets are per-context, NOT process-global.
+ *
+ * Each JsRuntime owns its own context and its own Dart NativeCallable, and
+ * NativeCallable.isolateLocal may only be invoked from the isolate that
+ * created it. A single global slot gets clobbered as soon as a second runtime
+ * registers -- the first context then calls into the second isolate's callback
+ * and the process dies with an access violation. `dart test` reproduces this
+ * immediately because it runs suites in parallel isolates; in production the
+ * same thing happens with one context per source.
+ */
+#define QS_MAX_HOSTS 64
+
+typedef struct {
+    JSContext* ctx;
+    PFN_HOST_DISPATCH dispatch;
+    PFN_HOST_RELEASE release;
+} QsHostEntry;
+
+static QsHostEntry g_hosts[QS_MAX_HOSTS];
+static CRITICAL_SECTION g_hosts_lock;
+
+static QsHostEntry* qs_host_find(JSContext* ctx) {
+    for (int i = 0; i < QS_MAX_HOSTS; i++) {
+        if (g_hosts[i].ctx == ctx) return &g_hosts[i];
+    }
+    return NULL;
+}
+
+static void qs_host_forget(JSContext* ctx) {
+    EnterCriticalSection(&g_hosts_lock);
+    QsHostEntry* e = qs_host_find(ctx);
+    if (e) {
+        e->ctx = NULL;
+        e->dispatch = NULL;
+        e->release = NULL;
+    }
+    LeaveCriticalSection(&g_hosts_lock);
+}
+
+/**
+ * The single JS-visible entry point: __qs_host(name, argsJson) -> string.
+ *
+ * Everything crosses as strings, which keeps this consistent with the JSValue
+ * boundary rule documented on qs_free_value: no JS object ever reaches Dart.
+ * The friendly drpy surface (pdfh/pdfa/md5/...) is layered on top of this in
+ * JS by the prelude in JsRuntime._prelude.
+ */
+static JSValue qs_host_trampoline(
+    JSContext* ctx,
+    JSValue this_val,
+    int argc,
+    JSValue* argv
+) {
+    (void)this_val;
+
+    if (!pJS_ToCStringLen2 || !pJS_NewStringLen || argc < 2) {
+        return qs_undefined();
+    }
+
+    EnterCriticalSection(&g_hosts_lock);
+    QsHostEntry* entry = qs_host_find(ctx);
+    PFN_HOST_DISPATCH dispatch = entry ? entry->dispatch : NULL;
+    PFN_HOST_RELEASE release = entry ? entry->release : NULL;
+    LeaveCriticalSection(&g_hosts_lock);
+
+    if (!dispatch) return qs_undefined();
+
+    const char* name = pJS_ToCStringLen2(ctx, NULL, argv[0], 0);
+    if (!name) return qs_undefined();
+
+    const char* args = pJS_ToCStringLen2(ctx, NULL, argv[1], 0);
+    if (!args) {
+        pJS_FreeCString(ctx, name);
+        return qs_undefined();
+    }
+
+    const char* out = dispatch(name, args);
+
+    JSValue result;
+    if (out) {
+        result = pJS_NewStringLen(ctx, out, strlen(out));
+        if (release) release(out);
+    } else {
+        result = qs_undefined();
+    }
+
+    pJS_FreeCString(ctx, name);
+    pJS_FreeCString(ctx, args);
+    return result;
+}
+
+/**
+ * Install __qs_host on the global object. Returns 1 on success.
+ *
+ * Registering requires JS_NewCFunction2 / JS_GetGlobalObject /
+ * JS_SetPropertyStr / JS_NewStringLen; a libquickjs build missing any of them
+ * simply gets no host bridge (Dart reports it and the drpy surface stays
+ * unavailable) rather than a half-installed global.
+ */
+__declspec(dllexport) int qs_register_host(
+    void* ctx,
+    PFN_HOST_DISPATCH dispatch,
+    PFN_HOST_RELEASE release
+) {
+    if (!ctx || !dispatch) return 0;
+    if (!pJS_NewCFunction2 || !pJS_GetGlobalObject || !pJS_SetPropertyStr ||
+        !pJS_NewStringLen) {
+        return 0;
+    }
+
+    JSContext* c = (JSContext*)ctx;
+
+    EnterCriticalSection(&g_hosts_lock);
+    QsHostEntry* entry = qs_host_find(c);
+    if (!entry) entry = qs_host_find(NULL); /* first free slot */
+    if (entry) {
+        entry->ctx = c;
+        entry->dispatch = dispatch;
+        entry->release = release;
+    }
+    LeaveCriticalSection(&g_hosts_lock);
+
+    if (!entry) return 0; /* table full */
+
+    /* JS_CFUNC_generic == 0 */
+    JSValue fn = pJS_NewCFunction2(c, qs_host_trampoline, "__qs_host", 2, 0, 0);
+    if (fn.tag == 6) { /* JS_TAG_EXCEPTION */
+        qs_host_forget(c);
+        return 0;
+    }
+
+    JSValue g = pJS_GetGlobalObject(c);
+    pJS_SetPropertyStr(c, g, "__qs_host", fn); /* consumes fn */
+    qs_release_object(c, g);
+    return 1;
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
     switch (fdwReason) {
+        case DLL_PROCESS_ATTACH:
+            InitializeCriticalSection(&g_hosts_lock);
+            break;
         case DLL_PROCESS_DETACH:
             if (hQuickJS) {
                 FreeLibrary(hQuickJS);
                 hQuickJS = NULL;
             }
+            DeleteCriticalSection(&g_hosts_lock);
             break;
     }
     return TRUE;
