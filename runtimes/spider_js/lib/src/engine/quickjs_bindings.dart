@@ -205,6 +205,14 @@ String? findNativeLibrary(String name) {
       scriptDir = '';
     }
   }
+  // AOT 编译成 exe 之后 cwd 是宿主的工作目录（可能是任意位置），
+  // Platform.script 也不再指向源码；DLL 唯一可靠的落点是 exe 自己旁边。
+  var exeDir = '';
+  try {
+    exeDir = File(Platform.resolvedExecutable).parent.path;
+  } on Object {
+    exeDir = '';
+  }
   final cwd = Directory.current.path;
   final sep = Platform.pathSeparator;
   final engineRel = 'lib${sep}src${sep}engine';
@@ -216,10 +224,12 @@ String? findNativeLibrary(String name) {
     '$cwd$sep$name',
     // 2. 环境变量显式指定的目录。
     if (envDir != null && envDir.isNotEmpty) '$envDir$sep$name',
-    // 3. 包内引擎目录，相对 cwd——`dart test` 与 `melos exec` 都在包根跑，
+    // 3. 可执行文件所在目录：子进程被宿主从别处拉起时，这是唯一稳定的锚点。
+    if (exeDir.isNotEmpty) '$exeDir$sep$name',
+    // 4. 包内引擎目录，相对 cwd——`dart test` 与 `melos exec` 都在包根跑，
     //    只认 Platform.script 的话测试进程里会解析不到。
     '$cwd$sep$engineRel$sep$name',
-    // 4. 同上但相对脚本位置（`dart run` 直接跑包内文件时）。
+    // 5. 同上但相对脚本位置（`dart run` 直接跑包内文件时）。
     if (scriptDir.isNotEmpty) '$scriptDir$sep$engineRel$sep$name',
     if (scriptDir.isNotEmpty) '$scriptDir${sep}engine$sep$name',
   ];
@@ -443,7 +453,16 @@ typedef EvalOutcome = ({String? value, String? error});
 /// 失败时把 JS 异常文本放进 `error` 一并返回——以前这里取出异常字符串后立刻
 /// free 掉就丢弃，失败时连诊断都没有，而 `docs/05-Spider引擎.md` 要求脚本异常
 /// 能带信息上抛成 `SCRIPT_RUNTIME_ERROR`。
-EvalOutcome eval(Pointer<Void> ctx, String code) {
+EvalOutcome eval(Pointer<Void> ctx, String code) =>
+    _evalWithFlags(ctx, code, jsEvalTypeGlobal);
+
+/// 以 ES 模块模式执行 JS 代码 [code]。
+///
+/// 与 [eval] 的区别：import/export 语句合法，`await` 顶层可用。
+EvalOutcome evalModule(Pointer<Void> ctx, String code) =>
+    _evalWithFlags(ctx, code, jsEvalTypeModule);
+
+EvalOutcome _evalWithFlags(Pointer<Void> ctx, String code, int flags) {
   final evalFn = _qsEval;
   final toCString = _qsToCString;
   final freeCString = _qsFreeCString;
@@ -468,7 +487,7 @@ EvalOutcome eval(Pointer<Void> ctx, String code) {
       // code.length 传会被截断在半个字符上。
       input.length,
       filename,
-      jsEvalTypeGlobal,
+      flags,
       resultTag,
       resultU,
     );

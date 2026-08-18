@@ -96,6 +96,9 @@ class JsRuntime {
   /// 或在测试里追加自定义宿主函数。
   final HostBridge bridge = HostBridge();
 
+  /// 当前 base URL（用于模块解析）。
+  String? _baseUrl;
+
   /// 当前状态。
   JsRuntimeStatus get status => _status;
 
@@ -194,7 +197,15 @@ class JsRuntime {
   /// 执行 JS 代码。
   ///
   /// 返回结果的字符串形式，失败返回 null 并把结构化原因写进 [lastFailure]。
-  String? eval(String code) {
+  String? eval(String code) => _evalWithTimeout(code, qjs.jsEvalTypeGlobal);
+
+  /// 以 ES 模块模式执行 JS 代码。
+  ///
+  /// import/export 语句合法，`await` 顶层可用。用于加载 drpy 依赖。
+  String? evalModule(String code) =>
+      _evalWithTimeout(code, qjs.jsEvalTypeModule);
+
+  String? _evalWithTimeout(String code, int flags) {
     final ctx = _ctx;
     final rt = _rt;
     if (ctx == null || rt == null || !isAvailable) {
@@ -208,7 +219,8 @@ class JsRuntime {
 
     final qjs.EvalOutcome outcome;
     try {
-      outcome = qjs.eval(ctx, _wrap(code));
+      final evalFn = flags == qjs.jsEvalTypeModule ? qjs.evalModule : qjs.eval;
+      outcome = evalFn(ctx, _wrap(code));
     } finally {
       // 无论成败都要撤时限，否则下一次求值会带着一个已经过期的 deadline 起跑，
       // 第一条字节码就被掐掉。tripped 标记不受 disarm 影响，下面还要读。
@@ -254,6 +266,21 @@ class JsRuntime {
         return decoded['d'] as String?;
     }
   }
+
+  /// 设置模块解析的 base URL。
+  ///
+  /// 在 `spider.create` 时由宿主传入，`assets://` 协议相对路径都基于此解析。
+  /// 设完后自动注入 JS 全局 `__qs_base_url`。
+  void setBaseUrl(String? url) {
+    _baseUrl = url;
+    if (url != null && isAvailable) {
+      final ctx = _ctx!;
+      qjs.eval(ctx, 'globalThis.__qs_base_url = ${jsonEncode(url)};');
+    }
+  }
+
+  /// 获取当前 base URL。
+  String? get baseUrl => _baseUrl;
 
   /// 把一条失败归到具体错误码。
   ///
@@ -406,6 +433,61 @@ class JsRuntime {
     };
   }
   g.console = { log: emit('log'), warn: emit('warn'), error: emit('error') };
+
+  // ---- 模块加载 polyfill (drpy2 ES module support) ----
+  var __qs_module_cache = {};
+  function __qs_require(spec) {
+    if (__qs_module_cache[spec]) return __qs_module_cache[spec];
+
+    var baseUrl = g.__qs_base_url || '';
+    var url;
+
+    if (spec.indexOf('assets://') === 0) {
+      var path = spec.substring('assets://'.length);
+      if (baseUrl) {
+        var b = baseUrl;
+        if (b.charAt(b.length - 1) === '/') b = b.substring(0, b.length - 1);
+        url = b + '/' + path;
+      } else {
+        url = spec;
+      }
+    } else if (spec.indexOf('http://') === 0 || spec.indexOf('https://') === 0) {
+      url = spec;
+    } else if (baseUrl) {
+      var b = baseUrl;
+      var li = b.lastIndexOf('/');
+      if (li >= 0) b = b.substring(0, li + 1);
+      url = b + spec;
+    } else {
+      url = spec;
+    }
+
+    var resp = req(url, { method: 'GET', timeoutMs: 15000 });
+    var code = resp.content || '';
+
+    // 用 Function 包装，把 export xxx = 转为 __m__.xxx =
+    var transformed = code
+      .replace(/export\s+default\s+/g, '__m__.default=')
+      .replace(/export\s+\{([^}]+)\}/g, function(_, names) {
+        return names.split(',').map(function(n) {
+          n = n.trim();
+          var parts = n.split(/\s+as\s+/);
+          var local = parts[0].trim();
+          var alias = (parts[1] || parts[0]).trim();
+          return '__m__.' + alias + '=' + local + ';';
+        }).join('');
+      })
+      .replace(/export\s+(?:const|let|var|function)\s+/g, '__m__.');
+
+    var mod = {};
+    var fn = Function('__m__', 'exports', 'module', 'require', transformed);
+    fn(mod, mod, mod, __qs_require);
+
+    __qs_module_cache[spec] = mod;
+    return mod;
+  }
+  g.__qs_require = __qs_require;
+
 })(globalThis);
 ''';
 }
