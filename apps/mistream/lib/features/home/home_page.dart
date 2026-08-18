@@ -16,7 +16,8 @@ import 'package:mistream/features/common/common.dart'
         ResponsiveGridView,
         ResponsiveGridPresets,
         ResponsiveHorizontalList,
-        BreakpointContext;
+        BreakpointContext,
+        ErrorView;
 
 /// 全局装配实例，供首页使用。
 AppAssembly? _globalHomeAssembly;
@@ -174,59 +175,90 @@ class _HomePageState extends State<HomePage> {
 
   void _showSourcePicker() {
     if (_availableSites.isEmpty) return;
-    showModalBottomSheet<void>(
+    showDialog<void>(
       context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                '切换片源 (${_availableSites.length}个)',
-                style: Theme.of(ctx).textTheme.titleMedium,
-              ),
-            ),
-            const Divider(height: 1),
-            Flexible(
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: _availableSites.length,
-                itemBuilder: (ctx, i) {
-                  final site = _availableSites[i];
-                  final isSelected = site.id == _currentSite?.id;
-                  final usable = site.isUsable;
-                  return ListTile(
-                    title: Text(
-                      site.name,
-                      style: TextStyle(
-                        color: usable ? null : Theme.of(ctx).disabledColor,
-                      ),
-                    ),
-                    subtitle: Text(
-                      usable ? site.api : '${site.api} (暂不支持)',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(ctx).textTheme.bodySmall,
-                    ),
-                    trailing: isSelected
-                        ? Icon(
-                            Icons.check,
-                            color: Theme.of(ctx).colorScheme.primary,
-                          )
-                        : null,
-                    onTap: usable
-                        ? () {
-                            Navigator.pop(ctx);
-                            _switchSource(site);
-                          }
-                        : null,
-                  );
-                },
-              ),
-            ),
-          ],
+      builder: (ctx) => AlertDialog(
+        title: Text('切换片源 (${_availableSites.length}个)'),
+        contentPadding: const EdgeInsets.fromLTRB(0, 12, 0, 0),
+        content: SizedBox(
+          width: 420,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: _availableSites.length,
+            itemBuilder: (ctx, i) {
+              final site = _availableSites[i];
+              final isSelected = site.id == _currentSite?.id;
+              final usable = site.isUsable;
+              return ListTile(
+                title: Text(
+                  site.name,
+                  style: TextStyle(
+                    color: usable ? null : Theme.of(ctx).disabledColor,
+                  ),
+                ),
+                subtitle: Text(
+                  usable ? site.api : '${site.api} (暂不支持)',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(ctx).textTheme.bodySmall,
+                ),
+                trailing: isSelected
+                    ? Icon(
+                        Icons.check,
+                        color: Theme.of(ctx).colorScheme.primary,
+                      )
+                    : null,
+                onTap: usable
+                    ? () {
+                        Navigator.pop(ctx);
+                        _switchSource(site);
+                      }
+                    : null,
+              );
+            },
+          ),
         ),
+      ),
+    );
+  }
+
+  /// 全部分类弹窗：首页只展示前 8 个，这里给出完整清单。
+  void _showAllCategories() {
+    final siteId = _currentSite?.id;
+    if (siteId == null || _categories.isEmpty) return;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('全部分类'),
+        contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+        content: SizedBox(
+          width: 480,
+          child: GridView.builder(
+            shrinkWrap: true,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+            ),
+            itemCount: _categories.length,
+            itemBuilder: (ctx, i) {
+              final cat = _categories[i];
+              return _CategoryCard(
+                category: cat,
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _navigateToCategoryDetail(cat);
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+        ],
       ),
     );
   }
@@ -286,9 +318,9 @@ class _HomePageState extends State<HomePage> {
               ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const _HomeSkeleton()
           : _error != null
-          ? _ErrorView(message: _error!, onRetry: _loadData)
+          ? ErrorView(message: _error!, onRetry: _loadData)
           : RefreshIndicator(
               onRefresh: _loadData,
               child: CustomScrollView(
@@ -321,9 +353,8 @@ class _HomePageState extends State<HomePage> {
                     HomeSection(
                       title: '分类',
                       action: TextButton(
-                        onPressed: () =>
-                            _navigateToCategoryDetail(_categories.first),
-                        child: const Text('更多'),
+                        onPressed: _showAllCategories,
+                        child: const Text('查看全部'),
                       ),
                       child: ResponsiveGridView(
                         config: ResponsiveGridPresets.categoryChips,
@@ -373,6 +404,66 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
+/// 首页骨架屏：加载时用静态占位块勾勒版面，避免整页白屏/转圈。
+class _HomeSkeleton extends StatelessWidget {
+  const _HomeSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final blockColor = theme.colorScheme.surfaceContainerHighest;
+
+    Widget block({double? width, double? height, double radius = 8}) {
+      return Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: blockColor,
+          borderRadius: BorderRadius.circular(radius),
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: block(width: 96, height: 20),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 210,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: 6,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (_, __) => block(width: 120),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: block(width: 64, height: 20),
+          ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: List.generate(8, (_) => block(width: 72, height: 36)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// 分类卡片（网格）。
 class _CategoryCard extends StatelessWidget {
   const _CategoryCard({required this.category, required this.onTap});
@@ -398,37 +489,6 @@ class _CategoryCard extends StatelessWidget {
             fontWeight: FontWeight.w500,
           ),
           textAlign: TextAlign.center,
-        ),
-      ),
-    );
-  }
-}
-
-/// 错误视图。
-class _ErrorView extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-
-  const _ErrorView({required this.message, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 48, color: Colors.grey),
-            const SizedBox(height: 16),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 16),
-            FilledButton.tonal(onPressed: onRetry, child: const Text('重试')),
-          ],
         ),
       ),
     );

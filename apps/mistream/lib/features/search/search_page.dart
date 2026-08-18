@@ -6,6 +6,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mistream/app/app.dart';
+import 'package:mistream/features/common/common.dart'
+    show ResponsiveGridView, ResponsiveGridPresets;
+import 'package:mistream/features/home/widgets/media_card.dart';
 import 'package:search_engine/search_engine.dart';
 
 /// 搜索页面。
@@ -110,12 +113,18 @@ class _SearchPageState extends State<SearchPage> {
                       style: TextStyle(color: Colors.grey),
                     ),
                   )
-          : ListView.builder(
+          : ResponsiveGridView(
+              config: ResponsiveGridPresets.mediaCards,
               itemCount: _items.length,
-              itemBuilder: (context, index) => _SearchResultCard(
-                item: _items[index],
-                onTap: () => _goDetail(_items[index]),
-              ),
+              itemBuilder: (context, index) {
+                final item = _items[index];
+                return MediaCard(
+                  title: item.title,
+                  coverUrl: item.coverUrl,
+                  remarks: item.remarks,
+                  onTap: () => _goDetail(item),
+                );
+              },
             ),
     );
   }
@@ -190,51 +199,6 @@ class _SearchPageState extends State<SearchPage> {
         },
         extra: item,
       ),
-    );
-  }
-}
-
-class _SearchResultCard extends StatelessWidget {
-  const _SearchResultCard({required this.item, this.onTap});
-  final SearchItem item;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      leading: ClipRRect(
-        borderRadius: BorderRadius.circular(4),
-        child: Container(
-          width: 60,
-          height: 80,
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          child: item.coverUrl != null
-              ? Image.network(
-                  item.coverUrl!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) =>
-                      const Center(child: Icon(Icons.movie, size: 24)),
-                )
-              : const Center(child: Icon(Icons.movie, size: 24)),
-        ),
-      ),
-      title: Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-      subtitle: _buildSubtitle(context),
-      onTap: onTap,
-    );
-  }
-
-  Widget? _buildSubtitle(BuildContext context) {
-    final parts = <String>[];
-    if (item.year != null) parts.add(item.year!);
-    if (item.remarks != null) parts.add(item.remarks!);
-    if (item.sources.length > 1) parts.add('${item.sources.length} 个源');
-    if (parts.isEmpty) return null;
-    return Text(
-      parts.join(' · '),
-      style: Theme.of(context).textTheme.bodySmall,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
     );
   }
 }

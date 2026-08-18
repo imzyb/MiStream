@@ -16,4 +16,5 @@ export 'widgets/responsive.dart'
         ResponsiveHorizontalList,
         ResponsiveScaffold,
         ResponsiveValue,
+        ResponsiveSliverGrid,
         BreakpointContext;

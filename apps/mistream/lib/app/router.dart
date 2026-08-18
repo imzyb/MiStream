@@ -23,6 +23,8 @@ import 'package:core_domain/core_domain.dart';
 import 'package:player_engine/player_engine.dart';
 import 'package:search_engine/search_engine.dart';
 import 'package:mistream/features/shell/scaffold_with_nav_bar.dart';
+import 'package:mistream/features/common/common.dart'
+    show BreakpointType, BreakpointContext;
 
 /// 全局装配实例。
 AppAssembly? _globalRouterAssembly;
@@ -525,6 +527,15 @@ class _CategoryDetailPageState extends State<_CategoryDetailPage> {
     );
   }
 
+  /// 网格列数随断点变化（对应 ResponsiveGridPresets.mediaCards）。
+  int get _gridColumns => switch (context.breakpoint) {
+    BreakpointType.xs => 2,
+    BreakpointType.sm => 3,
+    BreakpointType.md => 4,
+    BreakpointType.lg => 5,
+    BreakpointType.xl => 6,
+  };
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -538,8 +549,8 @@ class _CategoryDetailPageState extends State<_CategoryDetailPage> {
               child: GridView.builder(
                 controller: _scrollController,
                 padding: const EdgeInsets.all(16),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: _gridColumns,
                   childAspectRatio: 0.6,
                   mainAxisSpacing: 8,
                   crossAxisSpacing: 8,

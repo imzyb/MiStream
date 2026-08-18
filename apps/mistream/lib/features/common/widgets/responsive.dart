@@ -157,6 +157,48 @@ class ResponsiveGridView extends StatelessWidget {
   }
 }
 
+/// 响应式 Sliver 网格（用于 CustomScrollView 内）。
+class ResponsiveSliverGrid extends StatelessWidget {
+  const ResponsiveSliverGrid({
+    super.key,
+    required this.itemCount,
+    required this.itemBuilder,
+    this.config = ResponsiveGridPresets.mediaCards,
+    this.padding = const EdgeInsets.all(16),
+    this.mainAxisSpacing = 8,
+    this.crossAxisSpacing = 8,
+    this.childAspectRatio = 0.7,
+  });
+
+  final int itemCount;
+  final Widget Function(BuildContext context, int index) itemBuilder;
+  final ResponsiveGridConfig config;
+  final EdgeInsetsGeometry padding;
+  final double mainAxisSpacing;
+  final double crossAxisSpacing;
+  final double childAspectRatio;
+
+  @override
+  Widget build(BuildContext context) {
+    final columns = config.columnsFor(context.breakpoint);
+    return SliverPadding(
+      padding: padding,
+      sliver: SliverGrid(
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: columns,
+          mainAxisSpacing: mainAxisSpacing,
+          crossAxisSpacing: crossAxisSpacing,
+          childAspectRatio: childAspectRatio,
+        ),
+        delegate: SliverChildBuilderDelegate(
+          itemBuilder,
+          childCount: itemCount,
+        ),
+      ),
+    );
+  }
+}
+
 /// 响应式水平列表（卡片轮播）。
 class ResponsiveHorizontalList extends StatelessWidget {
   const ResponsiveHorizontalList({

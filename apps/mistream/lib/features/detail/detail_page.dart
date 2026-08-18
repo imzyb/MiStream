@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mistream/app/app.dart';
 import 'package:mistream/application/detail_use_case.dart';
+import 'package:mistream/features/common/common.dart'
+    show PosterImage, ResponsiveSliverGrid, ResponsiveGridPresets;
 import 'package:search_engine/search_engine.dart';
 
 /// 影片详情页。
@@ -40,6 +42,8 @@ class _DetailPageState extends State<DetailPage> {
   String? _error;
   VodDetail? _detail;
   int _selectedFlagIndex = 0;
+  bool _descriptionExpanded = false;
+  bool? _favorite;
 
   @override
   void initState() {
@@ -75,6 +79,42 @@ class _DetailPageState extends State<DetailPage> {
         _error = err.message;
       }),
     );
+
+    unawaited(_refreshFavorite());
+  }
+
+  Future<void> _refreshFavorite() async {
+    final liked = await AppScope.of(
+      context,
+    ).repositories.favorites.isFavorite(widget.siteId, widget.vodId);
+    if (mounted) setState(() => _favorite = liked);
+  }
+
+  Future<void> _toggleFavorite() async {
+    final detail = _detail;
+    if (detail == null) return;
+    final liked = _favorite ?? false;
+    final repo = AppScope.of(context).repositories.favorites;
+    try {
+      if (liked) {
+        await repo.remove(widget.siteId, widget.vodId);
+      } else {
+        await repo.add(
+          siteId: widget.siteId,
+          vodId: widget.vodId,
+          vodName: detail.name,
+          vodPic: detail.pic,
+          vodRemarks: detail.remarks,
+        );
+      }
+      if (mounted) setState(() => _favorite = !liked);
+    } on Object catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('收藏操作失败: $e')),
+        );
+      }
+    }
   }
 
   /// 优先返回名字里带 `m3u8` 的线路索引，找不到则回 0。
@@ -106,9 +146,14 @@ class _DetailPageState extends State<DetailPage> {
       slivers: [
         // 顶部海报区域
         SliverAppBar(
-          expandedHeight: 260,
+          expandedHeight: 280,
           pinned: true,
           flexibleSpace: FlexibleSpaceBar(
+            titlePadding: const EdgeInsetsDirectional.only(
+              start: 16,
+              end: 72,
+              bottom: 12,
+            ),
             title: Text(
               detail.name,
               style: const TextStyle(fontSize: 16),
@@ -118,27 +163,35 @@ class _DetailPageState extends State<DetailPage> {
             background: Stack(
               fit: StackFit.expand,
               children: [
-                if (detail.pic != null)
-                  Image.network(
-                    detail.pic!,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => _buildPlaceholderPoster(theme),
-                  )
-                else
-                  _buildPlaceholderPoster(theme),
-                // 渐变遮罩
-                const DecoratedBox(
+                PosterImage(url: detail.pic),
+                // 渐变遮罩：尾部接到页面背景色，明暗主题都成立。
+                DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
-                      colors: [Colors.transparent, Color(0xFF0D0F14)],
+                      colors: [
+                        Colors.transparent,
+                        theme.colorScheme.surface,
+                      ],
                     ),
                   ),
                 ),
               ],
             ),
           ),
+          actions: [
+            IconButton(
+              tooltip: (_favorite ?? false) ? '取消收藏' : '收藏',
+              onPressed: _favorite == null ? null : _toggleFavorite,
+              icon: Icon(
+                (_favorite ?? false) ? Icons.favorite : Icons.favorite_border,
+                color: (_favorite ?? false)
+                    ? Colors.redAccent
+                    : theme.colorScheme.onSurface,
+              ),
+            ),
+          ],
         ),
 
         // 基本信息
@@ -164,16 +217,9 @@ class _DetailPageState extends State<DetailPage> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                // 简介
+                // 简介（可展开）
                 if (detail.description.isNotEmpty)
-                  Text(
-                    detail.description,
-                    maxLines: 4,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
+                  _buildDescription(detail.description, theme),
               ],
             ),
           ),
@@ -207,48 +253,66 @@ class _DetailPageState extends State<DetailPage> {
           ),
 
         // 剧集列表
-        SliverPadding(
-          padding: const EdgeInsets.all(16),
-          sliver: _buildEpisodeGrid(detail, theme),
-        ),
+        if (_episodes.isEmpty)
+          const SliverToBoxAdapter(
+            child: Center(
+              child: Padding(
+                padding: EdgeInsets.all(32),
+                child: Text('暂无剧集', style: TextStyle(color: Colors.grey)),
+              ),
+            ),
+          )
+        else
+          ResponsiveSliverGrid(
+            config: ResponsiveGridPresets.detailEpisodes,
+            childAspectRatio: 2.2,
+            itemCount: _episodes.length,
+            itemBuilder: (context, index) {
+              final ep = _episodes[index];
+              final flag = _currentFlag;
+              return _EpisodeCard(
+                episode: ep,
+                onTap: () => _playEpisode(ep, flag),
+              );
+            },
+          ),
       ],
     );
   }
 
-  Widget _buildEpisodeGrid(VodDetail detail, ThemeData theme) {
-    final currentFlag = detail.flags.isNotEmpty
-        ? detail.flags[_selectedFlagIndex]
-        : '';
-    final episodes = detail.episodes[currentFlag] ?? [];
+  VodDetail get _detailOrNull => _detail!;
 
-    if (episodes.isEmpty) {
-      return const SliverToBoxAdapter(
-        child: Center(
-          child: Padding(
-            padding: EdgeInsets.all(32),
-            child: Text('暂无剧集', style: TextStyle(color: Colors.grey)),
+  String get _currentFlag => _detailOrNull.flags.isNotEmpty
+      ? _detailOrNull.flags[_selectedFlagIndex]
+      : '';
+
+  List<VodEpisode> get _episodes {
+    final flag = _currentFlag;
+    return _detailOrNull.episodes[flag] ?? [];
+  }
+
+  Widget _buildDescription(String description, ThemeData theme) {
+    final collapsed = !_descriptionExpanded;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          description,
+          maxLines: collapsed ? 4 : null,
+          overflow: collapsed ? TextOverflow.ellipsis : null,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
-      );
-    }
-
-    return SliverGrid(
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 5,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
-        childAspectRatio: 2.2,
-      ),
-      delegate: SliverChildBuilderDelegate(
-        (context, index) {
-          final ep = episodes[index];
-          return _EpisodeCard(
-            episode: ep,
-            onTap: () => _playEpisode(ep, currentFlag),
-          );
-        },
-        childCount: episodes.length,
-      ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            onPressed: () =>
+                setState(() => _descriptionExpanded = !_descriptionExpanded),
+            child: Text(_descriptionExpanded ? '收起' : '展开'),
+          ),
+        ),
+      ],
     );
   }
 
@@ -267,19 +331,6 @@ class _DetailPageState extends State<DetailPage> {
           'vodName': _detail?.name,
           'vodPic': _detail?.pic,
         },
-      ),
-    );
-  }
-
-  Widget _buildPlaceholderPoster(ThemeData theme) {
-    return ColoredBox(
-      color: theme.colorScheme.surfaceContainerHighest,
-      child: Center(
-        child: Icon(
-          Icons.movie,
-          size: 64,
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
       ),
     );
   }
