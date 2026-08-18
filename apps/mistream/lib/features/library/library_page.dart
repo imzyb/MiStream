@@ -9,6 +9,7 @@ import 'package:storage/storage.dart';
 
 import 'package:mistream/app/router.dart' show globalRouterAssembly;
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
+import 'package:mistream/features/common/common.dart' show EmptyView;
 import 'package:mistream/features/library/widgets/library_tile.dart';
 
 /// 全局装配实例，供资源库页使用。
@@ -222,100 +223,76 @@ class _LibraryPageState extends State<LibraryPage>
               controller: _tabController,
               children: [
                 // 收藏
-                _favorites.isEmpty
-                    ? _buildEmptyState(
-                        icon: Icons.favorite_outline,
-                        title: '暂无收藏',
-                        subtitle: '在详情页点击收藏按钮添加',
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: _favorites.length,
-                        itemBuilder: (context, index) {
-                          final fav = _favorites[index];
-                          return LibraryTile(
-                            title: fav.vodName,
-                            subtitle: fav.vodRemarks ?? '无更新信息',
-                            coverUrl: fav.vodPic,
-                            onTap: () => _playFavorite(fav),
-                            onLongPress: () => _removeFavorite(fav),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: () => _removeFavorite(fav),
-                              tooltip: '取消收藏',
-                            ),
-                          );
-                        },
-                      ),
+                if (_favorites.isEmpty)
+                  const EmptyView(
+                    icon: Icons.favorite_outline,
+                    title: '暂无收藏',
+                    subtitle: '在详情页点击收藏按钮添加',
+                  )
+                else
+                  ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _favorites.length,
+                    itemBuilder: (context, index) {
+                      final fav = _favorites[index];
+                      return LibraryTile(
+                        title: fav.vodName,
+                        subtitle: fav.vodRemarks ?? '无更新信息',
+                        coverUrl: fav.vodPic,
+                        onTap: () => _playFavorite(fav),
+                        onLongPress: () => _removeFavorite(fav),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () => _removeFavorite(fav),
+                          tooltip: '取消收藏',
+                        ),
+                      );
+                    },
+                  ),
 
                 // 历史
-                _histories.isEmpty
-                    ? _buildEmptyState(
-                        icon: Icons.history,
-                        title: '暂无播放历史',
-                        subtitle: '观看视频后将自动记录',
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: _histories.length + 1,
-                        itemBuilder: (context, index) {
-                          if (index == _histories.length) {
-                            return Padding(
-                              padding: const EdgeInsets.only(top: 16),
-                              child: OutlinedButton.icon(
-                                onPressed: _clearAllHistory,
-                                icon: const Icon(Icons.delete_sweep_outlined),
-                                label: const Text('清空历史'),
-                              ),
-                            );
-                          }
-                          final hist = _histories[index];
-                          final progress = hist.durationMs > 0
-                              ? hist.positionMs / hist.durationMs
-                              : 0.0;
-                          return LibraryTile(
-                            title: hist.vodName,
-                            subtitle: hist.episodeName ?? '未知剧集',
-                            coverUrl: hist.vodPic,
-                            progress: progress,
-                            onTap: () => _playHistory(hist),
-                            onLongPress: () => _removeHistory(hist),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: () => _removeHistory(hist),
-                              tooltip: '删除记录',
-                            ),
-                          );
-                        },
-                      ),
+                if (_histories.isEmpty)
+                  const EmptyView(
+                    icon: Icons.history,
+                    title: '暂无播放历史',
+                    subtitle: '观看视频后将自动记录',
+                  )
+                else
+                  ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _histories.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == _histories.length) {
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 16),
+                          child: OutlinedButton.icon(
+                            onPressed: _clearAllHistory,
+                            icon: const Icon(Icons.delete_sweep_outlined),
+                            label: const Text('清空历史'),
+                          ),
+                        );
+                      }
+                      final hist = _histories[index];
+                      final progress = hist.durationMs > 0
+                          ? hist.positionMs / hist.durationMs
+                          : 0.0;
+                      return LibraryTile(
+                        title: hist.vodName,
+                        subtitle: hist.episodeName ?? '未知剧集',
+                        coverUrl: hist.vodPic,
+                        progress: progress,
+                        onTap: () => _playHistory(hist),
+                        onLongPress: () => _removeHistory(hist),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () => _removeHistory(hist),
+                          tooltip: '删除记录',
+                        ),
+                      );
+                    },
+                  ),
               ],
             ),
-    );
-  }
-
-  Widget _buildEmptyState({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
-    final theme = Theme.of(context);
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 64, color: theme.colorScheme.onSurfaceVariant),
-          const SizedBox(height: 16),
-          Text(title, style: theme.textTheme.titleMedium),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
     );
   }
 }

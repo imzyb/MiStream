@@ -13,11 +13,12 @@ import 'package:mistream/features/home/widgets/home_section.dart';
 import 'package:mistream/features/home/widgets/media_card.dart';
 import 'package:mistream/features/common/common.dart'
     show
-        ResponsiveGridView,
-        ResponsiveGridPresets,
-        ResponsiveHorizontalList,
         BreakpointContext,
-        ErrorView;
+        EmptyView,
+        ErrorView,
+        ResponsiveGridPresets,
+        ResponsiveGridView,
+        ResponsiveHorizontalList;
 
 /// 全局装配实例，供首页使用。
 AppAssembly? _globalHomeAssembly;
@@ -325,6 +326,34 @@ class _HomePageState extends State<HomePage> {
               onRefresh: _loadData,
               child: CustomScrollView(
                 slivers: [
+                  // 空数据引导：片源不可用或配置里没有内容时给用户去处。
+                  if (_recommends.isEmpty && _categories.isEmpty)
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: EmptyView(
+                        icon: Icons.movie_outlined,
+                        title: '暂无内容',
+                        subtitle: '首页数据为空，请检查片源是否可用或切换片源',
+                        action: Wrap(
+                          spacing: 8,
+                          alignment: WrapAlignment.center,
+                          children: [
+                            if (_availableSites.isNotEmpty)
+                              FilledButton.tonalIcon(
+                                onPressed: _showSourcePicker,
+                                icon: const Icon(Icons.swap_horiz),
+                                label: const Text('切换片源'),
+                              ),
+                            OutlinedButton.icon(
+                              onPressed: () => unawaited(_loadData()),
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('重试'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
                   // 推荐轮播
                   if (_recommends.isNotEmpty)
                     HomeSection(

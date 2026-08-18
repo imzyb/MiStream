@@ -25,7 +25,7 @@ import 'package:player_engine/player_engine.dart';
 import 'package:search_engine/search_engine.dart';
 import 'package:mistream/features/shell/scaffold_with_nav_bar.dart';
 import 'package:mistream/features/common/common.dart'
-    show BreakpointType, BreakpointContext;
+    show BreakpointContext, BreakpointType, ErrorView;
 
 /// 全局装配实例。
 AppAssembly? _globalRouterAssembly;
@@ -648,7 +648,7 @@ class _CategoryDetailPageState extends State<_CategoryDetailPage> {
       body: _loading && _items.isEmpty
           ? const Center(child: CircularProgressIndicator())
           : _error != null && _items.isEmpty
-          ? _ErrorView(message: _error!, onRetry: _loadData)
+          ? ErrorView(message: _error!, onRetry: _loadData)
           : RefreshIndicator(
               onRefresh: _loadData,
               child: GridView.builder(
@@ -687,37 +687,6 @@ class _CategoryDetailPageState extends State<_CategoryDetailPage> {
                 },
               ),
             ),
-    );
-  }
-}
-
-/// 错误视图。
-class _ErrorView extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-
-  const _ErrorView({required this.message, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 48, color: Colors.grey),
-            const SizedBox(height: 16),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 16),
-            FilledButton.tonal(onPressed: onRetry, child: const Text('重试')),
-          ],
-        ),
-      ),
     );
   }
 }

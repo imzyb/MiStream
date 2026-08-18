@@ -6,7 +6,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mistream/app/app.dart';
-import 'package:mistream/features/common/common.dart' show ResponsiveGridView;
+import 'package:mistream/features/common/common.dart'
+    show EmptyView, ResponsiveGridView;
 import 'package:mistream/features/home/widgets/media_card.dart';
 import 'package:search_engine/search_engine.dart';
 
@@ -24,6 +25,7 @@ class _SearchPageState extends State<SearchPage> {
   final _items = <SearchItem>[];
   final _sourceStatuses = <SearchSourceStatus>[];
   bool _searching = false;
+  bool _hasSearched = false;
   StreamSubscription<SearchProgress>? _sub;
 
   @override
@@ -41,6 +43,7 @@ class _SearchPageState extends State<SearchPage> {
       _items.clear();
       _sourceStatuses.clear();
       _searching = true;
+      _hasSearched = true;
     });
 
     final assembly = AppScope.of(context);
@@ -98,6 +101,7 @@ class _SearchPageState extends State<SearchPage> {
                 _items.clear();
                 _sourceStatuses.clear();
                 _searching = false;
+                _hasSearched = false;
               });
             },
           ),
@@ -106,11 +110,21 @@ class _SearchPageState extends State<SearchPage> {
       body: _items.isEmpty
           ? _searching
                 ? _buildStatusList()
-                : const Center(
-                    child: Text(
-                      '输入关键词开始搜索',
-                      style: TextStyle(color: Colors.grey),
+                : _hasSearched
+                ? EmptyView(
+                    icon: Icons.search_off,
+                    title: '没有找到相关结果',
+                    subtitle: '换个关键词或片源再试试',
+                    action: OutlinedButton.icon(
+                      onPressed: () => _search(_controller.text),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('重新搜索'),
                     ),
+                  )
+                : const EmptyView(
+                    icon: Icons.search,
+                    title: '输入关键词开始搜索',
+                    subtitle: '输入片名，支持多片源同时检索',
                   )
           : ResponsiveGridView(
               itemCount: _items.length,

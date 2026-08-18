@@ -8,7 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:mistream/app/app.dart';
 import 'package:mistream/application/detail_use_case.dart';
 import 'package:mistream/features/common/common.dart'
-    show PosterImage, ResponsiveGridPresets, ResponsiveSliverGrid;
+    show ErrorView, PosterImage, ResponsiveGridPresets, ResponsiveSliverGrid;
 import 'package:search_engine/search_engine.dart';
 
 /// 影片详情页。
@@ -132,9 +132,9 @@ class _DetailPageState extends State<DetailPage> {
 
     return Scaffold(
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const _DetailSkeleton()
           : error != null
-          ? _ErrorView(message: error, onRetry: () => unawaited(_load()))
+          ? ErrorView(message: error, onRetry: () => unawaited(_load()))
           : _buildContent(theme),
     );
   }
@@ -336,6 +336,129 @@ class _DetailPageState extends State<DetailPage> {
   }
 }
 
+/// 详情页骨架屏：加载时用静态占位块勾勒海报区、标签、简介与剧集网格。
+class _DetailSkeleton extends StatelessWidget {
+  const _DetailSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final blockColor = theme.colorScheme.surfaceContainerHighest;
+
+    Widget block({double? width, double? height, double radius = 8}) {
+      return Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: blockColor,
+          borderRadius: BorderRadius.circular(radius),
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 顶部海报区域
+          SizedBox(
+            width: double.infinity,
+            height: 280,
+            child: block(radius: 0),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                block(width: 160, height: 20),
+                const SizedBox(height: 12),
+                const Wrap(
+                  spacing: 8,
+                  children: [
+                    SizedBox(
+                      width: 48,
+                      height: 20,
+                      child: _SkeletonBlock(),
+                    ),
+                    SizedBox(
+                      width: 64,
+                      height: 20,
+                      child: _SkeletonBlock(),
+                    ),
+                    SizedBox(
+                      width: 56,
+                      height: 20,
+                      child: _SkeletonBlock(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                const _SkeletonLine(widthFactor: 1),
+                const SizedBox(height: 8),
+                const _SkeletonLine(widthFactor: 0.9),
+                const SizedBox(height: 8),
+                const _SkeletonLine(widthFactor: 0.6),
+                const SizedBox(height: 24),
+                // 剧集网格占位
+                SizedBox(
+                  width: double.infinity,
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: List.generate(
+                      12,
+                      (_) => const SizedBox(
+                        width: 64,
+                        height: 28,
+                        child: _SkeletonBlock(),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 骨架占位块（读取父级颜色，避免重复取色）。
+class _SkeletonBlock extends StatelessWidget {
+  const _SkeletonBlock();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
+  }
+}
+
+/// 骨架文本行：按 [widthFactor] 比例占宽。
+class _SkeletonLine extends StatelessWidget {
+  const _SkeletonLine({required this.widthFactor});
+
+  final double widthFactor;
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      widthFactor: widthFactor,
+      alignment: Alignment.centerLeft,
+      child: const SizedBox(
+        height: 12,
+        child: _SkeletonBlock(),
+      ),
+    );
+  }
+}
+
 /// 信息标签。
 class _InfoChip extends StatelessWidget {
   const _InfoChip({required this.label, this.color});
@@ -387,39 +510,6 @@ class _EpisodeCard extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 错误视图。
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message, required this.onRetry});
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 48, color: Colors.grey),
-            const SizedBox(height: 16),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 16),
-            FilledButton.tonal(
-              onPressed: onRetry,
-              child: const Text('重试'),
-            ),
-          ],
         ),
       ),
     );

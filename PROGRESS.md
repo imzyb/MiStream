@@ -94,6 +94,14 @@
 - `feat(ui)` **批次4 播放器**：顶部信息栏随控制栏显隐；暂停时中央大播放按钮；续播闭环（读历史 seek + 周期落库 + 阈值判断）
 - 每批后 `flutter analyze` 0 error/0 warning + `flutter test` 44 全绿；本会话新文件不再引入新 info lint（重写文件的排序/underscore/discarded_futures 等已就地清零，仅存 `responsive.dart` 等既有债）
 
+## UI/UX 优化 · 批次5（2026-08-18，一致性收尾 + 微交互）
+
+- `feat(ui)` **嗅探设置页中文化**：全站最后一个英文页，改为中文（通用开关/规则管理/新增编辑删除规则/恢复默认，带删除/重置二次确认与空态引导）
+- `feat(ui)` **空状态统一**：资源库改共享 `EmptyView`（删本地副本）；首页空数据引导（EmptyView + 切换片源/重试）；搜索页区分「未搜索」与「无结果」（保留原文案，测试不受影响）
+- `feat(ui)` **微交互**：`MediaCard` 桌面悬停封面放大 + 播放浮层（触屏无感）；详情页骨架屏替代转圈
+- `refactor(ui)` 详情页/分类详情的重复 `_ErrorView` 统一为共享 `ErrorView`
+- 验证：`flutter analyze` 0 error/0 warning、无新增 info（app 级 177 条，仍为既有债）；`flutter test` 44 全绿
+
 ## 下一步（按优先级）
 
 1. `melos run analyze` 门禁是红的：727 条 info lint（public_member_api_docs 为主）。
