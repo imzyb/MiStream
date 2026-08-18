@@ -100,6 +100,14 @@ final class MediaKitEngine implements PlayerEngine {
   bool _disposed = false;
   bool _initialized = false;
 
+  /// 底层 media_kit Player 实例，供 Video widget 渲染使用。
+  ///
+  /// 仅在 [initialize] 成功后可用；未初始化时访问抛 [StateError]。
+  mk.Player get player {
+    _requireInitialized();
+    return _player;
+  }
+
   final _state = ValueStream<PlayerState>(PlayerState.idle);
   final _position = ValueStream<Duration>(Duration.zero);
   final _duration = ValueStream<Duration>(Duration.zero);
