@@ -21,4 +21,6 @@ dependencies:
     path: ../../packages/spider_host
 
 dev_dependencies:
+  mock_source_server:
+    path: ../../tools/mock_source_server
   test: ^1.31.0
