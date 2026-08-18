@@ -114,6 +114,34 @@ jobs:
         working-directory: apps/mistream
         run: flutter build ${{ matrix.target }} --debug
 
+  release-windows:
+    name: release-windows（Release 包链）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: dart pub global activate melos
+      - run: melos bootstrap
+      - name: 安装 libmpv（Release 播放内核）
+        run: melos run libmpv:install
+      - name: 构建 Release（CMake 内自动跑 quickjs:install + spider-js:bundle）
+        working-directory: apps/mistream
+        run: flutter build windows --release
+      - name: 校验产物包链（smoke 握手）
+        run: >
+          dart run tools/check_spider_js_bundle.dart
+          --bundle apps/mistream/build/windows/x64/runner/Release --smoke
+      - name: 上传 Release 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: mistream-windows-release
+          path: apps/mistream/build/windows/x64/runner/Release
+          retention-days: 14
+
 # TODO(M10): 补 license 扫描（禁 AGPL/SSPL）、golden 测试、体积门禁与
 # 「安装包不含源配置」的合规扫描。见 docs/10-开发规范.md §5.1 与
 # docs/03-技术选型.md §6.2。
