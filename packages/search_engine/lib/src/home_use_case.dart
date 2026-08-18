@@ -136,35 +136,65 @@ class HomeUseCase {
     if (runtimeFactory == null) {
       return enabled.where((s) => s.typeCode == 1).toList();
     }
-    return enabled;
+    // type=1（JSON API）优先：不需要 JS 运行时，通常最快可用；
+    // type=3 排后作为兜底，避免首页被大量无法解析的 JS 源拖慢。
+    final sorted = [...enabled]
+      ..sort((a, b) {
+        final aIs1 = a.typeCode == 1 ? 0 : 1;
+        final bIs1 = b.typeCode == 1 ? 0 : 1;
+        final byType = aIs1.compareTo(bIs1);
+        return byType != 0 ? byType : b.priority.compareTo(a.priority);
+      });
+    return sorted;
   }
 
+  /// 单次取数（含建运行时）的总时间预算；超过即停止继续探测。
+  static const _probeBudget = Duration(seconds: 30);
+
+  /// 单个站点建运行时的超时。
+  static const _createTimeout = Duration(seconds: 8);
+
+  /// 单次请求的超时。
+  static const _requestTimeout = Duration(seconds: 5);
+
   /// 尝试用指定站点列表执行操作，返回第一个成功的结果。
+  ///
+  /// 失败时汇总前几个站点的真实错误，避免把「所有站点均无法连接」这种
+  /// 无信息量的消息抛给用户。
   Future<Result<HttpResponseData, AppError>> _trySites(
     List<Site> siteList,
     Future<Result<HttpResponseData, AppError>> Function(SpiderRuntime runtime)
     action,
   ) async {
+    final stopwatch = Stopwatch()..start();
+    final errors = <String>[];
     for (final site in siteList) {
+      if (stopwatch.elapsed > _probeBudget) {
+        errors.add('超过 ${_probeBudget.inSeconds}s 未取到数据');
+        break;
+      }
       SpiderRuntime? runtime;
       try {
-        runtime = await _createRuntime(site);
+        runtime = await _createRuntime(site).timeout(_createTimeout);
         final result = await action(
           runtime,
-        ).timeout(const Duration(seconds: 5));
+        ).timeout(_requestTimeout);
         await runtime.dispose();
         if (result.isOk) {
           workingSite = site;
           return result;
         }
-      } on Object {
+        errors.add('${site.name}: ${result.errorOrNull?.message}');
+      } on Object catch (e) {
         await runtime?.dispose();
+        errors.add('${site.name}: $e');
       }
     }
-    return const Err(
+    final samples = errors.take(3).join('；');
+    return Err(
       RemoteError(
         code: ErrorCode.networkTimeout,
-        message: '所有站点均无法连接',
+        message: '所有站点均无法连接（共尝试 ${siteList.length} 个：$samples）',
       ),
     );
   }

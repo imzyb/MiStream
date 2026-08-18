@@ -373,12 +373,16 @@ class SpiderRuntimeFactory {
 
   /// 加载脚本内容。
   Future<String> _loadScript(String api) async {
-    // 如果是 URL，下载
+    // 如果是 URL，下载（带超时，避免不可达主机挂死）
     if (api.startsWith('http://') || api.startsWith('https://')) {
       final client = HttpClient();
       try {
-        final request = await client.getUrl(Uri.parse(api));
-        final response = await request.close();
+        final request = await client
+            .getUrl(Uri.parse(api))
+            .timeout(const Duration(seconds: 10));
+        final response = await request.close().timeout(
+          const Duration(seconds: 10),
+        );
         if (response.statusCode < 200 || response.statusCode >= 300) {
           await response.drain<void>();
           throw StateError('脚本下载失败: HTTP ${response.statusCode} ($api)');
