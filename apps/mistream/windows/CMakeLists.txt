@@ -52,6 +52,38 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
+# Build and validate the AOT Spider JS runtime for distributable builds.
+# Debug builds keep using the Dart source fallback so CI does not require local
+# QuickJS binaries. Profile/Release fail hard when the runtime cannot be built.
+get_filename_component(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+find_program(POWERSHELL_EXECUTABLE NAMES pwsh powershell)
+if(NOT POWERSHELL_EXECUTABLE)
+  message(FATAL_ERROR "PowerShell is required to build the Spider JS runtime")
+endif()
+
+set(SPIDER_JS_BUILD_SCRIPT "${REPO_ROOT}/tools/build_spider_js_runtime.ps1")
+set(SPIDER_JS_OUTPUT_DIR "${CMAKE_BINARY_DIR}/runner/$<CONFIG>")
+add_custom_target(spider_js_runtime_bundle ALL
+  COMMAND "${POWERSHELL_EXECUTABLE}"
+    -NoProfile
+    -ExecutionPolicy Bypass
+    -File "${SPIDER_JS_BUILD_SCRIPT}"
+    -Configuration "$<CONFIG>"
+    -OutputDirectory "${SPIDER_JS_OUTPUT_DIR}"
+  COMMENT "Building Spider JS runtime bundle"
+  VERBATIM)
+add_dependencies(${BINARY_NAME} spider_js_runtime_bundle)
+
+# Copy libmpv-2.dll next to the executable after each build.
+set(LIBMPV_SRC "${CMAKE_SOURCE_DIR}/../../build/libmpv/libmpv-2.dll")
+if(EXISTS "${LIBMPV_SRC}")
+  add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${LIBMPV_SRC}"
+      "$<TARGET_FILE_DIR:${BINARY_NAME}>/libmpv-2.dll"
+    COMMENT "Copying libmpv-2.dll to output directory")
+endif()
+
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
@@ -104,5 +136,22 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
 
 # Install the AOT library on non-Debug builds only.
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
+  CONFIGURATIONS Profile;Release
+  COMPONENT Runtime)
+
+# Copy libmpv-2.dll next to the executable if present.
+set(LIBMPV_PATH "${CMAKE_SOURCE_DIR}/../../build/libmpv/libmpv-2.dll")
+if(EXISTS "${LIBMPV_PATH}")
+  install(FILES "${LIBMPV_PATH}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+endif()
+
+set(SPIDER_JS_BUNDLE_DIR "${REPO_ROOT}/build/spider_js")
+install(FILES
+  "${SPIDER_JS_BUNDLE_DIR}/spider_js_runtime.exe"
+  "${SPIDER_JS_BUNDLE_DIR}/libquickjs.dll"
+  "${SPIDER_JS_BUNDLE_DIR}/quickjs_wrapper.dll"
+  "${SPIDER_JS_BUNDLE_DIR}/quickjs.dll"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)

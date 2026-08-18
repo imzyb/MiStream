@@ -15,14 +15,24 @@ dependencies:
     path: ../../packages/core_config
   core_domain:
     path: ../../packages/core_domain
+  download:
+    path: ../../packages/download
   flutter:
     sdk: flutter
   go_router: ^14.8.0
+  live:
+    path: ../../packages/live
+  media_kit: ^1.2.6
+  media_kit_libs_windows_video: ^1.0.9
+  media_kit_video: ^1.2.4
+  media_sniffer:
+    path: ../../packages/media_sniffer
   path: ^1.9.0
   # 数据库落盘位置按 docs/07-数据库设计.md 开头规定的各平台应用支持目录解析。
   path_provider: ^2.1.0
   player_engine:
     path: ../../packages/player_engine
+  punycoder: ^0.3.0
   search_engine:
     path: ../../packages/search_engine
   source_adapter:
