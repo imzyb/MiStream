@@ -22,4 +22,4 @@ export 'src/engine/host_bridge.dart' show HostBridge, HostHandler;
 export 'src/engine/js_runtime.dart'
     show JsEvalError, JsRuntime, JsRuntimeLimits, JsRuntimeStatus;
 export 'src/engine/quickjs_bindings.dart'
-    show isQuickJSAvailable, supportsDeadline;
+    show findNativeLibrary, isQuickJSAvailable, supportsDeadline;
