@@ -256,16 +256,56 @@ class _PlayerPageState extends State<PlayerPage> {
         // 视频区铺满
         Positioned.fill(child: widget.videoArea),
 
-        // 返回按钮
+        // 顶部信息栏：标题 + 返回，随控制栏一起显隐。
         Positioned(
-          top: 8,
-          left: 8,
-          child: SafeArea(
-            child: IconButton(
-              onPressed: () => Navigator.of(context).maybePop(),
-              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-              style: IconButton.styleFrom(
-                backgroundColor: Colors.black45,
+          left: 0,
+          right: 0,
+          top: 0,
+          child: AnimatedOpacity(
+            opacity: controller.isControlVisible ? 1 : 0,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeInOut,
+            child: IgnorePointer(
+              ignoring: !controller.isControlVisible,
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.black54, Colors.transparent],
+                  ),
+                ),
+                child: SafeArea(
+                  bottom: false,
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.of(context).maybePop(),
+                        icon: const Icon(
+                          Icons.arrow_back_rounded,
+                          color: Colors.white,
+                        ),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.black45,
+                        ),
+                        tooltip: '返回',
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          widget.title ?? '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -289,6 +329,25 @@ class _PlayerPageState extends State<PlayerPage> {
               state: state,
               elapsed: _stageElapsed.elapsed,
               title: widget.title,
+            ),
+          ),
+
+        // 暂停时的中央播放按钮：随控制栏一起出现。
+        if (!controller.isPlaying && controller.isControlVisible)
+          Positioned.fill(
+            child: Center(
+              child: IconButton(
+                onPressed: () {
+                  _poke();
+                  unawaited(_controller.togglePlayPause());
+                },
+                iconSize: 72,
+                icon: const Icon(
+                  Icons.play_circle_fill_rounded,
+                  color: Colors.white70,
+                ),
+                tooltip: '播放',
+              ),
             ),
           ),
 

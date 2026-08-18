@@ -212,9 +212,13 @@ List<RouteBase> get _routes => [
 
       String? episodeName;
       String? episodeId;
+      String? vodName;
+      String? vodPic;
       if (extra is Map<String, Object?>) {
         episodeName = extra['episodeName'] as String?;
         episodeId = extra['episodeId'] as String?;
+        vodName = extra['vodName'] as String?;
+        vodPic = extra['vodPic'] as String?;
       }
 
       return _PlayerPageWrapper(
@@ -223,6 +227,8 @@ List<RouteBase> get _routes => [
         flag: flag,
         title: episodeName,
         episodeId: episodeId,
+        vodName: vodName,
+        vodPic: vodPic,
       );
     },
   ),
@@ -239,6 +245,8 @@ class _PlayerPageWrapper extends StatefulWidget {
     required this.flag,
     this.title,
     this.episodeId,
+    this.vodName,
+    this.vodPic,
   });
 
   final int siteId;
@@ -246,6 +254,8 @@ class _PlayerPageWrapper extends StatefulWidget {
   final String flag;
   final String? title;
   final String? episodeId;
+  final String? vodName;
+  final String? vodPic;
 
   @override
   State<_PlayerPageWrapper> createState() => _PlayerPageWrapperState();
@@ -253,11 +263,15 @@ class _PlayerPageWrapper extends StatefulWidget {
 
 class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
   static const _startupTimeout = Duration(seconds: 20);
+  static const _resumeMin = Duration(seconds: 5);
+  static const _resumeEndTail = Duration(seconds: 30);
 
   PlayerController? _controller;
   MediaKitEngine? _engine;
   mkv.VideoController? _videoController;
   Timer? _startupTimer;
+  Timer? _historyTimer;
+  Duration? _resumeAt;
   String? _error;
 
   @override
@@ -331,6 +345,7 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
           controller: controller,
           playResult: playResult.valueOrNull!,
         );
+        unawaited(_prepareResumeAndRecord(controller, playResult.valueOrNull!));
       }
     } on Object catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -340,12 +355,90 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
   @override
   void dispose() {
     _startupTimer?.cancel();
+    _historyTimer?.cancel();
+    _flushProgress();
     _controller?.removeListener(_checkStartupEvidence);
+    _controller?.removeListener(_maybeResume);
     _controller?.dispose();
     // 引擎持有 libmpv 实例，必须显式释放，否则离开播放页后 mpv 还在后台解码。
     final engine = _engine;
     if (engine != null) unawaited(engine.dispose());
     super.dispose();
+  }
+
+  /// 读取历史进度准备续播，并启动周期进度落库。
+  ///
+  /// 历史里「离结尾不足 30s」或「位置不足 5s」的不续播：前者等于看完，后者
+  /// 没必要从头快进一点点。
+  Future<void> _prepareResumeAndRecord(
+    PlayerController controller,
+    PlayResult playResult,
+  ) async {
+    final assembly = globalRouterAssembly;
+    if (assembly == null || playResult.mediaSource.isLive) return;
+
+    try {
+      final history = await assembly.repositories.histories.byVod(
+        widget.siteId,
+        widget.vodId,
+      );
+      if (!mounted || controller != _controller) return;
+      if (history != null) {
+        final position = Duration(milliseconds: history.positionMs);
+        final duration = Duration(milliseconds: history.durationMs);
+        final nearEnd =
+            duration > Duration.zero && position >= duration - _resumeEndTail;
+        if (position >= _resumeMin && !nearEnd) {
+          _resumeAt = position;
+          controller.addListener(_maybeResume);
+        }
+      }
+    } on Object {
+      // 历史读取失败不影响正常起播。
+    }
+
+    _historyTimer?.cancel();
+    _historyTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _flushProgress(),
+    );
+  }
+
+  /// 首个播放证据出现且位置仍接近开头时，一次性 seek 到续播点。
+  void _maybeResume() {
+    final controller = _controller;
+    final resumeAt = _resumeAt;
+    if (controller == null ||
+        resumeAt == null ||
+        !controller.hasPlaybackEvidence) {
+      return;
+    }
+    if (controller.position >= const Duration(seconds: 3)) return;
+    _resumeAt = null;
+    controller.removeListener(_maybeResume);
+    unawaited(controller.seekTo(resumeAt));
+  }
+
+  /// 把当前播放进度写入历史（周期 + 退出时各一次）。
+  void _flushProgress() {
+    final controller = _controller;
+    final assembly = globalRouterAssembly;
+    if (controller == null || assembly == null) return;
+    final positionMs = controller.position.inMilliseconds;
+    final durationMs = controller.duration.inMilliseconds;
+    if (durationMs <= 0) return;
+    unawaited(
+      assembly.repositories.histories.upsert(
+        siteId: widget.siteId,
+        vodId: widget.vodId,
+        vodName: widget.vodName ?? widget.title ?? '未知影片',
+        vodPic: widget.vodPic,
+        flag: widget.flag,
+        episodeName: widget.title,
+        positionMs: positionMs,
+        durationMs: durationMs,
+      ),
+    );
   }
 
   void _armStartupWatchdog({
