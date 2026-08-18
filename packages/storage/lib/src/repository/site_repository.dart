@@ -90,4 +90,13 @@ class SiteRepository {
 
   /// 清空全部站点。
   Future<int> clear() => db.delete(db.sites).go();
+
+  /// 获取站点所属配置源的 URL；无配置源或无 URL 时返回 null。
+  Future<String?> configSourceUrl(int siteId) async {
+    final query = db.select(db.configSources).join([
+      innerJoin(db.sites, db.sites.configId.equalsExp(db.configSources.id)),
+    ])..where(db.sites.id.equals(siteId));
+    final row = await query.getSingleOrNull();
+    return row?.read(db.configSources.url);
+  }
 }
