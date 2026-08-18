@@ -126,3 +126,11 @@ melos:
     libmpv:install:
       description: 下载并校验 libmpv（锁定版本 + SHA256），装进 build/libmpv
       run: dart run tools/libmpv_dist/bin/libmpv_dist.dart install
+
+    spider-js:bundle:
+      description: 编译并验证 Windows Spider JS AOT 运行时包
+      run: >
+        powershell -NoProfile -ExecutionPolicy Bypass
+        -File tools/build_spider_js_runtime.ps1
+        -Configuration Release
+        -OutputDirectory build/spider_js
