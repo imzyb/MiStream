@@ -110,6 +110,10 @@ class PlayerErrorCard extends StatelessWidget {
     ErrorCode.playerInitFailed => '播放器初始化失败。',
     ErrorCode.playerLibmpvMissing => '缺少或未能校验播放内核库。',
     ErrorCode.playerNoPlayableSource => '所有线路都无法播放。',
+    ErrorCode.sniffPageError => '播放页打不开：源站可能限制了访问。',
+    ErrorCode.sniffNoMatch => '播放页里找不到可播放的地址，换个线路试试。',
+    ErrorCode.sniffTimeout => '解析播放地址超时。',
+    ErrorCode.snifferUnavailable => '嗅探器不可用。',
     _ => '播放出错了。',
   };
 

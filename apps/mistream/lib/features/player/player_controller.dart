@@ -3,6 +3,7 @@ library;
 
 import 'dart:async';
 
+import 'package:core_domain/core_domain.dart';
 import 'package:flutter/foundation.dart';
 import 'package:player_engine/player_engine.dart';
 
@@ -44,6 +45,7 @@ class PlayerController extends ChangeNotifier {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   List<DurationRange> _buffered = const [];
+  MediaInfo _mediaInfo = MediaInfo.empty;
   double _volume = 1;
   bool _muted = false;
   double _rate = 1;
@@ -64,6 +66,18 @@ class PlayerController extends ChangeNotifier {
 
   /// 已缓冲区间。
   List<DurationRange> get buffered => _buffered;
+
+  /// 当前媒体技术信息。
+  MediaInfo get mediaInfo => _mediaInfo;
+
+  /// 是否已经拿到足以证明媒体真正打开的数据。
+  bool get hasPlaybackEvidence =>
+      _position > Duration.zero ||
+      _duration > Duration.zero ||
+      _mediaInfo.videoCodec != null ||
+      _mediaInfo.audioCodec != null ||
+      _mediaInfo.width != null ||
+      _mediaInfo.height != null;
 
   /// 当前音量。
   double get volume => _volume;
@@ -171,6 +185,13 @@ class PlayerController extends ChangeNotifier {
         },
         onError: _ignore,
       ),
+      e.mediaInfoStream.listen(
+        (info) {
+          _mediaInfo = info;
+          notifyListeners();
+        },
+        onError: _ignore,
+      ),
       e.errorStream.listen(
         (err) {
           if (err.isFatal) {
@@ -186,10 +207,29 @@ class PlayerController extends ChangeNotifier {
     _state = e.state;
     _position = e.position;
     _duration = e.duration;
+    _mediaInfo = e.mediaInfo;
     _volume = e.volume;
     _muted = e.isMuted;
     _rate = e.rate;
     _fatalError = null;
+    notifyListeners();
+  }
+
+  /// 把编排层检测到的起播超时转换成播放器错误态。
+  void reportStartupTimeout({
+    required Uri source,
+    required Map<String, Object?> diagnostics,
+  }) {
+    if (_fatalError != null || hasPlaybackEvidence) return;
+    _fatalError = PlayerError(
+      error: RemoteError(
+        code: ErrorCode.playerOpenFailed,
+        message: '媒体连接超时，未获取到时长或音视频信息',
+        detail: diagnostics,
+      ),
+      source: source,
+      position: _position,
+    );
     notifyListeners();
   }
 

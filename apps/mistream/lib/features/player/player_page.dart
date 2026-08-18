@@ -256,16 +256,23 @@ class _PlayerPageState extends State<PlayerPage> {
         // 视频区铺满
         Positioned.fill(child: widget.videoArea),
 
-        // 加载态（解析中/缓冲中），错误态覆盖其上。
-        if (controller.isConnecting)
-          Positioned.fill(
-            child: PlayerLoadingOverlay(
-              state: state,
-              elapsed: _stageElapsed.elapsed,
-              title: widget.title,
+        // 返回按钮
+        Positioned(
+          top: 8,
+          left: 8,
+          child: SafeArea(
+            child: IconButton(
+              onPressed: () => Navigator.of(context).maybePop(),
+              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.black45,
+              ),
             ),
-          )
-        else if (error != null)
+          ),
+        ),
+
+        // 错误必须优先于缓冲态，否则起播超时会一直被「缓冲中」遮住。
+        if (error != null)
           Positioned.fill(
             child: PlayerErrorCard(
               error: error,
@@ -274,6 +281,14 @@ class _PlayerPageState extends State<PlayerPage> {
                 final text = '${error.error.message}\n${error.error.code}';
                 unawaited(Clipboard.setData(ClipboardData(text: text)));
               },
+            ),
+          )
+        else if (controller.isConnecting)
+          Positioned.fill(
+            child: PlayerLoadingOverlay(
+              state: state,
+              elapsed: _stageElapsed.elapsed,
+              title: widget.title,
             ),
           ),
 

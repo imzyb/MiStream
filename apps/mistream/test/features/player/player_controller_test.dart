@@ -164,6 +164,33 @@ void main() {
       expect(controller.state, PlayerState.error);
     });
   });
+
+  group('起播证据与超时', () {
+    test('媒体信息到达后视为已起播', () async {
+      await initPlaying();
+
+      expect(controller.hasPlaybackEvidence, isTrue);
+      expect(controller.mediaInfo.videoCodec, 'h264');
+    });
+
+    test('无起播证据时生成带诊断信息的致命错误', () {
+      controller
+        ..attach()
+        ..reportStartupTimeout(
+          source: Uri.parse('https://example.com/stuck.m3u8'),
+          diagnostics: const {
+            'siteId': 7,
+            'flag': 'line-a',
+            'state': 'playing',
+          },
+        );
+
+      expect(controller.fatalError, isNotNull);
+      expect(controller.fatalError!.code, ErrorCode.playerOpenFailed);
+      expect(controller.fatalError!.source.toString(), contains('stuck.m3u8'));
+      expect(controller.fatalError!.error.detail['siteId'], 7);
+    });
+  });
 }
 
 /// 让异步流事件都派发完。
