@@ -32,13 +32,19 @@ class ConfigInstallService {
 
   /// 把 [result] 中的站点写入库，并置引导完成标记。
   ///
+  /// [sourceUrl] 配置源 URL（用于 type=3 站点解析相对脚本路径）。
   /// 返回写入的站点数。
-  Future<int> install(ConfigImportResult result, {String name = '导入配置'}) async {
+  Future<int> install(
+    ConfigImportResult result, {
+    String name = '导入配置',
+    String? sourceUrl,
+  }) async {
     final now = DateTime.now().toUtc();
 
     final configSourceId = await _repositories.configSources.add(
       ConfigSourcesCompanion.insert(
         name: name,
+        url: Value(sourceUrl),
         rawHash: '',
         format: result.format,
         createdAt: now,

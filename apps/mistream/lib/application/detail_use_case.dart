@@ -137,8 +137,8 @@ class DetailUseCase {
     final desc =
         (vod['vod_content'] as String?) ?? (vod['vod_blurb'] as String?) ?? '';
 
-    final flagsRaw = (vod['vod_play_from'] as String? ?? '').split(r'$$');
-    final urlsRaw = (vod['vod_play_url'] as String? ?? '').split('##');
+    final flagsRaw = (vod['vod_play_from'] as String? ?? '').split(r'$$$');
+    final urlsRaw = (vod['vod_play_url'] as String? ?? '').split(r'$$$');
 
     final episodes = <String, List<VodEpisode>>{};
     for (var i = 0; i < flagsRaw.length; i++) {
@@ -146,19 +146,20 @@ class DetailUseCase {
       if (flag.isEmpty) continue;
       final urlStr = i < urlsRaw.length ? urlsRaw[i] : '';
       final eps = <VodEpisode>[];
-      for (final part in urlStr.split(r'$')) {
-        if (part.isEmpty) continue;
-        final eqIndex = part.indexOf('=');
-        if (eqIndex == -1) {
-          eps.add(VodEpisode(name: part, id: part));
-        } else {
-          eps.add(
-            VodEpisode(
-              name: part.substring(0, eqIndex),
-              id: part.substring(eqIndex + 1),
-            ),
-          );
-        }
+      // TVBox 格式: `第1集$url1#第2集$url2` —— `#` 分隔剧集，`$` 分隔名称与地址。
+      //
+      // 这里只留名称与**序号**：地址会由 `PlayUseCase` 用同样的规则重新取一次。
+      // 让 id 是序号而不是地址，是因为播放前还要经嗅探器解析，把一个可能已经
+      // 失效的地址在详情页缓存下来只会让两处解析结果不一致。
+      final epParts = urlStr.split('#');
+      for (var j = 0; j < epParts.length; j++) {
+        final ep = epParts[j];
+        if (ep.isEmpty) continue;
+        final dollarIndex = ep.indexOf(r'$');
+        final name = dollarIndex > 0
+            ? ep.substring(0, dollarIndex)
+            : '第${j + 1}集';
+        eps.add(VodEpisode(name: name, id: '${eps.length}'));
       }
       episodes[flag] = eps;
     }
