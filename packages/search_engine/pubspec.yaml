@@ -12,6 +12,14 @@ environment:
 dependencies:
   core_domain:
     path: ../core_domain
+  media_sniffer:
+    path: ../media_sniffer
+  spider_host:
+    path: ../spider_host
+  player_engine:
+    path: ../player_engine
+  storage:
+    path: ../storage
   meta: ^1.18.0
 
 dev_dependencies:

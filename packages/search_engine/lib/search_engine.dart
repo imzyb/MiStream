@@ -2,6 +2,15 @@
 library;
 
 export 'src/models.dart';
+export 'src/home_use_case.dart'
+    show
+        CategoryDetailResult,
+        CategoryItem,
+        HomeData,
+        HomeItem,
+        HomeUseCase,
+        SourceOption;
+export 'src/play_use_case.dart' show PlayUseCase, PlayResult;
 export 'src/search_use_case.dart'
     show
         SearchUseCase,
@@ -9,3 +18,4 @@ export 'src/search_use_case.dart'
         kMaxResultsPerSource,
         kSourceTimeout,
         normalizeTitle;
+export 'src/recommendation_engine.dart';
