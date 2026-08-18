@@ -54,11 +54,12 @@ void main() {
       expect(finalResult.sourceStatuses.first.status, SearchStatus.complete);
     });
 
-    test('HttpRuntime 直接调用 play 方法', () async {
+    test('HttpRuntime 直接调用 play 方法（通过 detail）', () async {
       final result = await runtime.play(flag: 'qiyi', ids: '1001');
       expect(result.isOk, isTrue);
       final body = result.valueOrNull!.body;
-      expect(body, contains('play.m3u8'));
+      expect(body, contains('vod_play_url'));
+      expect(body, contains('ep1.m3u8'));
     });
   });
 

@@ -36,7 +36,7 @@ class StorageSourceProvider implements SourceProvider {
 
 /// 基于 [HttpRuntime] 的 [SpiderSearcher] 实现。
 ///
-/// type=1 源直接通过 HTTP 调用 Spider API 的 search 方法。
+/// type=1 源直接通过 HTTP 调用 Apple CMS v2 API 的 search 方法。
 class HttpSpiderSearcher implements SpiderSearcher {
   /// 构造适配器。
   HttpSpiderSearcher(this.runtime);
@@ -64,7 +64,8 @@ class HttpSpiderSearcher implements SpiderSearcher {
                       ? Map<String, Object?>.from(item)
                       : <String, Object?>{});
             return SpiderRawItem(
-              vodId: (map['vod_id'] as String?) ?? '',
+              // Apple CMS v2: vod_id 是 int；TVBox: vod_id 是 String
+              vodId: '${map['vod_id'] ?? ''}',
               vodName: (map['vod_name'] as String?) ?? '',
               vodPic: map['vod_pic'] as String?,
               vodRemarks: map['vod_remarks'] as String?,
