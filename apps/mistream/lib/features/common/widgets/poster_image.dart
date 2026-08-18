@@ -52,7 +52,7 @@ class PosterImage extends StatelessWidget {
           child: child,
         );
       },
-      errorBuilder: (_, __, ___) => placeholder,
+      errorBuilder: (_, _, _) => placeholder,
     );
 
     final stacked = Stack(

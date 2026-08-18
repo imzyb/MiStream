@@ -53,7 +53,7 @@
 - [ ] 真实配置从零起播 — **阻塞**：等真实配置源
 - [x] 聚合搜索源隔离 → `search_engine/test/search_use_case_test.dart`（超时/崩溃不阻塞）
 - [x] 可读错误码 → `features/player/widgets/player_states.dart`（含嗅探 4 类错误码文案）
-- [ ] 关闭重开续播 — 位置恢复链路未验收
+- [ ] 关闭重开续播 — 实现已落地（`router.dart` `_PlayerPageWrapper` 读历史 seek + 每 5s/dispose 落库），待端到端验收
 - [x] 四态齐全 → `features/common/widgets/state_views.dart`
 - [ ] 无 P0 崩溃 / 源崩溃不影响主进程 — 进程隔离已就位（type=3 走子进程、嗅探走 isolate），缺长跑
 - [x] 集成测试（mock 源）端到端 → `runtimes/spider_js/test/type3_mock_integration_test.dart`（init→home→detail→play 全链路）
@@ -84,9 +84,19 @@
 - `ci(ci)` release-windows 作业：Release 包链门禁（libmpv → build → smoke 握手 → 产物留档）
 - `docs(ui)` PROGRESS.md 改出口标准驱动，ROADMAP 勾选有证据的 M3/M4/M5 条目
 
+## UI/UX 优化（2026-08-18，本会话四批）
+
+用户指令「现在优化UI/UX」，确认全部四批实施：
+
+- `feat(ui)` **批次1 结构+修复**：修 library 删除/清空误用 `AppDatabase.inMemory()` 真 bug；桌面端 `NavigationRail` + 窄屏底部栏；主题从 seed `0xFF4F46E5` 派生统一明暗；共享 `PosterImage` 组件
+- `feat(ui)` **批次2 页面打磨**：`ResponsiveSliverGrid` 新组件；详情页重写（收藏/简介收起/响应式剧集网格）；分类页列数随断点 2~6；搜索改卡片网格；首页骨架屏/全部片源弹窗/ErrorView
+- `feat(ui)` **批次3 文案+占位页**：直播页/下载页全中文 + Loading/Empty/Error 状态视图；新增 `/live-player` 路由与 `LivePlayerPage`
+- `feat(ui)` **批次4 播放器**：顶部信息栏随控制栏显隐；暂停时中央大播放按钮；续播闭环（读历史 seek + 周期落库 + 阈值判断）
+- 每批后 `flutter analyze` 0 error/0 warning + `flutter test` 44 全绿；本会话新文件不再引入新 info lint（重写文件的排序/underscore/discarded_futures 等已就地清零，仅存 `responsive.dart` 等既有债）
+
 ## 下一步（按优先级）
 
 1. `melos run analyze` 门禁是红的：727 条 info lint（public_member_api_docs 为主）。
    这是 M0 之后积累的既有债，需一次机械清理（补 doc 注释 + 排序 + const）
-2. M3/M5 剩余条目补证据（P50 基准断言、续播、长跑）
+2. M3/M5 剩余条目补证据（P50 基准断言、续播端到端验收、长跑）
 3. 真实源验证需要一个能访问 CDN 的网络环境

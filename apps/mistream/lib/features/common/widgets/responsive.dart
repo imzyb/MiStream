@@ -170,12 +170,25 @@ class ResponsiveSliverGrid extends StatelessWidget {
     this.childAspectRatio = 0.7,
   });
 
+  /// 条目数。
   final int itemCount;
+
+  /// 条目构建器。
   final Widget Function(BuildContext context, int index) itemBuilder;
+
+  /// 列数随断点变化的配置。
   final ResponsiveGridConfig config;
+
+  /// 外边距。
   final EdgeInsetsGeometry padding;
+
+  /// 主轴间距。
   final double mainAxisSpacing;
+
+  /// 交叉轴间距。
   final double crossAxisSpacing;
+
+  /// 单元格宽高比（宽/高）。
   final double childAspectRatio;
 
   @override

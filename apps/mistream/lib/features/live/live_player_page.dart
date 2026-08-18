@@ -6,10 +6,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:media_kit_video/media_kit_video.dart' as mkv;
-import 'package:player_engine/player_engine.dart';
-
 import 'package:mistream/features/player/player_controller.dart';
 import 'package:mistream/features/player/player_page.dart';
+import 'package:player_engine/player_engine.dart';
 
 /// 直播播放页。
 ///

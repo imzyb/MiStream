@@ -6,8 +6,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mistream/app/app.dart';
-import 'package:mistream/features/common/common.dart'
-    show ResponsiveGridView, ResponsiveGridPresets;
+import 'package:mistream/features/common/common.dart' show ResponsiveGridView;
 import 'package:mistream/features/home/widgets/media_card.dart';
 import 'package:search_engine/search_engine.dart';
 
@@ -114,7 +113,6 @@ class _SearchPageState extends State<SearchPage> {
                     ),
                   )
           : ResponsiveGridView(
-              config: ResponsiveGridPresets.mediaCards,
               itemCount: _items.length,
               itemBuilder: (context, index) {
                 final item = _items[index];

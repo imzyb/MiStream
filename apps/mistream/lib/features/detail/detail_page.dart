@@ -8,7 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:mistream/app/app.dart';
 import 'package:mistream/application/detail_use_case.dart';
 import 'package:mistream/features/common/common.dart'
-    show PosterImage, ResponsiveSliverGrid, ResponsiveGridPresets;
+    show PosterImage, ResponsiveGridPresets, ResponsiveSliverGrid;
 import 'package:search_engine/search_engine.dart';
 
 /// 影片详情页。

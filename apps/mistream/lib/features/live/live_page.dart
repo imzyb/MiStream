@@ -1,12 +1,14 @@
 /// 直播页：分组筛选 + 频道列表 + 导入 M3U。
 library;
 
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:live/live.dart';
 
 import 'package:mistream/features/common/common.dart'
-    show LoadingView, EmptyView, ErrorView;
+    show EmptyView, ErrorView, LoadingView;
 
 /// 直播页。
 class LivePage extends StatefulWidget {
@@ -29,7 +31,7 @@ class _LivePageState extends State<LivePage> {
   @override
   void initState() {
     super.initState();
-    _loadData();
+    unawaited(_loadData());
   }
 
   Future<void> _loadData() async {
@@ -175,7 +177,7 @@ class _LivePageState extends State<LivePage> {
               _isFavorite(channel) ? Icons.favorite : Icons.favorite_border,
               color: _isFavorite(channel) ? Colors.red : null,
             ),
-            onPressed: () => _toggleFavorite(channel),
+            onPressed: () => unawaited(_toggleFavorite(channel)),
           ),
         ],
       ),
@@ -187,7 +189,7 @@ class _LivePageState extends State<LivePage> {
     if (channel.logo != null && channel.logo!.isNotEmpty) {
       return CircleAvatar(
         backgroundImage: NetworkImage(channel.logo!),
-        onBackgroundImageError: (_, __) {},
+        onBackgroundImageError: (_, _) {},
         child: Text(channel.name.substring(0, 1)),
       );
     }
@@ -215,9 +217,11 @@ class _LivePageState extends State<LivePage> {
   }
 
   void _playChannel(LiveChannel channel) {
-    context.pushNamed(
-      'live_player',
-      extra: <String, Object?>{'url': channel.url, 'title': channel.name},
+    unawaited(
+      context.pushNamed(
+        'live_player',
+        extra: <String, Object?>{'url': channel.url, 'title': channel.name},
+      ),
     );
   }
 
@@ -256,7 +260,7 @@ class _LivePageState extends State<LivePage> {
 
     try {
       if (text.startsWith('http://') || text.startsWith('https://')) {
-        // TODO(M7)：从 URL 拉取 M3U 内容；当前仅支持粘贴内容。
+        // TODO(M7): 从 URL 拉取 M3U 内容；当前仅支持粘贴内容。
         _showMessage('暂不支持从 URL 导入，请粘贴 M3U 内容');
         return;
       }

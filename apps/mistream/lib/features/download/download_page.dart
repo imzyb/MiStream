@@ -1,8 +1,10 @@
 /// 下载页：任务列表 + 四个状态分组。
 library;
 
-import 'package:flutter/material.dart';
+import 'dart:async' show unawaited;
+
 import 'package:download/download.dart';
+import 'package:flutter/material.dart';
 
 import 'package:mistream/features/common/common.dart' show EmptyView;
 
@@ -92,7 +94,7 @@ class _DownloadPageState extends State<DownloadPage> {
   }
 
   Widget _buildTabBar() {
-    return Container(
+    return ColoredBox(
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: Row(
         children: [
@@ -235,7 +237,10 @@ class _DownloadPageState extends State<DownloadPage> {
       case DownloadStatus.paused:
         icon = Icons.pause_circle;
         color = Colors.orange;
-      default:
+      case DownloadStatus.cancelled:
+        icon = Icons.cancel;
+        color = Colors.grey;
+      case DownloadStatus.pending:
         icon = Icons.schedule;
         color = Colors.grey;
     }
@@ -273,7 +278,9 @@ class _DownloadPageState extends State<DownloadPage> {
           onPressed: () => _retryTask(task),
           tooltip: '重试',
         );
-      default:
+      case DownloadStatus.cancelled:
+      case DownloadStatus.pending:
+      case DownloadStatus.completed:
         return IconButton(
           icon: const Icon(Icons.delete),
           onPressed: () => _deleteTask(task),
@@ -292,7 +299,8 @@ class _DownloadPageState extends State<DownloadPage> {
         return Colors.red;
       case DownloadStatus.paused:
         return Colors.orange;
-      default:
+      case DownloadStatus.cancelled:
+      case DownloadStatus.pending:
         return Colors.grey;
     }
   }
@@ -380,52 +388,55 @@ class _DownloadPageState extends State<DownloadPage> {
     final urlController = TextEditingController();
     final titleController = TextEditingController();
 
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('新建下载'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: titleController,
-              decoration: const InputDecoration(
-                labelText: '标题',
-                border: OutlineInputBorder(),
+    unawaited(
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('新建下载'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: titleController,
+                decoration: const InputDecoration(
+                  labelText: '标题',
+                  border: OutlineInputBorder(),
+                ),
               ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: urlController,
+                decoration: const InputDecoration(
+                  labelText: '地址',
+                  hintText: 'https://example.com/video.m3u8',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('取消'),
             ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: urlController,
-              decoration: const InputDecoration(
-                labelText: '地址',
-                hintText: 'https://example.com/video.m3u8',
-                border: OutlineInputBorder(),
-              ),
+            FilledButton(
+              onPressed: () async {
+                if (urlController.text.isNotEmpty &&
+                    titleController.text.isNotEmpty) {
+                  await _manager.createTask(
+                    title: titleController.text,
+                    url: urlController.text,
+                    savePath: '/downloads/${titleController.text}',
+                  );
+                  await _manager.startDownload(_manager.tasks.last.id);
+                  if (!ctx.mounted) return;
+                  Navigator.pop(ctx);
+                }
+              },
+              child: const Text('下载'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              if (urlController.text.isNotEmpty &&
-                  titleController.text.isNotEmpty) {
-                await _manager.createTask(
-                  title: titleController.text,
-                  url: urlController.text,
-                  savePath: '/downloads/${titleController.text}',
-                );
-                await _manager.startDownload(_manager.tasks.last.id);
-                if (mounted) Navigator.pop(context);
-              }
-            },
-            child: const Text('下载'),
-          ),
-        ],
       ),
     );
   }
