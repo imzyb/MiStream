@@ -262,10 +262,14 @@ class SpiderHost {
   }
 
   /// 分发一个 RPC 请求。
+  ///
+  /// [cancelOn] 完成时向子进程发 `$/cancelRequest` 并立刻以 `REQUEST_CANCELLED`
+  /// 返回。聚合搜索里用户改词就靠它释放在途请求（docs/08 §3.4）。
   Future<Result<Object?, AppError>> call(
     String method, {
     Map<String, Object?> params = const {},
     Duration? timeout,
+    Future<void>? cancelOn,
   }) async {
     if (!isReady || _channel == null) {
       return const Err(
@@ -279,6 +283,7 @@ class SpiderHost {
       method,
       params: params,
       timeout: timeout,
+      cancelOn: cancelOn,
     );
     return result.mapErr((e) => e);
   }

@@ -43,3 +43,10 @@ export 'src/rpc/stdio_rpc_channel.dart'
     show StdioRpcChannel, kDefaultRequestTimeout, kWriteQueueMax;
 export 'src/runtime/http_runtime.dart'
     show HttpRequestParams, HttpResponseData, HttpRuntime;
+export 'src/runtime/spider_runtime_factory.dart'
+    show
+        HttpRuntimeAdapter,
+        JsRuntimeAdapter,
+        SpiderRuntime,
+        SpiderRuntimeFactory,
+        SpiderRuntimeType;
