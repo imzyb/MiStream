@@ -1,9 +1,16 @@
 /// HTTP 运行时 —— 无子进程的 Spider 实现。
 ///
-/// 对 type=1（JSON API）源，直接通过 HTTP 调用远端 Spider API，不走子进程
-/// RPC 管道。适用于 TVBox 标准的 JSON 接口源。
+/// 对 type=1（JSON API / 苹果 CMS 风格）源，直接通过 HTTP 调用远端 API，
+/// 不走子进程 RPC 管道。
 ///
-/// 见 `docs/05-Spider引擎.md` §1。
+/// 支持标准 Apple CMS v2 协议：
+/// - `GET {api}/?ac=videolist` — 首页列表
+/// - `GET {api}/?ac=list` — 分类列表
+/// - `GET {api}/?ac=list&t={tid}&pg={page}` — 分类详情
+/// - `GET {api}/?ac=detail&ids={ids}` — 详情
+/// - `GET {api}/?ac=videolist&wd={keyword}` — 搜索
+///
+/// 见 `docs/05-Spider引擎.md` §2.1、§5.3。
 library;
 
 import 'dart:async';
@@ -11,6 +18,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:core_domain/core_domain.dart';
+
+/// Apple CMS v2 默认 User-Agent。
+const _defaultUserAgent =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 /// HTTP 请求参数。
 class HttpRequestParams {
@@ -66,10 +78,10 @@ class HttpResponseData {
   final int elapsedMs;
 }
 
-/// HTTP 运行时 —— 直接调用远端 Spider API。
+/// HTTP 运行时 —— 直接调用远端 Apple CMS v2 API。
 ///
-/// 使用 [baseUrl] 作为 API 入口，附加 `?action=...&...` 参数。
-/// 支持 `home`、`category`、`detail`、`search`、`play` 等标准方法。
+/// 使用 [baseUrl] 作为 API 入口，附加 `?ac=...&...` 参数。
+/// 支持 `videolist`、`list`、`detail` 等标准 Apple CMS 方法。
 class HttpRuntime {
   /// 构造 HTTP 运行时。
   HttpRuntime(this.baseUrl);
@@ -97,6 +109,8 @@ class HttpRuntime {
         ..connectionTimeout = Duration(milliseconds: params.timeoutMs);
 
       final request = await client.openUrl(params.method, uri);
+      // 设置默认 User-Agent
+      request.headers.set('User-Agent', _defaultUserAgent);
       for (final entry in params.headers.entries) {
         request.headers.set(entry.key, entry.value);
       }
@@ -146,17 +160,17 @@ class HttpRuntime {
     }
   }
 
-  /// 调用 Spider API 的 [action] 方法。
+  /// 调用 Apple CMS v2 API。
   ///
-  /// 构造 URL: `{baseUrl}?action={action}&{params}`
+  /// 构造 URL: `{baseUrl}?ac={ac}&{params}`
   Future<Result<HttpResponseData, AppError>> call(
-    String action, {
+    String ac, {
     Map<String, String> queryParams = const {},
     int timeoutMs = 15000,
   }) async {
     final uri = Uri.parse(baseUrl).replace(
       queryParameters: {
-        'action': action,
+        'ac': ac,
         ...queryParams,
       },
     );
@@ -168,52 +182,57 @@ class HttpRuntime {
     );
   }
 
-  /// 首页内容。
-  Future<Result<HttpResponseData, AppError>> home() =>
-      call('home', timeoutMs: 10000);
+  /// 首页列表（Apple CMS: ac=videolist）。
+  Future<Result<HttpResponseData, AppError>> home({int page = 1}) => call(
+    'videolist',
+    queryParams: {'pg': '$page'},
+    timeoutMs: 10000,
+  );
 
-  /// 分类列表。
-  Future<Result<HttpResponseData, AppError>> category() =>
-      call('category', timeoutMs: 10000);
+  /// 分类列表（Apple CMS: ac=list，无 tid 返回所有分类）。
+  Future<Result<HttpResponseData, AppError>> category() => call(
+    'list',
+    timeoutMs: 10000,
+  );
 
-  /// 分类详情（按分类 id 分页）。
+  /// 分类详情（Apple CMS: ac=list&t={tid}&pg={page}）。
   Future<Result<HttpResponseData, AppError>> categoryDetail({
     required String typeId,
     int page = 1,
   }) => call(
-    'category',
+    'list',
     queryParams: {
-      'id': typeId,
-      'page': '$page',
+      't': typeId,
+      'pg': '$page',
     },
   );
 
-  /// 搜索。
+  /// 搜索（Apple CMS: ac=videolist&wd={keyword}）。
   Future<Result<HttpResponseData, AppError>> search({
     required String keyword,
     int page = 1,
   }) => call(
-    'search',
+    'videolist',
     queryParams: {
       'wd': keyword,
-      'page': '$page',
+      'pg': '$page',
     },
   );
 
-  /// 详情。
+  /// 详情（Apple CMS: ac=detail&ids={ids}）。
   Future<Result<HttpResponseData, AppError>> detail({
     required String ids,
   }) => call('detail', queryParams: {'ids': ids});
 
   /// 播放地址。
+  ///
+  /// 对于 type=1 Apple CMS 源，播放地址通常在 detail 响应的
+  /// `vod_play_url` 字段中。此方法用于需要单独解析播放地址的场景。
   Future<Result<HttpResponseData, AppError>> play({
     required String flag,
     required String ids,
   }) => call(
-    'play',
-    queryParams: {
-      'flag': flag,
-      'ids': ids,
-    },
+    'detail',
+    queryParams: {'ids': ids},
   );
 }

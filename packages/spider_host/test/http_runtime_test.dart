@@ -17,32 +17,28 @@ void _respondJson(HttpRequest request, String body, {int status = 200}) {
   unawaited(response.close());
 }
 
-/// 模拟一个 TVBox Spider API 服务。
+/// 模拟一个 Apple CMS v2 API 服务。
 Future<HttpServer> startMockApi() async {
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
   server.listen((request) {
-    final action = request.uri.queryParameters['action'] ?? '';
-    switch (action) {
-      case 'home':
-        _respondJson(request, '{"list":[{"vod_id":"1","vod_name":"剧A"}]}');
-      case 'category':
+    final ac = request.uri.queryParameters['ac'] ?? '';
+    switch (ac) {
+      case 'videolist':
+        _respondJson(request, '{"list":[{"vod_id":1,"vod_name":"剧A"}]}');
+      case 'list':
         _respondJson(
           request,
-          '{"list":[{"type_id":"1","type_name":"电影"}]}',
+          '{"list":[{"type_id":1,"type_name":"电影"}]}',
         );
       case 'detail':
         _respondJson(
           request,
-          '{"vod_id":"1","vod_name":"剧A","vod_play_from":"qiyi"}',
+          '{"list":[{"vod_id":1,"vod_name":"剧A","vod_play_from":"qiyi","vod_play_url":"第1集\$https://example.com/ep1.m3u8"}]}',
         );
-      case 'search':
-        _respondJson(request, '{"list":[{"vod_id":"2","vod_name":"搜索结果"}]}');
-      case 'play':
-        _respondJson(request, '{"url":"https://example.com/play.m3u8"}');
       default:
         final response = request.response
           ..statusCode = 404
-          ..write('Unknown action');
+          ..write('Unknown ac');
         unawaited(response.close());
     }
   });
@@ -86,7 +82,9 @@ void main() {
       final result = await runtime.detail(ids: '1');
       expect(result.isOk, isTrue);
       final json = jsonDecode(result.valueOrNull!.body) as Map<String, Object?>;
-      expect(json['vod_name'], '剧A');
+      final list = json['list'] as List?;
+      expect(list, isNotNull);
+      expect(list!.first['vod_name'], '剧A');
     });
 
     test('search 返回搜索结果', () async {
@@ -96,11 +94,14 @@ void main() {
       expect(json['list'], isNotEmpty);
     });
 
-    test('play 返回播放地址', () async {
+    test('play 返回播放地址（通过 detail）', () async {
       final result = await runtime.play(flag: 'qiyi', ids: '1');
       expect(result.isOk, isTrue);
       final json = jsonDecode(result.valueOrNull!.body) as Map<String, Object?>;
-      expect(json['url'], startsWith('https://'));
+      final list = json['list'] as List?;
+      expect(list, isNotNull);
+      final first = list!.first as Map;
+      expect(first['vod_play_url'], contains('https://'));
     });
 
     test('网络错误返回 Err', () async {
@@ -112,7 +113,7 @@ void main() {
     test('自定义 URL 请求', () async {
       final result = await runtime.request(
         HttpRequestParams(
-          url: 'http://127.0.0.1:$port?action=home',
+          url: 'http://127.0.0.1:$port?ac=videolist',
         ),
       );
       expect(result.isOk, isTrue);
