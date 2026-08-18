@@ -102,13 +102,13 @@ class ConfigParser {
       return SiteConfig(
         key: (map['key'] as String?) ?? '',
         name: (map['name'] as String?) ?? '',
-        type: (map['type'] as num?)?.toInt() ?? 0,
+        type: _toIntOrZero(map['type']),
         api: (map['api'] as String?) ?? '',
-        ext: map['ext'] as String?,
-        searchable: (map['searchable'] as num?)?.toInt() == 1,
-        quickSearch: (map['quickSearch'] as num?)?.toInt() == 1,
-        filterable: (map['filterable'] as num?)?.toInt() == 1,
-        priority: (map['priority'] as num?)?.toInt() ?? 0,
+        ext: _toStringOrJson(map['ext']),
+        searchable: _toIntOrZero(map['searchable']) == 1,
+        quickSearch: _toIntOrZero(map['quickSearch']) == 1,
+        filterable: _toIntOrZero(map['filterable']) == 1,
+        priority: _toIntOrZero(map['priority']),
       );
     }).toList();
   }
@@ -120,7 +120,7 @@ class ConfigParser {
       return LiveConfig(
         name: map['name'] as String?,
         url: map['url'] as String?,
-        type: map['type'] as String?,
+        type: '${map['type'] ?? ''}',
       );
     }).toList();
   }
@@ -131,9 +131,9 @@ class ConfigParser {
       final map = item is Map<String, Object?> ? item : <String, Object?>{};
       return ParseConfig(
         name: (map['name'] as String?) ?? '',
-        type: (map['type'] as num?)?.toInt() ?? 0,
+        type: _toIntOrZero(map['type']),
         url: (map['url'] as String?) ?? '',
-        ext: map['ext'] as String?,
+        ext: _toStringOrJson(map['ext']),
         flags: (map['flags'] as List<Object?>?)?.cast<String>() ?? [],
       );
     }).toList();
@@ -145,8 +145,29 @@ class ConfigParser {
       final map = item is Map<String, Object?> ? item : <String, Object?>{};
       return SniffRuleConfig(
         host: (map['host'] as String?) ?? '',
-        regex: map['regex'] as String?,
+        regex: _toStringOrJson(map['regex']),
       );
     }).toList();
+  }
+
+  /// 将值转为 String：如果是 Map 则序列化为 JSON 字符串。
+  static String? _toStringOrJson(Object? value) {
+    if (value == null) return null;
+    if (value is String) return value;
+    if (value is Map) {
+      try {
+        return jsonEncode(value);
+      } on Object {
+        return value.toString();
+      }
+    }
+    return value.toString();
+  }
+
+  /// 将值转为 int：支持 num 和 String 类型。
+  static int _toIntOrZero(Object? value) {
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
   }
 }
