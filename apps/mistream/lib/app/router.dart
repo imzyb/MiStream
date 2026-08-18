@@ -15,6 +15,7 @@ import 'package:mistream/features/search/search_page.dart';
 import 'package:mistream/features/settings/settings_page.dart';
 import 'package:mistream/features/library/library_page.dart';
 import 'package:mistream/features/live/live_page.dart';
+import 'package:mistream/features/live/live_player_page.dart';
 import 'package:mistream/features/download/download_page.dart';
 import 'package:mistream/features/sniffer/sniffer_settings_page.dart';
 import 'package:mistream/features/home/widgets/media_card.dart';
@@ -145,6 +146,17 @@ List<RouteBase> get _routes => [
     path: '/onboarding',
     name: 'onboarding',
     builder: (context, state) => const OnboardingPage(),
+  ),
+  GoRoute(
+    path: '/live-player',
+    name: 'live_player',
+    builder: (context, state) {
+      final extra = state.extra as Map<String, Object?>?;
+      return LivePlayerPage(
+        url: extra?['url'] as String? ?? '',
+        title: extra?['title'] as String?,
+      );
+    },
   ),
   GoRoute(
     path: '/search',

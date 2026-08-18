@@ -1,7 +1,16 @@
+/// 直播页：分组筛选 + 频道列表 + 导入 M3U。
+library;
+
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:live/live.dart';
 
+import 'package:mistream/features/common/common.dart'
+    show LoadingView, EmptyView, ErrorView;
+
+/// 直播页。
 class LivePage extends StatefulWidget {
+  /// 构造直播页。
   const LivePage({super.key});
 
   @override
@@ -12,6 +21,7 @@ class _LivePageState extends State<LivePage> {
   final LiveRepository _repository = InMemoryLiveRepository();
   List<LiveChannel> _channels = [];
   List<LiveGroup> _groups = [];
+  Set<String> _favoriteIds = {};
   LiveGroup? _selectedGroup;
   bool _isLoading = true;
   String? _error;
@@ -31,15 +41,20 @@ class _LivePageState extends State<LivePage> {
 
       _channels = await _repository.getChannels();
       _groups = await _repository.getGroups();
+      _favoriteIds = (await _repository.getFavorites())
+          .map((c) => c.id)
+          .toSet();
 
-      setState(() {
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _error = e.toString();
-      });
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    } on Object catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _error = e.toString();
+        });
+      }
     }
   }
 
@@ -52,10 +67,11 @@ class _LivePageState extends State<LivePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Live TV'),
+        title: const Text('直播'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
+            tooltip: '刷新',
             onPressed: _loadData,
           ),
         ],
@@ -65,45 +81,21 @@ class _LivePageState extends State<LivePage> {
   }
 
   Widget _buildBody() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    if (_isLoading) return const LoadingView(message: '正在加载直播源…');
 
     if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline, size: 48, color: Colors.red),
-            const SizedBox(height: 16),
-            Text(_error!, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _loadData,
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      );
+      return ErrorView(message: _error!, onRetry: _loadData);
     }
 
     if (_channels.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.tv, size: 48, color: Colors.grey),
-            const SizedBox(height: 16),
-            const Text('No channels available'),
-            const SizedBox(height: 8),
-            const Text('Import an M3U playlist to get started'),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: _importPlaylist,
-              icon: const Icon(Icons.add),
-              label: const Text('Import Playlist'),
-            ),
-          ],
+      return EmptyView(
+        icon: Icons.tv,
+        title: '暂无直播源',
+        subtitle: '导入 M3U 播放列表即可开始收看',
+        action: FilledButton.icon(
+          onPressed: _importPlaylist,
+          icon: const Icon(Icons.add),
+          label: const Text('导入播放列表'),
         ),
       );
     }
@@ -126,13 +118,9 @@ class _LivePageState extends State<LivePage> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             child: FilterChip(
-              label: const Text('All'),
+              label: const Text('全部'),
               selected: _selectedGroup == null,
-              onSelected: (selected) {
-                setState(() {
-                  _selectedGroup = null;
-                });
-              },
+              onSelected: (_) => setState(() => _selectedGroup = null),
             ),
           ),
           ..._groups.map(
@@ -142,9 +130,7 @@ class _LivePageState extends State<LivePage> {
                 label: Text(group.name),
                 selected: _selectedGroup?.id == group.id,
                 onSelected: (selected) {
-                  setState(() {
-                    _selectedGroup = selected ? group : null;
-                  });
+                  setState(() => _selectedGroup = selected ? group : null);
                 },
               ),
             ),
@@ -158,7 +144,7 @@ class _LivePageState extends State<LivePage> {
     final channels = _filteredChannels;
 
     if (channels.isEmpty) {
-      return const Center(child: Text('No channels in this group'));
+      return const EmptyView(icon: Icons.tv, title: '该分组暂无频道');
     }
 
     return ListView.builder(
@@ -184,6 +170,7 @@ class _LivePageState extends State<LivePage> {
               visualDensity: VisualDensity.compact,
             ),
           IconButton(
+            tooltip: _isFavorite(channel) ? '取消收藏' : '收藏',
             icon: Icon(
               _isFavorite(channel) ? Icons.favorite : Icons.favorite_border,
               color: _isFavorite(channel) ? Colors.red : null,
@@ -207,54 +194,83 @@ class _LivePageState extends State<LivePage> {
     return CircleAvatar(child: Text(channel.name.substring(0, 1)));
   }
 
-  bool _isFavorite(LiveChannel channel) {
-    // TODO: Check from repository
-    return false;
-  }
+  bool _isFavorite(LiveChannel channel) => _favoriteIds.contains(channel.id);
 
   Future<void> _toggleFavorite(LiveChannel channel) async {
-    if (_isFavorite(channel)) {
-      await _repository.removeFavorite(channel.id);
-    } else {
-      await _repository.addFavorite(channel.id);
+    try {
+      if (_isFavorite(channel)) {
+        await _repository.removeFavorite(channel.id);
+      } else {
+        await _repository.addFavorite(channel.id);
+      }
+      final ids = (await _repository.getFavorites()).map((c) => c.id).toSet();
+      if (mounted) setState(() => _favoriteIds = ids);
+    } on Object catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('收藏操作失败: $e')),
+        );
+      }
     }
-    setState(() {});
   }
 
   void _playChannel(LiveChannel channel) {
-    // TODO: Navigate to player
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Playing: ${channel.name}')),
+    context.pushNamed(
+      'live_player',
+      extra: <String, Object?>{'url': channel.url, 'title': channel.name},
     );
   }
 
-  void _importPlaylist() {
-    // TODO: Show import dialog
-    showDialog<void>(
+  Future<void> _importPlaylist() async {
+    final controller = TextEditingController();
+    final imported = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Import Playlist'),
-        content: const TextField(
-          decoration: InputDecoration(
-            hintText: 'Paste M3U URL or content',
+        title: const Text('导入播放列表'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: 6,
+          decoration: const InputDecoration(
+            hintText: '粘贴 M3U 内容或 URL',
             border: OutlineInputBorder(),
           ),
-          maxLines: 5,
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
           ),
-          ElevatedButton(
-            onPressed: () {
-              // TODO: Import playlist
-              Navigator.pop(context);
-            },
-            child: const Text('Import'),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('导入'),
           ),
         ],
       ),
+    );
+
+    if (imported != true) return;
+
+    final text = controller.text.trim();
+    if (text.isEmpty) return;
+
+    try {
+      if (text.startsWith('http://') || text.startsWith('https://')) {
+        // TODO(M7)：从 URL 拉取 M3U 内容；当前仅支持粘贴内容。
+        _showMessage('暂不支持从 URL 导入，请粘贴 M3U 内容');
+        return;
+      }
+      await _repository.importM3u(text);
+      await _loadData();
+      _showMessage('导入成功');
+    } on Object catch (e) {
+      _showMessage('导入失败: $e');
+    }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 }

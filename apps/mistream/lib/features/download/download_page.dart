@@ -1,7 +1,14 @@
+/// 下载页：任务列表 + 四个状态分组。
+library;
+
 import 'package:flutter/material.dart';
 import 'package:download/download.dart';
 
+import 'package:mistream/features/common/common.dart' show EmptyView;
+
+/// 下载页。
 class DownloadPage extends StatefulWidget {
+  /// 构造下载页。
   const DownloadPage({super.key});
 
   @override
@@ -12,6 +19,8 @@ class _DownloadPageState extends State<DownloadPage> {
   final DownloadManager _manager = DownloadManager();
   List<DownloadTask> _tasks = [];
   int _selectedTab = 0;
+
+  static const _tabLabels = ['进行中', '等待中', '已完成', '失败'];
 
   @override
   void initState() {
@@ -28,15 +37,11 @@ class _DownloadPageState extends State<DownloadPage> {
   }
 
   void _onTaskUpdate(DownloadTask task) {
-    setState(() {
-      _tasks = _manager.tasks;
-    });
+    setState(() => _tasks = _manager.tasks);
   }
 
   void _loadTasks() {
-    setState(() {
-      _tasks = _manager.tasks;
-    });
+    setState(() => _tasks = _manager.tasks);
   }
 
   List<DownloadTask> get _activeTasks =>
@@ -51,17 +56,24 @@ class _DownloadPageState extends State<DownloadPage> {
   List<DownloadTask> get _failedTasks =>
       _tasks.where((t) => t.status == DownloadStatus.failed).toList();
 
+  List<DownloadTask> get _currentTasks => switch (_selectedTab) {
+    0 => _activeTasks,
+    1 => _pendingTasks,
+    2 => _completedTasks,
+    _ => _failedTasks,
+  };
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Downloads'),
+        title: const Text('下载'),
         actions: [
           if (_completedTasks.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.delete_sweep),
               onPressed: _clearCompleted,
-              tooltip: 'Clear completed',
+              tooltip: '清除已完成',
             ),
         ],
       ),
@@ -73,6 +85,7 @@ class _DownloadPageState extends State<DownloadPage> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showAddDownloadDialog,
+        tooltip: '新建下载',
         child: const Icon(Icons.add),
       ),
     );
@@ -83,24 +96,25 @@ class _DownloadPageState extends State<DownloadPage> {
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: Row(
         children: [
-          _buildTab('Active', _activeTasks.length),
-          _buildTab('Pending', _pendingTasks.length),
-          _buildTab('Completed', _completedTasks.length),
-          _buildTab('Failed', _failedTasks.length),
+          for (var i = 0; i < _tabLabels.length; i++)
+            _buildTab(i, _tabLabels[i], _tabCount(i)),
         ],
       ),
     );
   }
 
-  Widget _buildTab(String label, int count) {
-    final isSelected = _selectedTab == label.hashCode % 4;
+  int _tabCount(int index) => switch (index) {
+    0 => _activeTasks.length,
+    1 => _pendingTasks.length,
+    2 => _completedTasks.length,
+    _ => _failedTasks.length,
+  };
+
+  Widget _buildTab(int index, String label, int count) {
+    final isSelected = _selectedTab == index;
     return Expanded(
       child: InkWell(
-        onTap: () {
-          setState(() {
-            _selectedTab = label.hashCode % 4;
-          });
-        },
+        onTap: () => setState(() => _selectedTab = index),
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
@@ -148,32 +162,13 @@ class _DownloadPageState extends State<DownloadPage> {
   }
 
   Widget _buildContent() {
-    final tasks = _selectedTab == 0
-        ? _activeTasks
-        : _selectedTab == 1
-        ? _pendingTasks
-        : _selectedTab == 2
-        ? _completedTasks
-        : _failedTasks;
+    final tasks = _currentTasks;
 
     if (tasks.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              _selectedTab == 2 ? Icons.check_circle : Icons.download,
-              size: 48,
-              color: Colors.grey,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              _selectedTab == 2
-                  ? 'No completed downloads'
-                  : 'No downloads in this tab',
-            ),
-          ],
-        ),
+      return EmptyView(
+        icon: _selectedTab == 2 ? Icons.check_circle : Icons.download,
+        title: _selectedTab == 2 ? '暂无完成的任务' : '该分组暂无任务',
+        subtitle: '点击右下角按钮新建下载',
       );
     }
 
@@ -209,7 +204,7 @@ class _DownloadPageState extends State<DownloadPage> {
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 Text(
-                  task.status.name.toUpperCase(),
+                  _statusLabel(task.status),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: _getStatusColor(task.status),
                   ),
@@ -231,19 +226,15 @@ class _DownloadPageState extends State<DownloadPage> {
       case DownloadStatus.downloading:
         icon = Icons.downloading;
         color = Colors.blue;
-        break;
       case DownloadStatus.completed:
         icon = Icons.check_circle;
         color = Colors.green;
-        break;
       case DownloadStatus.failed:
         icon = Icons.error;
         color = Colors.red;
-        break;
       case DownloadStatus.paused:
         icon = Icons.pause_circle;
         color = Colors.orange;
-        break;
       default:
         icon = Icons.schedule;
         color = Colors.grey;
@@ -268,25 +259,25 @@ class _DownloadPageState extends State<DownloadPage> {
         return IconButton(
           icon: const Icon(Icons.pause),
           onPressed: () => _pauseTask(task),
-          tooltip: 'Pause',
+          tooltip: '暂停',
         );
       case DownloadStatus.paused:
         return IconButton(
           icon: const Icon(Icons.play_arrow),
           onPressed: () => _resumeTask(task),
-          tooltip: 'Resume',
+          tooltip: '继续',
         );
       case DownloadStatus.failed:
         return IconButton(
           icon: const Icon(Icons.refresh),
           onPressed: () => _retryTask(task),
-          tooltip: 'Retry',
+          tooltip: '重试',
         );
       default:
         return IconButton(
           icon: const Icon(Icons.delete),
           onPressed: () => _deleteTask(task),
-          tooltip: 'Delete',
+          tooltip: '删除',
         );
     }
   }
@@ -304,6 +295,16 @@ class _DownloadPageState extends State<DownloadPage> {
       default:
         return Colors.grey;
     }
+  }
+
+  String _statusLabel(DownloadStatus status) {
+    return switch (status) {
+      DownloadStatus.downloading => '下载中',
+      DownloadStatus.completed => '已完成',
+      DownloadStatus.failed => '失败',
+      DownloadStatus.paused => '已暂停',
+      _ => '等待中',
+    };
   }
 
   String _formatBytes(int bytes) {
@@ -331,17 +332,16 @@ class _DownloadPageState extends State<DownloadPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Download'),
-        content: Text('Delete "${task.title}"?'),
+        title: const Text('删除下载'),
+        content: Text('确定要删除「${task.title}」吗？'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: const Text('取消'),
           ),
-          ElevatedButton(
+          FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete'),
+            child: const Text('删除'),
           ),
         ],
       ),
@@ -356,16 +356,16 @@ class _DownloadPageState extends State<DownloadPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Clear Completed'),
-        content: const Text('Remove all completed downloads?'),
+        title: const Text('清除已完成'),
+        content: const Text('确定要移除所有已完成的任务吗？'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: const Text('取消'),
           ),
-          ElevatedButton(
+          FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Clear'),
+            child: const Text('清除'),
           ),
         ],
       ),
@@ -383,14 +383,14 @@ class _DownloadPageState extends State<DownloadPage> {
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('New Download'),
+        title: const Text('新建下载'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: titleController,
               decoration: const InputDecoration(
-                labelText: 'Title',
+                labelText: '标题',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -398,7 +398,7 @@ class _DownloadPageState extends State<DownloadPage> {
             TextField(
               controller: urlController,
               decoration: const InputDecoration(
-                labelText: 'URL',
+                labelText: '地址',
                 hintText: 'https://example.com/video.m3u8',
                 border: OutlineInputBorder(),
               ),
@@ -408,9 +408,9 @@ class _DownloadPageState extends State<DownloadPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: const Text('取消'),
           ),
-          ElevatedButton(
+          FilledButton(
             onPressed: () async {
               if (urlController.text.isNotEmpty &&
                   titleController.text.isNotEmpty) {
@@ -423,7 +423,7 @@ class _DownloadPageState extends State<DownloadPage> {
                 if (mounted) Navigator.pop(context);
               }
             },
-            child: const Text('Download'),
+            child: const Text('下载'),
           ),
         ],
       ),
