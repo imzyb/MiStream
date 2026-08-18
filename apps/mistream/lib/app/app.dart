@@ -5,26 +5,26 @@ import 'package:flutter/material.dart';
 import 'package:mistream/app/router.dart';
 import 'package:mistream/application/app_assembly.dart';
 
-/// 把组合根下发给整棵 widget 树。
+/// 组合根下发给整个 widget 树。
 ///
-/// 取代了早先的可变全局 `globalAssembly`——全局变量让 widget 测试必须先
-/// 布置隐式状态，也掩盖了「谁依赖了什么」。
+/// 取代了早先的可变全局 `globalAssembly`——全局变量让 widget 单元测试必须先
+/// 模拟状态，也模糊了"谁依赖了什么"。
 class AppScope extends InheritedWidget {
-  /// 以 [assembly] 包裹 [child]。
+  /// 以 [assembly] 驱动 [child]。
   const AppScope({
     required this.assembly,
     required super.child,
     super.key,
   });
 
-  /// 应用层装配。
+  /// 应用级装配。
   final AppAssembly assembly;
 
-  /// 取最近的 [AppScope]。找不到即是装配漏了，直接断言失败而不是静默降级。
+  /// 取最近的 [AppScope]。找不到即是装配错了，直接断言失败而不是静默降级。
   ///
   /// 用 `getInheritedWidgetOfExactType` 而非 `dependOnInheritedWidgetOfExactType`：
   /// 装配在应用生命周期内不会变，调用方多在事件回调里取用（build 之外注册
-  /// 依赖会被框架警告），无需订阅变更。
+  /// 依赖会被框架警告），无需监听变更。
   static AppAssembly of(BuildContext context) {
     final scope = context.getInheritedWidgetOfExactType<AppScope>();
     assert(scope != null, '找不到 AppScope，检查 MiStreamApp 是否在树上');
@@ -39,18 +39,23 @@ class AppScope extends InheritedWidget {
 class MiStreamApp extends StatefulWidget {
   /// 以已装配好的 [assembly] 构造。
   ///
-  /// [onboardingDone] 决定首帧落在引导页还是首页，由 `main.dart` 在建库后读出。
+  /// [onboardingDone] 决定首次落在引导页还是首页，由 `main.dart` 在建库后读出。
+  /// [themeMode] 决定应用主题模式（system/light/dark）。
   const MiStreamApp({
     required this.assembly,
     required this.onboardingDone,
+    required this.themeMode,
     super.key,
   });
 
-  /// 应用层装配。
+  /// 应用级装配。
   final AppAssembly assembly;
 
   /// 是否已完成首次引导。
   final bool onboardingDone;
+
+  /// 主题模式。
+  final ThemeMode themeMode;
 
   @override
   State<MiStreamApp> createState() => _MiStreamAppState();
@@ -83,7 +88,11 @@ class _MiStreamAppState extends State<MiStreamApp> {
         child: MaterialApp.router(
           title: 'MiStream',
           debugShowCheckedModeBanner: false,
-          theme: ThemeData.dark(useMaterial3: true).copyWith(
+          themeMode: widget.themeMode,
+          theme: ThemeData.light(useMaterial3: true).copyWith(
+            scaffoldBackgroundColor: const Color(0xFFF5F5F5),
+          ),
+          darkTheme: ThemeData.dark(useMaterial3: true).copyWith(
             scaffoldBackgroundColor: const Color(0xFF0D0F14),
           ),
           routerConfig: _router.router,
