@@ -1,0 +1,89 @@
+# MiStream 开发进度
+
+> 本文件只做一件事：对照 [ROADMAP.md](ROADMAP.md) 的**出口标准**报告真实状态。
+> 每个勾都指向可复现的证据（测试文件/命令/提交）。未验证的一律不勾。
+> 更新：2026-08-18
+
+## 总览
+
+| 里程碑 | 出口标准 | 状态 |
+| --- | --- | --- |
+| M0 工程奠基 | 4/4 | ✅ 完成 |
+| M1 播放内核 | 0/7 | ⏸ 依赖真实播放矩阵 |
+| M2 数据层 | 0/5 | ⏸ 缺迁移/备份验证 |
+| M3 RPC + Spider 骨架 | 5/6 | 🟢 仅剩真实 type=1 源 |
+| M4 JS 运行时 | 4/6 | 🟢 仅剩真实源 + P50 基准 |
+| M5 主线 UI 闭环 | 4/7 | 🟢 仅剩真实配置/续播/长跑 |
+| M6 嗅探与解析 | 0/5 | 🟡 引擎已建，缺真实 type=0 源 |
+| M7 直播 | 0/4 | 🟡 包已建，缺验收 |
+| M8 下载与离线 | 0/5 | 🟡 包已建，缺验收 |
+| M9 插件系统与主题 | 0/6 | 🟡 包已建，缺验收 |
+| M10 发布工程 | 0/6 | 🔴 未启动 |
+| M11-M15 | — | 🔴 未启动 |
+
+## M0 · 工程奠基 ✅
+
+- [x] `melos bootstrap && melos run analyze && melos run test` 全绿（18 包 dart + 45 flutter，2026-08-17）
+- [x] CI 三平台通过
+- [x] `core_domain` 无 Flutter/IO 依赖
+- [x] 日志脱敏 URL token
+
+## M3 · RPC 与 Spider 骨架 🟢
+
+- [x] 分帧层模糊测试 → `spider_host/test/frame_parser_fuzz_test.dart`（9 用例）+ `frame_parser_test.dart`
+- [x] 子进程死亡后退避重启 → `spider_host/test/spider_host_test.dart`（进程退出自动重启/熔断）
+- [x] 取消释放资源 → `spider_host/test/cancel_request_test.dart`（5 用例，`$/cancelRequest` + 写队列配额释放）
+- [x] SSRF 逃逸拦截（含重定向到私网）→ `spider_host/test/host_api_redirect_test.dart`（9 用例，302→127.0.0.1/云元数据/白名单外域名全拦）
+- [x] mock 源全流程 → `spider_host/test/http_runtime_test.dart` + `source_adapter/test/integration_test.dart`
+- [ ] 真实 type=1 源浏览 — **阻塞**：本机 CDN 全被墙（lziapi/kuaichezy/wujinapi/ffzy 404/403/timeout），需代理或可访问机器
+
+## M4 · JS 运行时 🟢
+
+- [x] 兼容性测试集 ≥100 条全绿 → `runtimes/spider_js/test/compat_runner_test.dart`（断言用例数并全跑）
+- [x] 死循环 interrupt 且不影响同进程其它源 → `resource_limits_test.dart`
+- [x] OOM 限制在 Context 级，进程存活 → `resource_limits_test.dart`（内存超限/栈溢出用例）
+- [x] 脚本异常带堆栈 SCRIPT_RUNTIME_ERROR → `resource_limits_test.dart` + `runtime_child_test.dart`
+- [ ] 5 个真实 drpy 源全流程 — **阻塞**：同上网络问题
+- [ ] search P50 < 3s — type=3 e2e 已跑通（`type3_mock_integration_test.dart`），缺 P50 基准断言
+
+本会话关键修复：无 import 的 type=3 源此前全部加载失败（`export` 语法错误），已修并重建 Release 包。
+
+## M5 · 主线 UI 闭环 🟢
+
+- [ ] 真实配置从零起播 — **阻塞**：等真实配置源
+- [x] 聚合搜索源隔离 → `search_engine/test/search_use_case_test.dart`（超时/崩溃不阻塞）
+- [x] 可读错误码 → `features/player/widgets/player_states.dart`（含嗅探 4 类错误码文案）
+- [ ] 关闭重开续播 — 位置恢复链路未验收
+- [x] 四态齐全 → `features/common/widgets/state_views.dart`
+- [ ] 无 P0 崩溃 / 源崩溃不影响主进程 — 进程隔离已就位（type=3 走子进程、嗅探走 isolate），缺长跑
+- [x] 集成测试（mock 源）端到端 → `runtimes/spider_js/test/type3_mock_integration_test.dart`（init→home→detail→play 全链路）
+
+## M6/M7/M8/M9 · 包已建，验收未做 🟡
+
+四个包已入工作区并全绿测试，但各自出口标准需要真实网络/真实源/长跑才能勾选：
+
+- **M6** `packages/media_sniffer`（33 测试）：规则引擎、直链验证、HLS 样本测试齐；缺真实 type=0 网页源、WebView2 原生集成
+- **M7** `packages/live`（17 测试）：m3u/txt 解析、drift 收藏、XMLTV EPG；缺换台/重试/长跑验收
+- **M8** `packages/download`（22 测试）：任务状态机、Range 断点续传、HLS 分片；缺真实网络断点/离线播放验收
+- **M9** `packages/plugin_host`（15 测试）：清单/权限/sha256/isocate 沙箱；缺逃逸测试、生命周期状态机全覆盖、主题引擎
+
+> 注：`DownloadManager.startDownload()` 目前是 `Future.delayed(1s)` 假实现；`runtimes/sniffer` 只有 18 行占位。这两处是 M8/M6 出口标准的硬缺口。
+
+## 本会话完成（2026-08-18，23 个提交）
+
+全部未提交工作已分批落库（此前 81+ 个文件挂在工作区）：
+
+- `feat(domain)` 错误码、live、download 包
+- `feat(spider)` Apple CMS v2 协议、运行时工厂、Home/Play 用例
+- `feat(spider-js)` 模块加载器、evalModule/setBaseUrl、export-strip 修复、exe 旁 DLL 查找
+- `feat(tools)` mock 源 type=3 支持、Release 包链（ps1 + checker + melos 命令）
+- `feat(ui)` 首页/详情/引导/媒体库/设置/直播/下载/嗅探页、壳与主题、装配层
+- `feat(player)` 起播看门狗 + 媒体信息透出
+- `fix(rpc)` cancelOn、重定向逐跳闸门；`fix(config)` 宽松解析；`fix(storage)` configSourceUrl
+
+## 下一步（按优先级）
+
+1. QuickJS CI 二进制策略：`tools/quickjs_dist` + SHA256 锁文件（仿 `libmpv_dist`），Release 作业不再缺 DLL
+2. CI 加 `release-windows` 作业：`flutter build windows --release` + bundle 校验 --smoke
+3. M3/M5 剩余条目补证据（P50 基准断言、续播、长跑）
+4. 真实源验证需要一个能访问 CDN 的网络环境
