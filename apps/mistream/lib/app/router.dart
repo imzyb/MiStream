@@ -5,14 +5,35 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:media_kit_video/media_kit_video.dart' as mkv;
 import 'package:mistream/features/detail/detail_page.dart';
 import 'package:mistream/features/home/home_page.dart';
 import 'package:mistream/features/onboarding/onboarding_page.dart';
 import 'package:mistream/features/player/player_controller.dart';
 import 'package:mistream/features/player/player_page.dart';
 import 'package:mistream/features/search/search_page.dart';
+import 'package:mistream/features/settings/settings_page.dart';
+import 'package:mistream/features/library/library_page.dart';
+import 'package:mistream/features/live/live_page.dart';
+import 'package:mistream/features/download/download_page.dart';
+import 'package:mistream/features/sniffer/sniffer_settings_page.dart';
+import 'package:mistream/features/home/widgets/media_card.dart';
+import 'package:mistream/application/app_assembly.dart' show AppAssembly;
+import 'package:core_domain/core_domain.dart';
 import 'package:player_engine/player_engine.dart';
 import 'package:search_engine/search_engine.dart';
+import 'package:mistream/features/shell/scaffold_with_nav_bar.dart';
+
+/// 全局装配实例。
+AppAssembly? _globalRouterAssembly;
+
+/// 获取全局装配实例。
+AppAssembly? get globalRouterAssembly => _globalRouterAssembly;
+
+/// 设置全局装配实例。
+void setGlobalRouterAssembly(AppAssembly? assembly) {
+  _globalRouterAssembly = assembly;
+}
 
 /// 把「引导是否完成」下发给引导页，让它在完成时翻转标记。
 ///
@@ -75,10 +96,48 @@ class AppRouter {
 }
 
 List<RouteBase> get _routes => [
-  GoRoute(
-    path: '/',
-    name: 'home',
-    builder: (context, state) => const HomePage(),
+  StatefulShellRoute.indexedStack(
+    builder: (context, state, navigationShell) {
+      return ScaffoldWithNavBar(navigationShell: navigationShell);
+    },
+    branches: [
+      StatefulShellBranch(
+        routes: [
+          GoRoute(
+            path: '/',
+            name: 'home',
+            builder: (context, state) => const HomePage(),
+          ),
+        ],
+      ),
+      StatefulShellBranch(
+        routes: [
+          GoRoute(
+            path: '/live',
+            name: 'live',
+            builder: (context, state) => const LivePage(),
+          ),
+        ],
+      ),
+      StatefulShellBranch(
+        routes: [
+          GoRoute(
+            path: '/downloads',
+            name: 'downloads',
+            builder: (context, state) => const DownloadPage(),
+          ),
+        ],
+      ),
+      StatefulShellBranch(
+        routes: [
+          GoRoute(
+            path: '/library',
+            name: 'library',
+            builder: (context, state) => const LibraryPage(),
+          ),
+        ],
+      ),
+    ],
   ),
   GoRoute(
     path: '/onboarding',
@@ -89,6 +148,30 @@ List<RouteBase> get _routes => [
     path: '/search',
     name: 'search',
     builder: (context, state) => const SearchPage(),
+  ),
+  GoRoute(
+    path: '/settings',
+    name: 'settings',
+    builder: (context, state) => const SettingsPage(),
+  ),
+  GoRoute(
+    path: '/sniffer-settings',
+    name: 'sniffer_settings',
+    builder: (context, state) => const SnifferSettingsPage(),
+  ),
+  GoRoute(
+    path: '/category/:siteId/:typeId',
+    name: 'category_detail',
+    builder: (context, state) {
+      final typeId = state.pathParameters['typeId']!;
+      final siteId = int.parse(state.pathParameters['siteId']!);
+      final extra = state.extra;
+      return _CategoryDetailPage(
+        siteId: siteId,
+        typeId: typeId,
+        title: extra is String ? extra : '分类详情',
+      );
+    },
   ),
   GoRoute(
     path: '/detail/:siteId/:vodId',
@@ -114,8 +197,10 @@ List<RouteBase> get _routes => [
       final extra = state.extra;
 
       String? episodeName;
+      String? episodeId;
       if (extra is Map<String, Object?>) {
         episodeName = extra['episodeName'] as String?;
+        episodeId = extra['episodeId'] as String?;
       }
 
       return _PlayerPageWrapper(
@@ -123,6 +208,7 @@ List<RouteBase> get _routes => [
         vodId: vodId,
         flag: flag,
         title: episodeName,
+        episodeId: episodeId,
       );
     },
   ),
@@ -138,19 +224,26 @@ class _PlayerPageWrapper extends StatefulWidget {
     required this.vodId,
     required this.flag,
     this.title,
+    this.episodeId,
   });
 
   final int siteId;
   final String vodId;
   final String flag;
   final String? title;
+  final String? episodeId;
 
   @override
   State<_PlayerPageWrapper> createState() => _PlayerPageWrapperState();
 }
 
 class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
+  static const _startupTimeout = Duration(seconds: 20);
+
   PlayerController? _controller;
+  MediaKitEngine? _engine;
+  mkv.VideoController? _videoController;
+  Timer? _startupTimer;
   String? _error;
 
   @override
@@ -162,6 +255,7 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
   Future<void> _init() async {
     try {
       final engine = MediaKitEngine();
+      _engine = engine;
       final initResult = await engine.initialize(const PlayerConfig());
       if (initResult.isErr) {
         if (mounted) {
@@ -170,12 +264,59 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
         return;
       }
 
-      // TODO(M5): 接 PlayCoordinator 取真实播放地址，见 ROADMAP M5「播放页
-      // 接入编排层」。在此之前播放页只展示控制栏骨架，不加载媒体。
-      final controller = PlayerController(engine: engine);
+      // 获取真实播放地址
+      final assembly = globalRouterAssembly;
+      if (assembly == null) {
+        if (mounted) {
+          setState(() => _error = '应用未初始化');
+        }
+        return;
+      }
+
+      String? episodeId;
+      if (widget.episodeId != null && widget.episodeId!.isNotEmpty) {
+        episodeId = widget.episodeId;
+      }
+
+      final playResult = await assembly.playUseCase.getPlayableSource(
+        siteId: widget.siteId,
+        vodId: widget.vodId,
+        flag: widget.flag,
+        episodeId: episodeId,
+      );
+
+      if (playResult.isErr) {
+        if (mounted) {
+          setState(() => _error = playResult.errorOrNull!.message);
+        }
+        return;
+      }
+
+      // VideoController 必须在 open 之前创建，否则 mpv 不会挂载视频输出，
+      // 画面永远是黑的（media_kit 用 isVideoControllerAttached 决定 vo）。
+      final videoController = mkv.VideoController(engine.player);
+
+      final mediaSource = playResult.valueOrNull!.mediaSource;
+      final openResult = await engine.open(mediaSource);
+      if (openResult.isErr) {
+        if (mounted) {
+          setState(() => _error = '打开媒体失败: ${openResult.errorOrNull!.message}');
+        }
+        return;
+      }
+
+      final controller = PlayerController(engine: engine)..attach();
+      controller.addListener(_checkStartupEvidence);
 
       if (mounted) {
-        setState(() => _controller = controller);
+        setState(() {
+          _videoController = videoController;
+          _controller = controller;
+        });
+        _armStartupWatchdog(
+          controller: controller,
+          playResult: playResult.valueOrNull!,
+        );
       }
     } on Object catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -184,8 +325,46 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
 
   @override
   void dispose() {
+    _startupTimer?.cancel();
+    _controller?.removeListener(_checkStartupEvidence);
     _controller?.dispose();
+    // 引擎持有 libmpv 实例，必须显式释放，否则离开播放页后 mpv 还在后台解码。
+    final engine = _engine;
+    if (engine != null) unawaited(engine.dispose());
     super.dispose();
+  }
+
+  void _armStartupWatchdog({
+    required PlayerController controller,
+    required PlayResult playResult,
+  }) {
+    final source = playResult.mediaSource;
+    if (source.isLive || controller.hasPlaybackEvidence) return;
+    _startupTimer = Timer(_startupTimeout, () {
+      if (!mounted || controller.hasPlaybackEvidence) return;
+      controller.reportStartupTimeout(
+        source: source.uri,
+        diagnostics: {
+          'siteId': widget.siteId,
+          'vodId': widget.vodId,
+          'flag': widget.flag,
+          'url': source.uri.toString(),
+          'viaSniffing': playResult.viaSniffing,
+          'state': controller.state.name,
+          'durationMs': controller.duration.inMilliseconds,
+          'positionMs': controller.position.inMilliseconds,
+        },
+      );
+    });
+  }
+
+  void _checkStartupEvidence() {
+    final controller = _controller;
+    if (controller == null) return;
+    if (controller.hasPlaybackEvidence || controller.fatalError != null) {
+      _startupTimer?.cancel();
+      _startupTimer = null;
+    }
   }
 
   @override
@@ -212,19 +391,217 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
     }
 
     final controller = _controller;
-    if (controller == null) {
+    final videoController = _videoController;
+    if (controller == null || videoController == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return PlayerPage(
       controller: controller,
-      videoArea: const ColoredBox(
+      videoArea: ColoredBox(
         color: Colors.black,
-        child: Center(
-          child: Text('播放区域', style: TextStyle(color: Colors.grey)),
+        child: mkv.Video(
+          controller: videoController,
+          controls: null,
         ),
       ),
       title: widget.title,
+    );
+  }
+}
+
+/// 分类详情页。
+class _CategoryDetailPage extends StatefulWidget {
+  const _CategoryDetailPage({
+    required this.siteId,
+    required this.typeId,
+    required this.title,
+  });
+
+  final int siteId;
+  final String typeId;
+  final String title;
+
+  @override
+  State<_CategoryDetailPage> createState() => _CategoryDetailPageState();
+}
+
+class _CategoryDetailPageState extends State<_CategoryDetailPage> {
+  bool _loading = true;
+  String? _error;
+  List<HomeItem> _items = [];
+  int _page = 1;
+  int _pageCount = 1;
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+    unawaited(_loadData());
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      _loadMore();
+    }
+  }
+
+  Future<void> _loadData() async {
+    final assembly = globalRouterAssembly;
+    if (assembly == null) return;
+
+    setState(() => _loading = true);
+
+    final Result<CategoryDetailResult, AppError> result = await assembly
+        .homeUseCase
+        .getCategoryDetail(
+          typeId: widget.typeId,
+          page: 1,
+          siteId: widget.siteId,
+        );
+
+    result.fold(
+      (ok) {
+        if (mounted) {
+          setState(() {
+            _items = ok.items;
+            _page = ok.page;
+            _pageCount = ok.pageCount;
+            _loading = false;
+          });
+        }
+      },
+      (err) {
+        if (mounted) {
+          setState(() {
+            _error = err.message;
+            _loading = false;
+          });
+        }
+      },
+    );
+  }
+
+  Future<void> _loadMore() async {
+    if (_loading || _page >= _pageCount) return;
+
+    final assembly = globalRouterAssembly;
+    if (assembly == null) return;
+
+    setState(() => _loading = true);
+
+    final Result<CategoryDetailResult, AppError> result = await assembly
+        .homeUseCase
+        .getCategoryDetail(
+          typeId: widget.typeId,
+          page: _page + 1,
+          siteId: widget.siteId,
+        );
+
+    result.fold(
+      (ok) {
+        if (mounted) {
+          setState(() {
+            _items.addAll(ok.items);
+            _page = ok.page;
+            _pageCount = ok.pageCount;
+            _loading = false;
+          });
+        }
+      },
+      (err) {
+        if (mounted) {
+          setState(() => _loading = false);
+        }
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.title)),
+      body: _loading && _items.isEmpty
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null && _items.isEmpty
+          ? _ErrorView(message: _error!, onRetry: _loadData)
+          : RefreshIndicator(
+              onRefresh: _loadData,
+              child: GridView.builder(
+                controller: _scrollController,
+                padding: const EdgeInsets.all(16),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  childAspectRatio: 0.6,
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 8,
+                ),
+                itemCount:
+                    _items.length + (_loading && _page < _pageCount ? 1 : 0),
+                itemBuilder: (context, index) {
+                  if (index == _items.length) {
+                    return const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: CircularProgressIndicator(),
+                      ),
+                    );
+                  }
+                  final item = _items[index];
+                  return MediaCard(
+                    title: item.vodName,
+                    coverUrl: item.vodPic,
+                    remarks: item.vodRemarks,
+                    onTap: () => context.pushNamed(
+                      'detail',
+                      pathParameters: {
+                        'siteId': '${widget.siteId}',
+                        'vodId': item.vodId,
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+    );
+  }
+}
+
+/// 错误视图。
+class _ErrorView extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _ErrorView({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: Colors.grey),
+            const SizedBox(height: 16),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.tonal(onPressed: onRetry, child: const Text('重试')),
+          ],
+        ),
+      ),
     );
   }
 }

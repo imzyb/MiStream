@@ -66,12 +66,23 @@ class _DetailPageState extends State<DetailPage> {
       (detail) => setState(() {
         _loading = false;
         _detail = detail;
+        // 默认选 m3u8 线路：share/网页线路返回的是播放页而不是媒体流，
+        // 直接喂给 mpv 打不开（需要嗅探器，见 media_sniffer）。
+        _selectedFlagIndex = _preferredFlagIndex(detail.flags);
       }),
       (err) => setState(() {
         _loading = false;
         _error = err.message;
       }),
     );
+  }
+
+  /// 优先返回名字里带 `m3u8` 的线路索引，找不到则回 0。
+  static int _preferredFlagIndex(List<String> flags) {
+    for (var i = 0; i < flags.length; i++) {
+      if (flags[i].toLowerCase().contains('m3u8')) return i;
+    }
+    return 0;
   }
 
   @override
