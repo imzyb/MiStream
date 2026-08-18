@@ -69,7 +69,7 @@
 
 > 注：`DownloadManager.startDownload()` 目前是 `Future.delayed(1s)` 假实现；`runtimes/sniffer` 只有 18 行占位。这两处是 M8/M6 出口标准的硬缺口。
 
-## 本会话完成（2026-08-18，23 个提交）
+## 本会话完成（2026-08-18，26 个提交）
 
 全部未提交工作已分批落库（此前 81+ 个文件挂在工作区）：
 
@@ -80,10 +80,13 @@
 - `feat(ui)` 首页/详情/引导/媒体库/设置/直播/下载/嗅探页、壳与主题、装配层
 - `feat(player)` 起播看门狗 + 媒体信息透出
 - `fix(rpc)` cancelOn、重定向逐跳闸门；`fix(config)` 宽松解析；`fix(storage)` configSourceUrl
+- `build(tools)` quickjs_dist：vendored QuickJS DLL + SHA256 锁，`melos run quickjs:install` 幂等安装
+- `ci(ci)` release-windows 作业：Release 包链门禁（libmpv → build → smoke 握手 → 产物留档）
+- `docs(ui)` PROGRESS.md 改出口标准驱动，ROADMAP 勾选有证据的 M3/M4/M5 条目
 
 ## 下一步（按优先级）
 
-1. QuickJS CI 二进制策略：`tools/quickjs_dist` + SHA256 锁文件（仿 `libmpv_dist`），Release 作业不再缺 DLL
-2. CI 加 `release-windows` 作业：`flutter build windows --release` + bundle 校验 --smoke
-3. M3/M5 剩余条目补证据（P50 基准断言、续播、长跑）
-4. 真实源验证需要一个能访问 CDN 的网络环境
+1. `melos run analyze` 门禁是红的：727 条 info lint（public_member_api_docs 为主）。
+   这是 M0 之后积累的既有债，需一次机械清理（补 doc 注释 + 排序 + const）
+2. M3/M5 剩余条目补证据（P50 基准断言、续播、长跑）
+3. 真实源验证需要一个能访问 CDN 的网络环境
