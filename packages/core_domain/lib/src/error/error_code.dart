@@ -196,6 +196,9 @@ final class ErrorCode {
   /// 返回值不符合 schema，`detail['errors']` 列出字段。
   static const invalidResultSchema = ErrorCode(-32105, 'INVALID_RESULT_SCHEMA');
 
+  /// Spider 返回的结果解析失败。
+  static const spiderParseFailed = ErrorCode(-32108, 'SPIDER_PARSE_FAILED');
+
   /// 正常执行但无数据。不是错误，供 UI 区分「空」与「失败」。
   static const emptyResult = ErrorCode(-32106, 'EMPTY_RESULT');
 
@@ -503,6 +506,7 @@ final class ErrorCode {
     memoryLimitExceeded,
     methodNotImplemented,
     invalidResultSchema,
+    spiderParseFailed,
     emptyResult,
     requestCancelled,
     permissionDenied,
