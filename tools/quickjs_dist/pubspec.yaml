@@ -1,0 +1,18 @@
+name: quickjs_dist
+description: >
+  QuickJS 运行时 DLL 的 vendored 分发与校验：把仓库内锁定的三个 DLL
+  （libquickjs / quickjs_wrapper / quickjs）按 SHA256 校验后装进
+  spider_js 引擎目录。解决 CI 无 DLL 导致 Release 包链失败的问题。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  crypto: ^3.0.7
+  meta: ^1.18.0
+
+dev_dependencies:
+  test: ^1.31.0

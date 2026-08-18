@@ -54,11 +54,16 @@ drpy 脚本按同步语义调它们，两者对不上。要接得先有 ADR-001 
 
 ## native 依赖
 
-`lib/src/engine/` 下的三个 DLL **不入库**（见 `.gitignore`）：
+`lib/src/engine/` 下的三个 DLL **不入库**（见 `.gitignore`），但仓库内
+`tools/quickjs_dist/vendor/` 保存着同一份文件的**受版本控制的副本**：
 
 - `libquickjs.dll` — QuickJS 本体（MinGW 构建）
 - `quickjs_wrapper.dll` — MSVC 构建的 ABI 适配层，由 `native/build.bat` 生成
 - `quickjs.dll` — `libquickjs.dll` 的别名副本
+
+CI 上引擎目录为空，靠 `melos run quickjs:install`（`tools/quickjs_dist`）
+从 vendor 副本校验 SHA256 后装回去；`spider-js:bundle` 会在打包前自动跑
+这一步，避免「缺 DLL 却在构建成功后才暴露」。
 
 wrapper 的存在理由：QuickJS 的 `JS_Eval` 等函数按值返回 16 字节的 `JSValue`
 结构体，直接从 Dart FFI 调 MinGW 产物会踩 ABI 差异，所以中间垫一层 MSVC 编译的
@@ -77,8 +82,13 @@ runtimes\spider_js\native\build.bat
 错解、拆行，然后当命令执行——之前就是这样报出莫名的
 `'xxx' is not recognized as an internal or external command`。
 
+重编 `quickjs_wrapper.dll` 后记得把新 DLL 同步到 `tools/quickjs_dist/vendor/`
+并更新 `tools/quickjs_dist/assets/quickjs.manifest.json` 的 SHA256，否则
+`quickjs:install` 会拒绝替换。
+
 DLL 不在场时引擎整体降级：`isQuickJSAvailable` 为 false，`JsRuntime.init()`
-返回 false 并在 `lastError` 给出原因，相关用例整组 skip（CI 即是此路径）。
+返回 false 并在 `lastError` 给出原因，相关用例整组 skip（未跑 quickjs:install
+的 CI 即此路径）。
 
 ## 边界约定：跨 FFI 的 JSValue 只能是字符串
 

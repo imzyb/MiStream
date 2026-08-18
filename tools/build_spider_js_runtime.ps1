@@ -19,13 +19,22 @@ $engineDir = Join-Path $runtimeRoot 'lib\src\engine'
 $entryPoint = Join-Path $runtimeRoot 'bin\spider_js_runtime.dart'
 $bundleDir = Join-Path $repoRoot 'build\spider_js'
 $checker = Join-Path $repoRoot 'tools\check_spider_js_bundle.dart'
+$quickjsDist = Join-Path $repoRoot 'tools\quickjs_dist\bin\quickjs_dist.dart'
 $runtimeExe = Join-Path $bundleDir 'spider_js_runtime.exe'
 $dllNames = @('libquickjs.dll', 'quickjs_wrapper.dll', 'quickjs.dll')
 
-foreach ($path in @($entryPoint, $checker)) {
+foreach ($path in @($entryPoint, $checker, $quickjsDist)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required Spider JS build input is missing: $path"
     }
+}
+
+# CI 上没有引擎目录里的 DLL（.gitignore 排除）。从仓库 vendored 副本
+# 校验并安装，确保「缺 DLL」永远不会在打包这一步才暴露。
+Write-Output '[spider-js] Ensuring QuickJS DLLs (vendored + SHA256)...'
+& dart run $quickjsDist install --dest $engineDir
+if ($LASTEXITCODE -ne 0) {
+    throw "quickjs_dist install failed with exit code $LASTEXITCODE"
 }
 
 foreach ($dllName in $dllNames) {

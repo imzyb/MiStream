@@ -41,6 +41,7 @@ workspace:
   - tools/commit_lint
   - tools/libmpv_dist
   - tools/mock_source_server
+  - tools/quickjs_dist
 
 dev_dependencies:
   # 上界锁在 7.8.2：melos 自 7.8.2 起要求 cli_util ^0.5.0，而 stable 基线上
@@ -126,6 +127,10 @@ melos:
     libmpv:install:
       description: 下载并校验 libmpv（锁定版本 + SHA256），装进 build/libmpv
       run: dart run tools/libmpv_dist/bin/libmpv_dist.dart install
+
+    quickjs:install:
+      description: 校验并安装 vendored QuickJS DLL 到 spider_js 引擎目录
+      run: dart run tools/quickjs_dist/bin/quickjs_dist.dart install
 
     spider-js:bundle:
       description: 编译并验证 Windows Spider JS AOT 运行时包
