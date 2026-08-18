@@ -106,10 +106,15 @@ class StdioRpcChannel {
   }
 
   /// 发送一个请求，返回异步结果。
+  ///
+  /// [cancelOn] 完成时向对端发一条 `$/cancelRequest`（docs/08 §3.4），并让本
+  /// 次调用立刻以 `REQUEST_CANCELLED` 返回，不再等对端。聚合搜索里用户改词就
+  /// 靠它——不取消的话，几十个源的在途请求会一直占着连接与内存。
   Future<Result<Object?, RemoteError>> call(
     String method, {
     Map<String, Object?> params = const {},
     Duration? timeout,
+    Future<void>? cancelOn,
   }) async {
     if (_writeQueueLength >= kWriteQueueMax) {
       return const Err(
@@ -124,6 +129,27 @@ class StdioRpcChannel {
     final completer = Completer<Result<Object?, RemoteError>>();
     _pending[id] = completer;
     _writeQueueLength++;
+
+    // 只在请求还在途时才发取消：已经回来的请求再发一条，对端只能困惑。
+    unawaited(
+      cancelOn?.then((_) {
+        if (!_pending.containsKey(id)) return;
+        _pending.remove(id);
+        unawaited(
+          notify(r'$/cancelRequest', params: <String, Object?>{'id': id}),
+        );
+        if (!completer.isCompleted) {
+          completer.complete(
+            const Err(
+              RemoteError(
+                code: ErrorCode.requestCancelled,
+                message: '请求已取消',
+              ),
+            ),
+          );
+        }
+      }),
+    );
 
     try {
       await _send(RpcRequest(id: id, method: method, params: params));
