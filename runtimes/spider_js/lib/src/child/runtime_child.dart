@@ -13,6 +13,7 @@ import 'dart:convert';
 
 import 'package:core_domain/core_domain.dart';
 import 'package:spider_js/src/child/drpy_host_functions.dart';
+import 'package:spider_js/src/child/module_loader.dart';
 import 'package:spider_js/src/child/sync_frame_io.dart';
 import 'package:spider_js/src/engine/js_runtime.dart';
 
@@ -223,6 +224,10 @@ class RuntimeChild {
         return _create(params);
       case 'spider.destroy':
         return _destroy(params);
+      case 'spider.init':
+        return _initInstance(params);
+      case 'spider.eval':
+        return _evalExpr(params);
       default:
         if (method.startsWith('spider.')) {
           return _invokeSpider(method.substring('spider.'.length), params);
@@ -255,12 +260,61 @@ class RuntimeChild {
     // 宿主函数要在脚本求值**之前**装好：drpy 源常在顶层就调 md5 之类。
     _installHostFunctions(runtime, instanceId);
 
-    if (runtime.eval(script) == null && runtime.lastFailure != null) {
-      final failure = runtime.lastFailure!;
-      runtime.dispose();
-      throw _RpcFailure(failure.code, failure.message, <String, Object?>{
-        'stack': failure.stack,
-      });
+    // 设置 base URL（用于 assets:// 协议解析）。
+    final baseUrl = params['baseUrl'] as String?;
+    if (baseUrl != null && baseUrl.isNotEmpty) {
+      runtime.setBaseUrl(baseUrl);
+    }
+
+    // --- 模块加载：解析 import → 预取依赖 → 注入全局 → 清理脚本 ---
+    final (deps, rawCleaned) = parseImports(script);
+    final cleanedScript = stripExports(rawCleaned);
+
+    if (deps.isNotEmpty) {
+      // 预取所有依赖，注入到 globalThis
+      for (final dep in deps) {
+        try {
+          final url = resolveModuleUrl(dep.specifier, baseUrl);
+          final outcome = callHost('host.fetch', <String, Object?>{
+            'instanceId': instanceId,
+            'url': url,
+            'method': 'GET',
+            'timeoutMs': 15000,
+          });
+          if (outcome.error != null) continue;
+          final result = outcome.result;
+          final body = result is Map ? (result['body'] ?? '') : '';
+          if (body is! String || body.isEmpty) continue;
+
+          final loaderCode = generateModuleLoader(
+            body,
+            dep.varName,
+            isDefault: dep.isDefault,
+            namedImports: dep.namedImports,
+          );
+          runtime.eval(loaderCode);
+        } on Object {
+          // 单个依赖加载失败不阻塞整个源
+        }
+      }
+
+      // 用清理后的脚本（import/export 已移除）
+      if (runtime.eval(cleanedScript) == null && runtime.lastFailure != null) {
+        final failure = runtime.lastFailure!;
+        runtime.dispose();
+        throw _RpcFailure(failure.code, failure.message, <String, Object?>{
+          'stack': failure.stack,
+        });
+      }
+    } else {
+      // 无 import 语句，直接执行清理后的脚本（stripExports 已剥掉 export ...）。
+      if (runtime.eval(cleanedScript) == null && runtime.lastFailure != null) {
+        final failure = runtime.lastFailure!;
+        runtime.dispose();
+        throw _RpcFailure(failure.code, failure.message, <String, Object?>{
+          'stack': failure.stack,
+        });
+      }
     }
 
     _instances[instanceId] = _Instance(runtime);
@@ -279,6 +333,47 @@ class RuntimeChild {
   Map<String, Object?> _destroy(Map<String, Object?> params) {
     _instances.remove(_requireString(params, 'instanceId'))?.runtime.dispose();
     return <String, Object?>{};
+  }
+
+  /// 调用实例的 init() 函数。
+  Map<String, Object?> _initInstance(Map<String, Object?> params) {
+    final instanceId = _requireString(params, 'instanceId');
+    final instance = _instances[instanceId];
+    if (instance == null) {
+      throw _RpcFailure(ErrorCode.invalidState, '实例不存在: $instanceId');
+    }
+    final config = params['config'];
+    final configArg = config != null ? jsonEncode(config) : 'null';
+    final raw = instance.runtime.eval(
+      'typeof init === "function" ? JSON.stringify(init($configArg)) : null',
+    );
+    if (raw == null && instance.runtime.lastFailure != null) {
+      final f = instance.runtime.lastFailure!;
+      throw _RpcFailure(f.code, f.message, <String, Object?>{'stack': f.stack});
+    }
+    if (raw == null || raw == 'null' || raw == 'undefined')
+      return <String, Object?>{};
+    try {
+      return jsonDecode(raw) as Map<String, Object?>;
+    } on FormatException {
+      return <String, Object?>{'raw': raw};
+    }
+  }
+
+  /// 在实例上下文中执行任意 JS 表达式并返回字符串结果。
+  Map<String, Object?> _evalExpr(Map<String, Object?> params) {
+    final instanceId = _requireString(params, 'instanceId');
+    final instance = _instances[instanceId];
+    if (instance == null) {
+      throw _RpcFailure(ErrorCode.invalidState, '实例不存在: $instanceId');
+    }
+    final code = _requireString(params, 'code');
+    final raw = instance.runtime.eval(code);
+    if (raw == null && instance.runtime.lastFailure != null) {
+      final f = instance.runtime.lastFailure!;
+      throw _RpcFailure(f.code, f.message, <String, Object?>{'stack': f.stack});
+    }
+    return <String, Object?>{'result': raw};
   }
 
   /// 调脚本里的一个 Spider 方法。
