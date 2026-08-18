@@ -53,6 +53,7 @@ class HostFetchConfig {
     this.allowedHosts = const [],
     this.maxResponseBytes = 10 * 1024 * 1024,
     this.defaultTimeoutMs = 15000,
+    this.maxRedirects = 5,
     bool Function(String protocol)? protocolChecker,
     bool Function(String host)? privateChecker,
   }) : isProtocolAllowed =
@@ -67,6 +68,12 @@ class HostFetchConfig {
 
   /// 默认超时（毫秒）。默认 15_000。
   final int defaultTimeoutMs;
+
+  /// 最多跟随几次重定向。
+  ///
+  /// 每一跳都要重新过一遍闸门（见 `HostApi._guard`），所以这个上限同时也是
+  /// 「最多做几次检查」——没有上限的话，一条重定向链就能把宿主拖住。
+  final int maxRedirects;
 
   /// 禁止的协议，默认只允许 http/https。
   bool Function(String protocol) isProtocolAllowed;
@@ -136,36 +143,8 @@ class HostApi {
       );
     }
 
-    // 协议白名单
-    if (!_config.isProtocolAllowed(uri.scheme)) {
-      return Err(
-        RemoteError(
-          code: ErrorCode.protocolNotAllowed,
-          message: '协议不允许: ${uri.scheme}',
-        ),
-      );
-    }
-
-    // SSRF 拦截：私网/回环地址
-    if (_config.isPrivateAddress(uri.host)) {
-      return Err(
-        RemoteError(
-          code: ErrorCode.privateAddressBlocked,
-          message: '私网地址被拦截: ${uri.host}',
-        ),
-      );
-    }
-
-    // 域名白名单
-    if (_config.allowedHosts.isNotEmpty &&
-        !_config.allowedHosts.contains(uri.host)) {
-      return Err(
-        RemoteError(
-          code: ErrorCode.hostNotAllowed,
-          message: '域名不在白名单: ${uri.host}',
-        ),
-      );
-    }
+    final blocked = _guard(uri);
+    if (blocked != null) return Err(blocked);
 
     final method = (params['method'] as String?) ?? 'GET';
     final timeoutMs =
@@ -177,24 +156,59 @@ class HostApi {
       final client = HttpClient()
         ..connectionTimeout = Duration(milliseconds: timeoutMs);
 
-      final request = await client.openUrl(method, uri);
-      request.followRedirects = followRedirects;
+      // 手动跟随重定向，**每一跳都重新过一遍闸门**。
+      //
+      // 交给 HttpClient 自动跟随的话，闸门只在初始 URL 上跑过一次：一个公网
+      // 地址 302 到 http://127.0.0.1/ 或云元数据 169.254.169.254 就能长驱直入。
+      // 这是 SSRF 最常见的绕法，ROADMAP M3 出口标准④专门点了「含重定向到私网」。
+      var current = uri;
+      var hops = 0;
+      HttpClientResponse response;
+      for (;;) {
+        final request = await client.openUrl(method, current);
+        request.followRedirects = false;
 
-      // 设置请求头
-      if (params['headers'] is Map) {
-        for (final entry in (params['headers']! as Map).entries) {
-          request.headers.set(entry.key.toString(), entry.value.toString());
+        if (params['headers'] is Map) {
+          for (final entry in (params['headers']! as Map).entries) {
+            request.headers.set(entry.key.toString(), entry.value.toString());
+          }
         }
-      }
+        if (params['body'] != null && method != 'GET') {
+          request.write(utf8.encode(params['body']! as String));
+        }
 
-      // 设置请求体
-      if (params['body'] != null && method != 'GET') {
-        request.write(utf8.encode(params['body']! as String));
-      }
+        response = await request.close().timeout(
+          Duration(milliseconds: timeoutMs),
+        );
 
-      final response = await request.close().timeout(
-        Duration(milliseconds: timeoutMs),
-      );
+        if (!followRedirects || !_isRedirect(response.statusCode)) break;
+
+        final location = response.headers.value('location');
+        if (location == null || location.isEmpty) break;
+
+        if (hops >= _config.maxRedirects) {
+          await response.drain<void>();
+          client.close(force: true);
+          return Err(
+            RemoteError(
+              code: ErrorCode.networkTimeout,
+              message: '重定向超过 ${_config.maxRedirects} 次',
+            ),
+          );
+        }
+
+        final next = current.resolve(location);
+        final hopBlocked = _guard(next);
+        if (hopBlocked != null) {
+          await response.drain<void>();
+          client.close(force: true);
+          return Err(hopBlocked);
+        }
+
+        await response.drain<void>();
+        current = next;
+        hops++;
+      }
 
       final responseHeaders = <String, String>{};
       response.headers.forEach((name, values) {
@@ -224,9 +238,7 @@ class HostApi {
           status: response.statusCode,
           headers: responseHeaders,
           body: bodyBytes,
-          finalUrl: response.redirects.isNotEmpty
-              ? response.redirects.last.location.toString()
-              : urlStr,
+          finalUrl: current.toString(),
           elapsedMs: stopwatch.elapsedMilliseconds,
         ),
       );
@@ -268,6 +280,40 @@ class HostApi {
       'locale': 'zh-CN',
     };
   }
+
+  /// 一个地址要过的三道闸门：协议白名单、私网拦截、域名白名单。
+  ///
+  /// 抽出来是因为它必须在**每一跳**上跑，而不只是初始 URL——见 [fetch] 里
+  /// 手动跟随重定向的那段。返回 null 表示放行。
+  RemoteError? _guard(Uri uri) {
+    if (!_config.isProtocolAllowed(uri.scheme)) {
+      return RemoteError(
+        code: ErrorCode.protocolNotAllowed,
+        message: '协议不允许: ${uri.scheme}',
+      );
+    }
+    if (_config.isPrivateAddress(uri.host)) {
+      return RemoteError(
+        code: ErrorCode.privateAddressBlocked,
+        message: '私网地址被拦截: ${uri.host}',
+      );
+    }
+    if (_config.allowedHosts.isNotEmpty &&
+        !_config.allowedHosts.contains(uri.host)) {
+      return RemoteError(
+        code: ErrorCode.hostNotAllowed,
+        message: '域名不在白名单: ${uri.host}',
+      );
+    }
+    return null;
+  }
+
+  static bool _isRedirect(int status) =>
+      status == 301 ||
+      status == 302 ||
+      status == 303 ||
+      status == 307 ||
+      status == 308;
 
   /// 按 RPC 方法名分发到对应处理器。
   ///
