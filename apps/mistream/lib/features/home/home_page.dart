@@ -10,8 +10,13 @@ import 'package:search_engine/search_engine.dart';
 import 'package:mistream/app/router.dart' show globalRouterAssembly;
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
 import 'package:mistream/features/home/widgets/home_section.dart';
+import 'package:mistream/features/home/widgets/media_card.dart';
 import 'package:mistream/features/common/common.dart'
-    show ResponsiveGridView, ResponsiveGridPresets, ResponsiveHorizontalList;
+    show
+        ResponsiveGridView,
+        ResponsiveGridPresets,
+        ResponsiveHorizontalList,
+        BreakpointContext;
 
 /// 全局装配实例，供首页使用。
 AppAssembly? _globalHomeAssembly;
@@ -264,18 +269,21 @@ class _HomePageState extends State<HomePage> {
                 ),
               )
             : const Text('MiStream'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.search),
-            onPressed: () => context.pushNamed('search'),
-            tooltip: '搜索',
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => context.pushNamed('settings'),
-            tooltip: '设置',
-          ),
-        ],
+        actions: context.isDesktop
+            // 桌面端搜索/设置已移到左侧导航栏，避免同一图标出现两次。
+            ? null
+            : [
+                IconButton(
+                  icon: const Icon(Icons.search),
+                  onPressed: () => context.pushNamed('search'),
+                  tooltip: '搜索',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.settings),
+                  onPressed: () => context.pushNamed('settings'),
+                  tooltip: '设置',
+                ),
+              ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -297,8 +305,10 @@ class _HomePageState extends State<HomePage> {
                           itemCount: _recommends.length,
                           itemBuilder: (context, index) {
                             final item = _recommends[index];
-                            return _RecommendCard(
-                              item: item,
+                            return MediaCard(
+                              title: item.vodName,
+                              coverUrl: item.vodPic,
+                              remarks: item.vodRemarks,
                               onTap: () => _navigateToDetail(item),
                             );
                           },
@@ -346,8 +356,10 @@ class _HomePageState extends State<HomePage> {
                         spacing: 8,
                         itemBuilder: (context, index) {
                           final item = items[index];
-                          return _RecommendCard(
-                            item: item,
+                          return MediaCard(
+                            title: item.vodName,
+                            coverUrl: item.vodPic,
+                            remarks: item.vodRemarks,
                             onTap: () => _navigateToDetail(item),
                           );
                         },
@@ -357,68 +369,6 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
             ),
-    );
-  }
-}
-
-/// 推荐卡片（横向）。
-class _RecommendCard extends StatelessWidget {
-  const _RecommendCard({required this.item, required this.onTap});
-
-  final HomeItem item;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return GestureDetector(
-      onTap: onTap,
-      child: SizedBox(
-        width: 120,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: AspectRatio(
-                aspectRatio: 0.7,
-                child: item.vodPic != null
-                    ? Image.network(
-                        item.vodPic!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _placeholder(theme),
-                      )
-                    : _placeholder(theme),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              item.vodName,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall,
-            ),
-            if (item.vodRemarks != null) ...[
-              const SizedBox(height: 2),
-              Text(
-                item.vodRemarks!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.primary,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _placeholder(ThemeData theme) {
-    return ColoredBox(
-      color: theme.colorScheme.surfaceContainerHighest,
-      child: const Center(child: Icon(Icons.movie, size: 32)),
     );
   }
 }

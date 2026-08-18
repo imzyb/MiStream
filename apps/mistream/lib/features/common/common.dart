@@ -3,6 +3,7 @@ library;
 
 export 'widgets/state_views.dart'
     show LoadingView, EmptyView, ErrorView, SuccessView, SliverStateView;
+export 'widgets/poster_image.dart' show PosterImage;
 export 'widgets/responsive.dart'
     show
         Breakpoints,

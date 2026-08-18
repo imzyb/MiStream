@@ -76,12 +76,12 @@ class _LibraryPageState extends State<LibraryPage>
     } on Object catch (e) {
       if (mounted) {
         setState(() => _loading = false);
-        _showError('加载失败: $e');
+        _showMessage('加载失败: $e');
       }
     }
   }
 
-  void _showError(String message) {
+  void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
@@ -109,28 +109,32 @@ class _LibraryPageState extends State<LibraryPage>
     if (confirmed != true) return;
 
     try {
-      final db = AppDatabase.inMemory();
-      final repositories = Repositories(db);
-      await repositories.favorites.deleteVod(favorite.siteId, favorite.vodId);
-      await db.close();
+      final assembly = globalLibraryAssembly ?? globalRouterAssembly;
+      if (assembly == null) return;
+      await assembly.repositories.favorites.deleteVod(
+        favorite.siteId,
+        favorite.vodId,
+      );
 
       setState(() => _favorites.removeWhere((f) => f.id == favorite.id));
-      _showError('已取消收藏');
+      _showMessage('已取消收藏');
     } on Object catch (e) {
-      _showError('操作失败: $e');
+      _showMessage('操作失败: $e');
     }
   }
 
   Future<void> _removeHistory(History history) async {
     try {
-      final db = AppDatabase.inMemory();
-      final repositories = Repositories(db);
-      await repositories.histories.deleteVod(history.siteId, history.vodId);
-      await db.close();
+      final assembly = globalLibraryAssembly ?? globalRouterAssembly;
+      if (assembly == null) return;
+      await assembly.repositories.histories.deleteVod(
+        history.siteId,
+        history.vodId,
+      );
 
       setState(() => _histories.removeWhere((h) => h.id == history.id));
     } on Object catch (e) {
-      _showError('删除失败: $e');
+      _showMessage('删除失败: $e');
     }
   }
 
@@ -156,15 +160,14 @@ class _LibraryPageState extends State<LibraryPage>
     if (confirmed != true) return;
 
     try {
-      final db = AppDatabase.inMemory();
-      final repositories = Repositories(db);
-      await repositories.histories.clear();
-      await db.close();
+      final assembly = globalLibraryAssembly ?? globalRouterAssembly;
+      if (assembly == null) return;
+      await assembly.repositories.histories.clear();
 
       setState(() => _histories.clear());
-      _showError('历史已清空');
+      _showMessage('历史已清空');
     } on Object catch (e) {
-      _showError('清空失败: $e');
+      _showMessage('清空失败: $e');
     }
   }
 

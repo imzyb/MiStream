@@ -3,6 +3,8 @@ library;
 
 import 'package:flutter/material.dart';
 
+import 'package:mistream/features/common/common.dart' show PosterImage;
+
 /// 资源库列表项：封面 + 标题/副标题 + 可选进度条 + 尾部操作。
 class LibraryTile extends StatelessWidget {
   const LibraryTile({
@@ -45,13 +47,7 @@ class LibraryTile extends StatelessWidget {
                 child: SizedBox(
                   width: 80,
                   height: 112,
-                  child: coverUrl != null
-                      ? Image.network(
-                          coverUrl!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _placeholder(theme),
-                        )
-                      : _placeholder(theme),
+                  child: PosterImage(url: coverUrl, iconSize: 24),
                 ),
               ),
               const SizedBox(width: 12),
@@ -96,13 +92,6 @@ class LibraryTile extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _placeholder(ThemeData theme) {
-    return ColoredBox(
-      color: theme.colorScheme.surfaceContainerHighest,
-      child: const Center(child: Icon(Icons.movie, size: 24)),
     );
   }
 }

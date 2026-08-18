@@ -5,6 +5,39 @@ import 'package:flutter/material.dart';
 import 'package:mistream/app/router.dart';
 import 'package:mistream/application/app_assembly.dart';
 
+/// 品牌种子色。
+const _seedColor = Color(0xFF4F46E5);
+
+/// 应用主题。
+///
+/// 明暗两套都从同一 [seedColor] 派生，保证组件色（卡片、导航、芯片）成套；
+/// 只覆盖需要与默认 M3 拉开差异的地方，其余交给 `ColorScheme.fromSeed`
+/// 的派生色。
+ThemeData _buildTheme(Brightness brightness) {
+  final scheme = ColorScheme.fromSeed(
+    seedColor: _seedColor,
+    brightness: brightness,
+  );
+  return ThemeData(useMaterial3: true, colorScheme: scheme).copyWith(
+    scaffoldBackgroundColor: scheme.surface,
+    appBarTheme: AppBarTheme(
+      backgroundColor: scheme.surface,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0.5,
+      centerTitle: false,
+    ),
+    cardTheme: CardThemeData(
+      elevation: 0,
+      color: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ),
+    navigationRailTheme: NavigationRailThemeData(
+      backgroundColor: scheme.surfaceContainerLow,
+    ),
+  );
+}
+
 /// 组合根下发给整个 widget 树。
 ///
 /// 取代了早先的可变全局 `globalAssembly`——全局变量让 widget 单元测试必须先
@@ -89,12 +122,8 @@ class _MiStreamAppState extends State<MiStreamApp> {
           title: 'MiStream',
           debugShowCheckedModeBanner: false,
           themeMode: widget.themeMode,
-          theme: ThemeData.light(useMaterial3: true).copyWith(
-            scaffoldBackgroundColor: const Color(0xFFF5F5F5),
-          ),
-          darkTheme: ThemeData.dark(useMaterial3: true).copyWith(
-            scaffoldBackgroundColor: const Color(0xFF0D0F14),
-          ),
+          theme: _buildTheme(Brightness.light),
+          darkTheme: _buildTheme(Brightness.dark),
           routerConfig: _router.router,
         ),
       ),

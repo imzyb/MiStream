@@ -3,7 +3,12 @@ library;
 
 import 'package:flutter/material.dart';
 
+import 'package:mistream/features/common/common.dart' show PosterImage;
+
 /// 媒体卡片：封面 + 标题 + 备注。
+///
+/// 封面统一走 [PosterImage]（占位 + 淡入），网格卡片都应使用本组件而不是
+/// 各自内联 `Image.network`。
 class MediaCard extends StatelessWidget {
   const MediaCard({
     super.key,
@@ -27,18 +32,10 @@ class MediaCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: AspectRatio(
-              aspectRatio: 0.7,
-              child: coverUrl != null
-                  ? Image.network(
-                      coverUrl!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _placeholder(theme),
-                    )
-                  : _placeholder(theme),
-            ),
+          PosterImage(
+            url: coverUrl,
+            borderRadius: 8,
+            aspectRatio: 0.7,
           ),
           const SizedBox(height: 6),
           Text(
@@ -60,13 +57,6 @@ class MediaCard extends StatelessWidget {
           ],
         ],
       ),
-    );
-  }
-
-  Widget _placeholder(ThemeData theme) {
-    return ColoredBox(
-      color: theme.colorScheme.surfaceContainerHighest,
-      child: const Center(child: Icon(Icons.movie, size: 32)),
     );
   }
 }
