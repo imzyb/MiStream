@@ -1,15 +1,22 @@
-/// 插件系统的宿主侧。
+/// Plugin system host — manifest, permissions, lifecycle, and API.
 ///
-/// **本包在 M9 落地**，当前只占位。
-///
-/// 计划中的公共 API（见 `docs/06-插件系统.md`）：
-///
-/// - `PluginManifest` 解析与全部校验规则
-/// - 权限模型与安装时确认流程
-/// - 生命周期状态机：安装 / 启用 / 激活 / 停用 / 升级 / 回滚 / 卸载
-/// - 版本目录 + 指针切换的原子升级与回滚
-/// - 完整性校验（sha256）与可选签名验证
-///
-/// `manifestVersion` 独立于 `appVersion` 演进，兼容规则见
-/// `docs/compatibility.md` §3。沙箱逃逸测试是 CI 门禁，见 `docs/10` §4。
+/// Provides the plugin framework for MiStream's extensible architecture.
+/// Plugins are identified by [PluginManifest.id] and managed through
+/// [PluginManager] which handles install/enable/disable/uninstall lifecycle.
 library;
+
+export 'src/plugin_manifest.dart'
+    show PluginManifest, PluginType, PluginPermission;
+export 'src/plugin_api.dart'
+    show PluginApi, SourcePluginApi, SnifferPluginApi, PluginState;
+export 'src/plugin_manager.dart' show PluginManager, PluginEvent;
+export 'src/permission_checker.dart' show PermissionChecker;
+export 'src/plugin_loader.dart'
+    show PluginLoader, LoadedPlugin, IntegrityResult;
+export 'src/plugin_sandbox.dart'
+    show
+        PluginSandbox,
+        PluginMessage,
+        PluginRequest,
+        PluginResponse,
+        PluginNotification;
