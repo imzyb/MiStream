@@ -312,6 +312,72 @@ void main() {
       expect(error['message'], contains('炸了'));
       expect((error['data']! as Map<String, Object?>)['stack'], '  at search');
     });
+
+    test('home 合并 homeVod，一次返回 {class, list}', () {
+      const merged =
+          '{"class":[{"type_id":"1","type_name":"电影"}],'
+          '"list":[{"vod_id":"1","vod_name":"片"}]}';
+      final fake = _FakeRuntime(
+        evalHook: (code) => code.contains('typeof home') ? merged : 'null',
+      );
+      final pipe = _Pipe([
+        _req(1, 'spider.create', <String, Object?>{
+          'instanceId': 'site:1',
+          'script': 'var a=1',
+        }),
+        _req(2, 'spider.home', <String, Object?>{'instanceId': 'site:1'}),
+      ]);
+      RuntimeChild(codec: pipe.codec, createRuntime: (_) => fake).run();
+
+      // 宿主约定：home 一次调用返回 {class, list}（drpy 把两者拆在
+      // home() 和 homeVod() 里）。
+      expect(
+        fake.evaluated.any((c) => c.contains('JSON.parse(homeVod')),
+        isTrue,
+      );
+      final result = pipe.written.last['result']! as Map<String, Object?>;
+      expect(result, containsPair('class', isNotEmpty));
+      expect(result, containsPair('list', isNotEmpty));
+    });
+
+    test('spider.detail 带两个参数路由到 category, 一个参数路由到 detail', () {
+      final fake = _FakeRuntime(
+        evalHook: (code) {
+          if (code.contains('JSON.stringify(category')) {
+            return '{"list":[]}';
+          }
+          return 'null';
+        },
+      );
+      final pipe = _Pipe([
+        _req(1, 'spider.create', <String, Object?>{
+          'instanceId': 'site:1',
+          'script': 'var a=1',
+        }),
+        // [tid, page] 是分类列表 → category(tid, pg)
+        _req(2, 'spider.detail', <String, Object?>{
+          'instanceId': 'site:1',
+          'args': <Object?>['1', 1],
+        }),
+        // [ids] 是视频详情 → detail(ids)
+        _req(3, 'spider.detail', <String, Object?>{
+          'instanceId': 'site:1',
+          'args': <Object?>['1001'],
+        }),
+      ]);
+      RuntimeChild(codec: pipe.codec, createRuntime: (_) => fake).run();
+
+      expect(
+        fake.evaluated.any((c) => c.contains('category("1", 1)')),
+        isTrue,
+        reason: '两参 detail 应路由到 category：$fake.evaluated',
+      );
+      expect(
+        fake.evaluated.any((c) => c.contains('detail("1001")')),
+        isTrue,
+        reason: '单参 detail 应路由到 detail：$fake.evaluated',
+      );
+    });
   });
 
   group('宿主回调的重入与取消', () {

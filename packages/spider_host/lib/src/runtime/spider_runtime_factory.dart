@@ -341,13 +341,18 @@ class SpiderRuntimeFactory {
     // baseUrl：用于模块解析（assets:// 相对路径基于此）
     final baseUrl = scriptUrl;
 
+    // drpy2 的 config（ext）也可能是相对路径（如 `./js/360影视.js`）：
+    // 脚本 init() 拿到 http 开头才会去 fetch，所以相对路径要在这里解析成
+    // 完整 URL 再传下去。
+    final configUrl = resolveExtUrl(ext, sourceUrl);
+
     // 创建实例
     final result = await host.call(
       'spider.create',
       params: {
         'instanceId': instanceId,
         'script': script,
-        'config': ext,
+        'config': configUrl,
         'baseUrl': baseUrl,
       },
     );
@@ -369,6 +374,25 @@ class SpiderRuntimeFactory {
     final baseUri = Uri.parse(sourceUrl);
     final resolved = baseUri.resolve(api);
     return resolved.toString();
+  }
+
+  /// 解析 drpy2 的 config（ext）：相对路径解析为完整 URL，其余原样返回。
+  ///
+  /// 只有看起来像相对路径（`./`、`../`、`/` 开头或裸文件名）才解析；
+  /// 绝对 URL 和 inline 脚本（`var rule = {...}` 之类）保持原样，避免把
+  /// 代码当路径拼坏。
+  static String? resolveExtUrl(String? ext, String? sourceUrl) {
+    if (ext == null || ext.isEmpty) return ext;
+    if (ext.startsWith('http://') || ext.startsWith('https://')) return ext;
+    if (sourceUrl == null || sourceUrl.isEmpty) return ext;
+    final looksRelative =
+        ext.startsWith('./') ||
+        ext.startsWith('../') ||
+        ext.startsWith('/') ||
+        (!ext.contains(' ') && !ext.contains('{') && !ext.contains('\n'));
+    if (!looksRelative) return ext;
+    final baseUri = Uri.parse(sourceUrl);
+    return baseUri.resolve(ext).toString();
   }
 
   /// 加载脚本内容。

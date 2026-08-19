@@ -129,11 +129,11 @@ String stripExports(String code) {
         (m) => 'var __drpy_default__ = ',
       )
       .replaceAllMapped(
-        RegExp(r'''\bexport\s+\{[^}]*\};?'''),
+        RegExp(r'''\bexport\s*\{[^}]*\};?'''),
         (m) => '',
       )
       .replaceAllMapped(
-        RegExp(r'''\bexport\s+(const|let|var|function)\s+'''),
+        RegExp(r'''\bexport\s+(const|let|var|function|class)\s+'''),
         (m) => '${m.group(1)} ',
       );
 }
@@ -169,6 +169,17 @@ String resolveModuleUrl(String specifier, String? baseUrl) {
   return specifier;
 }
 
+/// 判定一段代码是否为 ES module（含 export 语句）。
+///
+/// 真 ES module 需要把 export 转成赋值并注入绑定；纯脚本/UMD 只需**全局求值**
+/// ——脚本自己会把全局名（`CryptoJS`、`pako`…）挂到 globalThis 上。若把后者也
+/// 包进函数作用域，顶层 `var`/`this` 全被关在闭包里，外部引用全局名会拿不到。
+bool _looksLikeEsModule(String code) {
+  return RegExp(
+    r'\bexport\s*[({=]|\bexport\s+(?:default|const|let|var|function|class|async)\b',
+  ).hasMatch(code);
+}
+
 /// 生成 JS 代码：获取模块的 exports 并设置全局变量。
 ///
 /// [code] 是模块源码（已从网络获取）。
@@ -181,19 +192,25 @@ String generateModuleLoader(
   required bool isDefault,
   required List<(String, String)> namedImports,
 }) {
+  // 纯脚本/UMD：不加包装，直接全局求值，让脚本把自己的全局名挂上 globalThis。
+  if (!_looksLikeEsModule(code)) {
+    return code;
+  }
+
   final buf = StringBuffer();
   buf.writeln('(function() {');
   buf.writeln('  var __m__ = {};');
   buf.writeln('  var __exports__ = {};');
 
-  // 转换 export 语句为 __m__ 赋值
+  // 转换 export 语句为 __m__ 赋值。正则全部允许无空白（minified 写法）：
+  //   export default{...}  /  export{a as b,c as d}  /  export const a=1
   var transformed = code
       .replaceAllMapped(
-        RegExp(r'export\s+default\s+'),
+        RegExp(r'export\s+default\s*'),
         (m) => '__m__.default = ',
       )
       .replaceAllMapped(
-        RegExp(r'export\s+\{([^}]+)\}'),
+        RegExp(r'export\s*\{([^}]+)\}'),
         (m) {
           final names = m.group(1)!.split(',');
           return names
@@ -207,7 +224,15 @@ String generateModuleLoader(
         },
       )
       .replaceAllMapped(
-        RegExp(r'export\s+(?:const|let|var|function)\s+'),
+        RegExp(r'export\s+function\s+([A-Za-z_$][\w$]*)'),
+        (m) => '__m__.${m.group(1)} = function ',
+      )
+      .replaceAllMapped(
+        RegExp(r'export\s+class\s+([A-Za-z_$][\w$]*)'),
+        (m) => '__m__.${m.group(1)} = class ',
+      )
+      .replaceAllMapped(
+        RegExp(r'export\s+(?:const|let|var)\s+'),
         (m) => '__m__.',
       );
 

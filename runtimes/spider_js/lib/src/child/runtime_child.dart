@@ -271,7 +271,9 @@ class RuntimeChild {
     final cleanedScript = stripExports(rawCleaned);
 
     if (deps.isNotEmpty) {
-      // 预取所有依赖，注入到 globalThis
+      // 预取所有依赖，注入到 globalThis。任一依赖失败都要**明确报错**：
+      // 静默跳过会让主脚本带着缺失的全局跑起来，报出「cheerio is not
+      // defined」这种查不出根因的错。
       for (final dep in deps) {
         try {
           final url = resolveModuleUrl(dep.specifier, baseUrl);
@@ -281,10 +283,14 @@ class RuntimeChild {
             'method': 'GET',
             'timeoutMs': 15000,
           });
-          if (outcome.error != null) continue;
+          if (outcome.error != null) {
+            throw StateError('拉取失败: ${outcome.error}');
+          }
           final result = outcome.result;
           final body = result is Map ? (result['body'] ?? '') : '';
-          if (body is! String || body.isEmpty) continue;
+          if (body is! String || body.isEmpty) {
+            throw StateError('内容为空');
+          }
 
           final loaderCode = generateModuleLoader(
             body,
@@ -293,8 +299,15 @@ class RuntimeChild {
             namedImports: dep.namedImports,
           );
           runtime.eval(loaderCode);
-        } on Object {
-          // 单个依赖加载失败不阻塞整个源
+          if (runtime.lastFailure != null) {
+            throw StateError(runtime.lastFailure.toString());
+          }
+        } on Object catch (e) {
+          runtime.dispose();
+          throw _RpcFailure(
+            ErrorCode.scriptLoadFailed,
+            '依赖 ${dep.specifier} 加载失败: $e',
+          );
         }
       }
 
@@ -387,13 +400,15 @@ class RuntimeChild {
       throw _RpcFailure(ErrorCode.invalidState, '实例不存在: $instanceId');
     }
 
-    final args = (params['args'] as List<Object?>? ?? const <Object?>[])
-        .map(jsonEncode)
-        .join(', ');
-    final expr =
-        'typeof $name === "function" '
-        '? JSON.stringify($name($args)) '
-        ': null';
+    final argValues = params['args'] as List<Object?>? ?? const <Object?>[];
+    final args = argValues.map(jsonEncode).join(', ');
+    // 宿主把分类详情和视频详情都挂在 `spider.detail` 上，用参数个数区分：
+    // `[tid, page]` 是分类列表，`[ids]` 是视频详情。drpy 脚本里分别对应
+    // `category(tid, pg)` 和 `detail(ids)`，必须路由到正确的函数。
+    final effectiveName = name == 'detail' && argValues.length >= 2
+        ? 'category'
+        : name;
+    final expr = _spiderCallExpr(effectiveName, args);
 
     final raw = instance.runtime.eval(expr);
     final failure = instance.runtime.lastFailure;
@@ -410,6 +425,25 @@ class RuntimeChild {
       // 脚本返回了不可序列化的东西。原文透出去，比吞掉有用。
       return raw;
     }
+  }
+
+  /// 生成调用脚本顶层函数的表达式。
+  ///
+  /// drpy 系脚本把首页拆成 `home()`（分类）和 `homeVod()`（推荐列表）两个
+  /// 函数；宿主约定 `spider.home` 一次调用返回 `{class, list}`，所以这里把
+  /// 两者合并。非 drpy 脚本（无 `homeVod`）退化为只调 `home()`。
+  static String _spiderCallExpr(String name, String args) {
+    if (name == 'home') {
+      return 'typeof home === "function" '
+          '? JSON.stringify((typeof homeVod === "function" '
+          '  ? Object.assign({}, JSON.parse(home($args) || "{}"), '
+          '                    JSON.parse(homeVod($args) || "{}")) '
+          '  : JSON.parse(home($args) || "{}"))) '
+          ': null';
+    }
+    return 'typeof $name === "function" '
+        '? JSON.stringify($name($args)) '
+        ': null';
   }
 
   /// 探测脚本实现了哪些 Spider 方法，供宿主按能力位派发。

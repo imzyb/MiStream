@@ -207,9 +207,9 @@ void main() {
       expect(js, contains('globalThis.bar'));
     });
 
-    test('generates bare import loader', () {
+    test('generates bare import loader for ES module', () {
       final js = generateModuleLoader(
-        'var x = 1;',
+        'export const foo = 1;',
         '_bare_side',
         isDefault: false,
         namedImports: [],
@@ -217,9 +217,21 @@ void main() {
       expect(js, contains('globalThis._bare_side'));
     });
 
-    test('wraps code in try-catch', () {
+    test('plain script is returned unwrapped (global eval)', () {
+      // UMD/纯脚本（无 export）不需要模块包装：脚本自己会把全局名挂到
+      // globalThis，包进函数作用域反而把顶层 var/this 关死。
       final js = generateModuleLoader(
         'var x = 1;',
+        '_bare_side',
+        isDefault: false,
+        namedImports: [],
+      );
+      expect(js, 'var x = 1;');
+    });
+
+    test('wraps code in try-catch', () {
+      final js = generateModuleLoader(
+        'export default {a: 1};',
         'm',
         isDefault: true,
         namedImports: [],

@@ -25,23 +25,45 @@ void installDrpyHostFunctions(
     ..register('req', (args) => _req(child, instanceId, args))
     ..register(
       'local.get',
-      (args) => _storage(child, 'get', instanceId, <String, Object?>{
-        'key': _str(args, 0),
-      })?['value'],
+      (args) => _storageGet(child, instanceId, _str(args, 0)),
     )
     ..register('local.set', (args) {
-      _storage(child, 'set', instanceId, <String, Object?>{
+      _storageWrite(child, 'set', instanceId, <String, Object?>{
         'key': _str(args, 0),
         'value': _str(args, 1),
       });
       return null;
     })
     ..register('local.delete', (args) {
-      _storage(child, 'delete', instanceId, <String, Object?>{
+      _storageWrite(child, 'delete', instanceId, <String, Object?>{
         'key': _str(args, 0),
       });
       return null;
     });
+}
+
+/// `local.get` 按「可无值」处理：存储未配置或读取失败一律返回 null。
+///
+/// drpy 脚本的读法都是 `local.get(key) || 默认值`（cookie 一类的可选状态），
+/// 存储没接上时抛异常会让整个源挂掉，而不是优雅降级。
+Object? _storageGet(RuntimeChild child, String instanceId, String key) {
+  try {
+    return _storage(child, 'get', instanceId, <String, Object?>{
+      'key': key,
+    })?['value'];
+  } on Object {
+    return null;
+  }
+}
+
+/// `local.set` / `local.delete`：写失败要让脚本看见（配额、只读等）。
+void _storageWrite(
+  RuntimeChild child,
+  String op,
+  String instanceId,
+  Map<String, Object?> params,
+) {
+  _storage(child, op, instanceId, params);
 }
 
 /// `req(url, options)` → `host.fetch`，返回 drpy 形态的响应。
