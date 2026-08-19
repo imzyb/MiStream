@@ -4,6 +4,7 @@
 /// type=3 (Spider/JS) → SpiderHost (子进程)
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:core_domain/core_domain.dart';
@@ -424,7 +425,9 @@ class SpiderRuntimeFactory {
         }
         return await response
             .transform(
-              const SystemEncoding().decoder,
+              // 脚本必须是 UTF-8：drpy2 等含中文/多字节字符，用系统编码
+              // （ANSI/codepage）解码会破坏字节，导致 QuickJS 解析报错。
+              utf8.decoder,
             )
             .join();
       } finally {
