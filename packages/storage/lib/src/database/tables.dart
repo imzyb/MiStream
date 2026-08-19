@@ -18,6 +18,8 @@ class ConfigSources extends Table {
   TextColumn get url => text().nullable()();
   TextColumn get localPath => text().named('local_path').nullable()();
   TextColumn get rawHash => text().named('raw_hash')();
+  TextColumn get spider => text().nullable()();
+  TextColumn get spiderMd5 => text().named('spider_md5').nullable()();
   TextColumn get format => text()();
   BoolColumn get autoUpdate =>
       boolean().named('auto_update').withDefault(const Constant(false))();

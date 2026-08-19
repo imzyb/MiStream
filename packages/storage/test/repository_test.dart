@@ -230,5 +230,36 @@ void main() {
       expect(byConfig, hasLength(1));
       expect(byConfig.single.name, '站点A改');
     });
+
+    test('configSourceSpider 返回站点所属配置源的 spider jar URL', () async {
+      final configId = await repos.configSources.add(
+        ConfigSourcesCompanion.insert(
+          name: '带jar源',
+          rawHash: 'abc',
+          format: 'plain',
+          spider: const Value('https://example.com/fan.jar'),
+          spiderMd5: const Value('d41d8cd98f00b204e9800998ecf8427e'),
+          createdAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+        ),
+      );
+      final site = await repos.sites.upsert(
+        SitesCompanion.insert(
+          configId: Value(configId),
+          siteKey: 'csp_fan',
+          name: '蜘蛛源',
+          typeCode: 3,
+          runtime: 'jvm',
+          api: 'csp_Fan',
+          createdAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+        ),
+      );
+      expect(
+        await repos.sites.configSourceSpider(site.id),
+        'https://example.com/fan.jar',
+      );
+      expect(await repos.sites.configSourceUrl(site.id), isNull);
+    });
   });
 }

@@ -14,7 +14,7 @@ part 'database.g.dart';
 /// 当前 schema 版本。独立于 `appVersion` 演进，每次改表必须 +1 并写迁移。
 ///
 /// `docs/07-数据库设计.md` §4
-const int kCurrentSchemaVersion = 2;
+const int kCurrentSchemaVersion = 3;
 
 /// MiStream 本地数据库。
 ///
@@ -114,7 +114,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -126,6 +126,13 @@ class AppDatabase extends _$AppDatabase {
       if (from < 2) {
         // v1 → v2：search_history 增加 source 列（来源：local/plugin/...）。
         await m.addColumn(searchHistories, searchHistories.source);
+      }
+
+      if (from < 3) {
+        // v2 → v3：config_source 增加 spider / spider_md5 列，持久化
+        // TVBox 配置根级 `spider`（远程蜘蛛 jar URL）与其 MD5。
+        await m.addColumn(configSources, configSources.spider);
+        await m.addColumn(configSources, configSources.spiderMd5);
       }
 
       if (debugFailMigrations) {

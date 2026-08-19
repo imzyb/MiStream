@@ -47,6 +47,8 @@ class ConfigInstallService {
         url: Value(sourceUrl),
         rawHash: '',
         format: result.format,
+        spider: Value(result.config.spider),
+        spiderMd5: Value(result.config.spiderMd5),
         createdAt: now,
         updatedAt: now,
       ),
