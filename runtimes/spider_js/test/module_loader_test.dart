@@ -124,15 +124,17 @@ void main() {
   });
 
   group('resolveModuleUrl', () {
-    test('resolves assets:// against baseUrl', () {
+    test('resolves assets:// against configBaseUrl when provided', () {
       final result = resolveModuleUrl(
-        'assets://lib/foo.js',
-        'https://example.com/api.php/provide/vod/',
+        'assets://js/lib/cheerio.min.js',
+        'https://example.com/lib/drpy2.min.js',
+        'https://example.com/dianshi.json',
       );
-      expect(result, 'https://example.com/api.php/provide/vod/lib/foo.js');
+      // assets 基于配置根目录解析，不是脚本(lib/)目录
+      expect(result, 'https://example.com/js/lib/cheerio.min.js');
     });
 
-    test('resolves assets:// with baseUrl ending in filename', () {
+    test('resolves assets:// falls back to baseUrl without configBaseUrl', () {
       final result = resolveModuleUrl(
         'assets://lib/foo.js',
         'https://example.com/path/config.json',

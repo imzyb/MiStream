@@ -341,6 +341,10 @@ class SpiderRuntimeFactory {
     // baseUrl：用于模块解析（assets:// 相对路径基于此）
     final baseUrl = scriptUrl;
 
+    // 配置源根目录：`assets://js/lib/xx.js` 从配置根解析（drpy2.min.js 常放在
+    // lib/ 下，而 assets 指向配置根，二者基准不同）。
+    final configBaseUrl = resolveConfigBaseUrl(sourceUrl);
+
     // drpy2 的 config（ext）也可能是相对路径（如 `./js/360影视.js`）：
     // 脚本 init() 拿到 http 开头才会去 fetch，所以相对路径要在这里解析成
     // 完整 URL 再传下去。
@@ -354,6 +358,7 @@ class SpiderRuntimeFactory {
         'script': script,
         'config': configUrl,
         'baseUrl': baseUrl,
+        'configBaseUrl': configBaseUrl,
       },
     );
 
@@ -375,6 +380,12 @@ class SpiderRuntimeFactory {
     final resolved = baseUri.resolve(api);
     return resolved.toString();
   }
+
+  /// 解析配置源的基础 URL。
+  ///
+  /// 返回 sourceUrl 用于 `assets://` 协议解析（资源脚本基于配置根目录）。
+  /// sourceUrl 为空时返回空字符串，让下游原样回退。
+  static String resolveConfigBaseUrl(String? sourceUrl) => sourceUrl ?? '';
 
   /// 解析 drpy2 的 config（ext）：相对路径解析为完整 URL，其余原样返回。
   ///

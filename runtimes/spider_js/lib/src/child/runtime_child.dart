@@ -276,7 +276,11 @@ class RuntimeChild {
       // defined」这种查不出根因的错。
       for (final dep in deps) {
         try {
-          final url = resolveModuleUrl(dep.specifier, baseUrl);
+          final url = resolveModuleUrl(
+            dep.specifier,
+            baseUrl,
+            params['configBaseUrl'] as String?,
+          );
           final outcome = callHost('host.fetch', <String, Object?>{
             'instanceId': instanceId,
             'url': url,

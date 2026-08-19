@@ -140,14 +140,24 @@ String stripExports(String code) {
 
 /// 解析模块 URL：把 assets:// 和相对路径转成绝对 URL。
 ///
-/// [baseUrl] 是源配置的 API 地址（如 `https://example.com/api.php`）。
-String resolveModuleUrl(String specifier, String? baseUrl) {
+/// [baseUrl] 是脚本的完整 URL（如 `https://example.com/lib/drpy2.min.js`），
+/// 用于解析相对路径（`./node-rsa.js` → `https://example.com/lib/node-rsa.js`）。
+/// [configBaseUrl] 是配置源的基础 URL（如 `https://example.com/`），
+/// 用于解析 `assets://` 协议（`assets://js/lib/cheerio.min.js` → `https://example.com/js/lib/cheerio.min.js`）。
+/// 两者不同是因为 drpy2.min.js 通常放在 `lib/` 下，而 assets 是对应配置根目录的。
+String resolveModuleUrl(
+  String specifier,
+  String? baseUrl, [
+  String? configBaseUrl,
+]) {
   if (specifier.startsWith('assets://')) {
     final path = specifier.substring('assets://'.length);
-    if (baseUrl != null && baseUrl.isNotEmpty) {
-      // baseUrl: https://example.com/api.php → 去掉文件名
-      final lastSlash = baseUrl.lastIndexOf('/');
-      final base = lastSlash >= 0 ? baseUrl.substring(0, lastSlash) : baseUrl;
+    final effectiveBase = configBaseUrl ?? baseUrl;
+    if (effectiveBase != null && effectiveBase.isNotEmpty) {
+      final lastSlash = effectiveBase.lastIndexOf('/');
+      final base = lastSlash >= 0
+          ? effectiveBase.substring(0, lastSlash)
+          : effectiveBase;
       return '$base/$path';
     }
     return specifier;
