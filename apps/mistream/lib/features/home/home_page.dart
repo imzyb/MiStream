@@ -54,12 +54,14 @@ class _HomePageState extends State<HomePage> {
     unawaited(_loadData());
   }
 
-  Future<void> _loadData() async {
+  Future<void> _loadData({bool forceRefresh = false}) async {
     final assembly = globalHomeAssembly ?? globalRouterAssembly;
     if (assembly == null) {
       if (mounted) setState(() => _loading = false);
       return;
     }
+
+    if (forceRefresh) assembly.homeUseCase.clearCache();
 
     try {
       // 片源选择器列出全部启用站点；能否实际取数由 HomeUseCase 逐个试，
@@ -320,9 +322,12 @@ class _HomePageState extends State<HomePage> {
       body: _loading
           ? const _HomeSkeleton()
           : _error != null
-          ? ErrorView(message: _error!, onRetry: _loadData)
+          ? ErrorView(
+              message: _error!,
+              onRetry: () => _loadData(forceRefresh: true),
+            )
           : RefreshIndicator(
-              onRefresh: _loadData,
+              onRefresh: () => _loadData(forceRefresh: true),
               child: CustomScrollView(
                 slivers: [
                   // 空数据引导：片源不可用或配置里没有内容时给用户去处。

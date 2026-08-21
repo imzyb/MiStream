@@ -97,15 +97,27 @@ class SourceOption {
 /// 首页编排器。
 class HomeUseCase {
   /// 构造首页编排器。
-  HomeUseCase(this.sites, {this.runtimeFactory});
+  HomeUseCase(
+    this.sites, {
+    this.runtimeFactory,
+    this.cacheTtl = const Duration(minutes: 5),
+  });
   final SiteRepository sites;
   final SpiderRuntimeFactory? runtimeFactory;
+
+  /// 首页缓存 TTL，测试可注入短 TTL。
+  final Duration cacheTtl;
+
+  final Map<String, _CachedHome> _homeCache = {};
 
   /// 最近一次成功请求的站点（用于详情页导航）。
   Site? workingSite;
 
   /// 最近一次成功取数的站点 id；还没成功过时为 `null`。
   int? get workingSiteId => workingSite?.id;
+
+  /// 清空首页缓存（配置变更或用户手动刷新时调用）。
+  void clearCache() => _homeCache.clear();
 
   /// 列出全部启用站点，供 UI 做片源选择。
   Future<List<SourceOption>> listSources() async {
@@ -257,6 +269,14 @@ class HomeUseCase {
   /// 同时包含推荐和分类。一次调用比 `getHome()` + `getCategories()` 更快且
   /// 保证使用同一个站点。
   Future<Result<HomeData, AppError>> getHomeData({int? siteId}) async {
+    final cacheKey = siteId != null ? 'site:$siteId' : 'auto';
+    final cached = _homeCache[cacheKey];
+    if (cached != null &&
+        DateTime.now().difference(cached.at) < cacheTtl &&
+        cached.data.categories.isNotEmpty) {
+      workingSite = cached.site;
+      return Ok(cached.data);
+    }
     final siteList = await _getEnabledSites(siteId: siteId);
     if (siteList.isEmpty) {
       return const Err(
@@ -273,12 +293,15 @@ class HomeUseCase {
         final categories = _parseCategories(ok.body);
         if (recommends.isErr) return Err(recommends.errorOrNull!);
         if (categories.isErr) return Err(categories.errorOrNull!);
-        return Ok(
-          HomeData(
-            recommends: recommends.valueOrNull!,
-            categories: categories.valueOrNull!,
-          ),
+        final data = HomeData(
+          recommends: recommends.valueOrNull!,
+          categories: categories.valueOrNull!,
         );
+        final site = workingSite;
+        if (site != null) {
+          _homeCache[cacheKey] = _CachedHome(data, site, DateTime.now());
+        }
+        return Ok(data);
       },
       Err.new,
     );
@@ -479,4 +502,11 @@ class HomeUseCase {
     }
     return url;
   }
+}
+
+class _CachedHome {
+  const _CachedHome(this.data, this.site, this.at);
+  final HomeData data;
+  final Site site;
+  final DateTime at;
 }

@@ -209,4 +209,63 @@ void main() {
     expect(useCase.workingSiteId, selected.id);
     expect(runtime.homeCalls, 1);
   });
+
+  test('getHomeData 第二次命中缓存不再建运行时', () async {
+    final db = AppDatabase.inMemory();
+    addTearDown(db.close);
+    final configId = await db
+        .into(db.configSources)
+        .insert(
+          ConfigSourcesCompanion.insert(
+            name: 'cache config',
+            rawHash: 'hash-cache',
+            format: 'json',
+            createdAt: DateTime(2026),
+            updatedAt: DateTime(2026),
+          ),
+        );
+    final sites = SiteRepository(db);
+    await sites.upsert(
+      SitesCompanion.insert(
+        configId: Value(configId),
+        siteKey: 'cache-mock',
+        name: 'CacheMock',
+        typeCode: 1,
+        runtime: 'http',
+        api: 'https://cache.example/api',
+        createdAt: DateTime(2026),
+        updatedAt: DateTime(2026),
+      ),
+    );
+    final runtime = _HomeRuntime(
+      jsonEncode({
+        'class': [
+          {'type_id': '1', 'type_name': '电影'},
+        ],
+        'list': [
+          {'vod_id': '1', 'vod_name': '缓存影片'},
+        ],
+      }),
+    );
+    final useCase = HomeUseCase(
+      sites,
+      runtimeFactory: _HomeFactory(runtime),
+      cacheTtl: const Duration(minutes: 5),
+    );
+
+    final r1 = await useCase.getHomeData();
+    expect(r1.isOk, isTrue);
+    expect(runtime.homeCalls, 1);
+
+    final r2 = await useCase.getHomeData();
+    expect(r2.isOk, isTrue);
+    // 命中缓存，不再调 runtime
+    expect(runtime.homeCalls, 1);
+    expect(r2.valueOrNull!.recommends.single.vodName, '缓存影片');
+
+    useCase.clearCache();
+    final r3 = await useCase.getHomeData();
+    expect(r3.isOk, isTrue);
+    expect(runtime.homeCalls, 2);
+  });
 }
