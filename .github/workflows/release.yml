@@ -21,6 +21,7 @@ jobs:
           cache: true
       - run: dart pub global activate melos
       - run: melos bootstrap
+      - run: melos run generate
       - name: 门禁
         run: melos run check:arch && melos run analyze
       - name: 安装 libmpv/quickjs/jvm

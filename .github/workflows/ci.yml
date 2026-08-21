@@ -26,6 +26,8 @@ jobs:
           cache: true
       - run: dart pub global activate melos
       - run: melos bootstrap
+      - name: 生成 drift 产物（database.g.dart 等）
+        run: melos run generate
       - name: 格式一致性
         run: melos run format:check
       - name: 零告警才算通过
@@ -81,6 +83,7 @@ jobs:
           cache: true
       - run: dart pub global activate melos
       - run: melos bootstrap
+      - run: melos run generate
       - run: melos run test
 
   build-check:
@@ -110,6 +113,7 @@ jobs:
           sudo apt-get install -y ninja-build libgtk-3-dev
       - run: dart pub global activate melos
       - run: melos bootstrap
+      - run: melos run generate
       - name: 构建
         working-directory: apps/mistream
         run: flutter build ${{ matrix.target }} --debug
@@ -126,6 +130,7 @@ jobs:
           cache: true
       - run: dart pub global activate melos
       - run: melos bootstrap
+      - run: melos run generate
       - name: 安装 libmpv（Release 播放内核）
         run: melos run libmpv:install
       - name: 构建 Release（CMake 内自动跑 quickjs:install + spider-js:bundle）
