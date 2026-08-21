@@ -5,13 +5,14 @@ import 'package:flutter/material.dart';
 
 /// 断点常量（符合 Material Design 规范）。
 class Breakpoints {
+  // 大屏
+
+  const Breakpoints._();
   static const double xs = 600; // 手机
   static const double sm = 900; // 平板
   static const double md = 1200; // 平板横屏 / 小笔记本
   static const double lg = 1800; // 桌面
-  static const double xl = 2400; // 大屏
-
-  const Breakpoints._();
+  static const double xl = 2400;
 }
 
 /// 当前断点枚举。
@@ -28,12 +29,6 @@ BreakpointType getBreakpoint(double width) {
 
 /// 响应式网格列数配置。
 class ResponsiveGridConfig {
-  final int xsColumns;
-  final int smColumns;
-  final int mdColumns;
-  final int lgColumns;
-  final int xlColumns;
-
   const ResponsiveGridConfig({
     this.xsColumns = 1,
     this.smColumns = 2,
@@ -41,6 +36,11 @@ class ResponsiveGridConfig {
     this.lgColumns = 4,
     this.xlColumns = 5,
   });
+  final int xsColumns;
+  final int smColumns;
+  final int mdColumns;
+  final int lgColumns;
+  final int xlColumns;
 
   int columnsFor(BreakpointType bp) {
     return switch (bp) {
@@ -80,7 +80,6 @@ class ResponsiveGridPresets {
   );
 
   static const ResponsiveGridConfig libraryList = ResponsiveGridConfig(
-    xsColumns: 1,
     smColumns: 1,
     mdColumns: 1,
     lgColumns: 1,
@@ -274,7 +273,7 @@ class ResponsiveScaffold extends StatelessWidget {
             appBar: appBar,
             body: Row(
               children: [
-                SizedBox(width: 280, child: sidebar!),
+                SizedBox(width: 280, child: sidebar),
                 const VerticalDivider(width: 1),
                 Expanded(child: body),
               ],
@@ -286,7 +285,7 @@ class ResponsiveScaffold extends StatelessWidget {
 
         return Scaffold(
           appBar: appBar,
-          drawer: sidebar != null ? Drawer(child: sidebar!) : null,
+          drawer: sidebar != null ? Drawer(child: sidebar) : null,
           body: body,
           bottomNavigationBar: bottomNavigationBar,
           floatingActionButton: floatingActionButton,

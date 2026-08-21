@@ -1,5 +1,18 @@
 /// 下载进度信息。
 class DownloadProgress {
+  const DownloadProgress({
+    required this.taskId,
+    required this.status,
+    this.progress = 0.0,
+    this.speed = 0,
+    this.downloadedBytes = 0,
+    this.totalBytes = -1,
+    this.downloadedSegments = 0,
+    this.totalSegments = -1,
+    this.eta = -1,
+    this.error,
+  });
+
   /// 任务ID。
   final String taskId;
 
@@ -29,19 +42,6 @@ class DownloadProgress {
 
   /// 错误信息。
   final String? error;
-
-  const DownloadProgress({
-    required this.taskId,
-    required this.status,
-    this.progress = 0.0,
-    this.speed = 0,
-    this.downloadedBytes = 0,
-    this.totalBytes = -1,
-    this.downloadedSegments = 0,
-    this.totalSegments = -1,
-    this.eta = -1,
-    this.error,
-  });
 
   /// 是否正在下载。
   bool get isDownloading => status == DownloadProgressStatus.downloading;
@@ -76,8 +76,8 @@ class DownloadProgress {
     if (eta == 0) return '即将完成';
     final minutes = eta ~/ 60;
     final seconds = eta % 60;
-    if (minutes > 0) return '${minutes}分${seconds}秒';
-    return '${seconds}秒';
+    if (minutes > 0) return '$minutes分$seconds秒';
+    return '$seconds秒';
   }
 
   static String _formatBytes(int bytes) {

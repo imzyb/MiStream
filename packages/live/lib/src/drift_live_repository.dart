@@ -1,12 +1,10 @@
 import 'package:drift/drift.dart';
-// ignore: depend_on_referenced_packages
+import 'package:live/src/live_channel.dart';
+import 'package:live/src/live_epg.dart';
+import 'package:live/src/live_group.dart';
+import 'package:live/src/live_parser.dart';
+import 'package:live/src/live_repository.dart';
 import 'package:storage/storage.dart' as db;
-
-import 'live_channel.dart';
-import 'live_group.dart';
-import 'live_epg.dart';
-import 'live_parser.dart';
-import 'live_repository.dart';
 
 /// Drift-backed implementation of [LiveRepository].
 ///
@@ -63,7 +61,7 @@ class DriftLiveRepository implements LiveRepository {
     final id = int.tryParse(channelId);
     if (id == null) return;
     await (_db.update(_db.liveChannels)..where((t) => t.id.equals(id))).write(
-      db.LiveChannelsCompanion(favorite: const Value(true)),
+      const db.LiveChannelsCompanion(favorite: Value(true)),
     );
   }
 
@@ -72,7 +70,7 @@ class DriftLiveRepository implements LiveRepository {
     final id = int.tryParse(channelId);
     if (id == null) return;
     await (_db.update(_db.liveChannels)..where((t) => t.id.equals(id))).write(
-      db.LiveChannelsCompanion(favorite: const Value(false)),
+      const db.LiveChannelsCompanion(favorite: Value(false)),
     );
   }
 
@@ -122,7 +120,7 @@ class DriftLiveRepository implements LiveRepository {
                 logo: Value(channel.logo),
                 urlsJson: channel.url,
                 epgId: Value(channel.id),
-                favorite: Value(false),
+                favorite: const Value(false),
               ),
             );
       }
@@ -139,8 +137,6 @@ class DriftLiveRepository implements LiveRepository {
       url: row.urlsJson,
       logo: row.logo,
       groupId: row.groupId.toString(),
-      isHd: false,
-      updatedAt: null,
     );
   }
 

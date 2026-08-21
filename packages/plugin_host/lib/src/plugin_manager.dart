@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'plugin_api.dart';
-import 'plugin_manifest.dart';
+import 'package:plugin_host/src/plugin_api.dart';
+import 'package:plugin_host/src/plugin_manifest.dart';
 
 /// Event emitted when plugin state changes.
 class PluginEvent {

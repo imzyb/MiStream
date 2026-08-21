@@ -5,18 +5,21 @@
 /// [PluginManager] which handles install/enable/disable/uninstall lifecycle.
 library;
 
-export 'src/plugin_manifest.dart'
-    show PluginManifest, PluginType, PluginPermission;
-export 'src/plugin_api.dart'
-    show PluginApi, SourcePluginApi, SnifferPluginApi, PluginState;
-export 'src/plugin_manager.dart' show PluginManager, PluginEvent;
+import 'package:plugin_host/plugin_host.dart'
+    show PluginManager, PluginManifest;
+
 export 'src/permission_checker.dart' show PermissionChecker;
+export 'src/plugin_api.dart'
+    show PluginApi, PluginState, SnifferPluginApi, SourcePluginApi;
 export 'src/plugin_loader.dart'
-    show PluginLoader, LoadedPlugin, IntegrityResult;
+    show IntegrityResult, LoadedPlugin, PluginLoader;
+export 'src/plugin_manager.dart' show PluginEvent, PluginManager;
+export 'src/plugin_manifest.dart'
+    show PluginManifest, PluginPermission, PluginType;
 export 'src/plugin_sandbox.dart'
     show
-        PluginSandbox,
         PluginMessage,
+        PluginNotification,
         PluginRequest,
         PluginResponse,
-        PluginNotification;
+        PluginSandbox;

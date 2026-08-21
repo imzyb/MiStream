@@ -3,7 +3,6 @@
 /// 这里是**唯一**建库的地方：解��路径 -> 打开库 -> ���配 -> 读引导状态 -> 读主题模式 -> 起 UI。
 library;
 
-import 'package:flutter/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:mistream/app/app.dart';
 import 'package:mistream/app/router.dart';
@@ -24,7 +23,7 @@ Future<void> main() async {
   final themeIndex = await assembly.repositories.settings.read(
     SettingKey<int>(
       'theme_mode',
-      (json) => (json as num).toInt(),
+      (json) => (json! as num).toInt(),
       (value) => value,
     ),
     0,

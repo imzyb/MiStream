@@ -1,4 +1,4 @@
-import 'plugin_manifest.dart';
+import 'package:plugin_host/src/plugin_manifest.dart';
 
 /// Plugin lifecycle states.
 enum PluginState {

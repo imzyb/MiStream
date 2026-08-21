@@ -33,7 +33,7 @@ Future<HttpServer> startMockApi() async {
       case 'detail':
         _respondJson(
           request,
-          '{"list":[{"vod_id":1,"vod_name":"剧A","vod_play_from":"qiyi","vod_play_url":"第1集\$https://example.com/ep1.m3u8"}]}',
+          r'{"list":[{"vod_id":1,"vod_name":"剧A","vod_play_from":"qiyi","vod_play_url":"第1集$https://example.com/ep1.m3u8"}]}',
         );
       default:
         final response = request.response

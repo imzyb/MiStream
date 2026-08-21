@@ -1,4 +1,4 @@
-import 'sniffer_result.dart';
+import 'package:media_sniffer/src/sniffer_result.dart';
 
 class MediaDetector {
   static final List<RegExp> _htmlMediaPatterns = [
@@ -135,7 +135,7 @@ class MediaDetector {
       result['resolution'] = resolutionMatch.group(1);
     }
 
-    final codecsMatch = RegExp(r'CODECS="([^"]+)"').firstMatch(line);
+    final codecsMatch = RegExp('CODECS="([^"]+)"').firstMatch(line);
     if (codecsMatch != null) {
       result['codecs'] = codecsMatch.group(1);
     }
@@ -145,17 +145,16 @@ class MediaDetector {
 }
 
 class M3u8StreamInfo {
-  final String url;
-  final int bandwidth;
-  final String resolution;
-  final String codecs;
-
   const M3u8StreamInfo({
     required this.url,
     required this.bandwidth,
     required this.resolution,
     required this.codecs,
   });
+  final String url;
+  final int bandwidth;
+  final String resolution;
+  final String codecs;
 
   @override
   String toString() =>

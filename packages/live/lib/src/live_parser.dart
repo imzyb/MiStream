@@ -1,7 +1,5 @@
-library;
-
-import 'live_channel.dart';
-import 'live_group.dart';
+import 'package:live/src/live_channel.dart';
+import 'package:live/src/live_group.dart';
 
 class LiveParser {
   LiveParseResult parse(String content) {
@@ -84,12 +82,12 @@ class LiveParser {
       'logo': null,
     };
 
-    final groupMatch = RegExp(r'group-title="([^"]*)"').firstMatch(line);
+    final groupMatch = RegExp('group-title="([^"]*)"').firstMatch(line);
     if (groupMatch != null) {
       result['group'] = groupMatch.group(1);
     }
 
-    final logoMatch = RegExp(r'tvg-logo="([^"]*)"').firstMatch(line);
+    final logoMatch = RegExp('tvg-logo="([^"]*)"').firstMatch(line);
     if (logoMatch != null) {
       result['logo'] = logoMatch.group(1);
     }
@@ -103,13 +101,12 @@ class LiveParser {
 }
 
 class LiveParseResult {
-  final List<LiveChannel> channels;
-  final List<LiveGroup> groups;
-
   const LiveParseResult({
     required this.channels,
     required this.groups,
   });
+  final List<LiveChannel> channels;
+  final List<LiveGroup> groups;
 
   Map<LiveGroup, List<LiveChannel>> get channelsByGroup {
     final result = <LiveGroup, List<LiveChannel>>{};

@@ -1,5 +1,5 @@
-import 'package:test/test.dart';
 import 'package:media_sniffer/media_sniffer.dart';
+import 'package:test/test.dart';
 
 void main() {
   group('MediaType', () {
@@ -75,7 +75,7 @@ void main() {
       const rule = SnifferRule(
         name: 'HLS',
         urlPattern: r'\.m3u8',
-        contentPattern: r'#EXTM3U',
+        contentPattern: '#EXTM3U',
       );
       expect(rule.matchesContent('#EXTM3U\n#EXTINF:10'), true);
       expect(rule.matchesContent('no match'), false);
@@ -123,7 +123,7 @@ void main() {
     });
 
     test('detectFromHtml extracts video src', () {
-      final html = '<video src="https://example.com/video.mp4"></video>';
+      const html = '<video src="https://example.com/video.mp4"></video>';
       final results = detector.detectFromHtml(html);
       expect(results.length, 1);
       expect(results.first.url, 'https://example.com/video.mp4');
@@ -131,7 +131,7 @@ void main() {
     });
 
     test('detectFromHtml extracts source src', () {
-      final html = '<source src="https://example.com/video.m3u8">';
+      const html = '<source src="https://example.com/video.m3u8">';
       final results = detector.detectFromHtml(html);
       expect(results.length, 1);
       expect(results.first.url, 'https://example.com/video.m3u8');
@@ -139,7 +139,7 @@ void main() {
     });
 
     test('detectFromJs extracts m3u8 url', () {
-      final js = 'var url = "https://example.com/video.m3u8";';
+      const js = 'var url = "https://example.com/video.m3u8";';
       final results = detector.detectFromJs(js);
       expect(results.length, 1);
       expect(results.first.url, 'https://example.com/video.m3u8');
@@ -147,14 +147,14 @@ void main() {
     });
 
     test('detectFromJs extracts mp4 url', () {
-      final js = "file: 'https://example.com/video.mp4'";
+      const js = "file: 'https://example.com/video.mp4'";
       final results = detector.detectFromJs(js);
       expect(results.length, 1);
       expect(results.first.url, 'https://example.com/video.mp4');
     });
 
     test('detectFromHtml deduplicates urls', () {
-      final html = '''
+      const html = '''
         <video src="https://example.com/video.mp4"></video>
         <source src="https://example.com/video.mp4">
       ''';
@@ -163,7 +163,7 @@ void main() {
     });
 
     test('parseM3u8 extracts segment urls', () {
-      final content = '''
+      const content = '''
 #EXTM3U
 #EXTINF:10.0,
 segment001.ts
@@ -180,7 +180,7 @@ segment003.ts
     });
 
     test('parseM3u8 with baseUrl resolves relative urls', () {
-      final content = '''
+      const content = '''
 #EXTM3U
 segment001.ts
 segment002.ts
@@ -195,7 +195,7 @@ segment002.ts
     });
 
     test('isMasterPlaylist returns true for master playlist', () {
-      final content = '''
+      const content = '''
 #EXTM3U
 #EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720
 low/medium.m3u8
@@ -206,7 +206,7 @@ high/high.m3u8
     });
 
     test('isMasterPlaylist returns false for media playlist', () {
-      final content = '''
+      const content = '''
 #EXTM3U
 #EXTINF:10.0,
 segment001.ts
@@ -215,7 +215,7 @@ segment001.ts
     });
 
     test('parseMasterPlaylist extracts streams', () {
-      final content = '''
+      const content = '''
 #EXTM3U
 #EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720,CODECS="avc1.64001f,mp4a.40.2"
 low/medium.m3u8
@@ -239,7 +239,7 @@ high/high.m3u8
     });
 
     test('sniffHtml detects video sources', () {
-      final html = '<video src="https://example.com/video.mp4"></video>';
+      const html = '<video src="https://example.com/video.mp4"></video>';
       final results = engine.sniffHtml(html);
       // May find multiple results due to rule matching
       expect(results.length, greaterThanOrEqualTo(1));
@@ -250,7 +250,7 @@ high/high.m3u8
     });
 
     test('sniffJs detects m3u8 urls', () {
-      final js = 'src: "https://example.com/video.m3u8"';
+      const js = 'src: "https://example.com/video.m3u8"';
       final results = engine.sniffJs(js);
       // May find multiple results due to rule matching
       expect(results.length, greaterThanOrEqualTo(1));
@@ -261,7 +261,7 @@ high/high.m3u8
     });
 
     test('addRule adds custom rule', () {
-      final rule = SnifferRule(name: 'Custom', urlPattern: r'\.custom');
+      const rule = SnifferRule(name: 'Custom', urlPattern: r'\.custom');
       engine.addRule(rule);
       expect(engine.rules.length, SnifferRule.defaults.length + 1);
     });
@@ -272,13 +272,15 @@ high/high.m3u8
     });
 
     test('resetRules restores defaults', () {
-      engine.addRule(SnifferRule(name: 'Custom', urlPattern: r'\.custom'));
+      engine.addRule(
+        const SnifferRule(name: 'Custom', urlPattern: r'\.custom'),
+      );
       engine.resetRules();
       expect(engine.rules.length, SnifferRule.defaults.length);
     });
 
     test('parseM3u8 returns M3u8ParseResult', () {
-      final content = '''
+      const content = '''
 #EXTM3U
 #EXTINF:10.0,
 segment001.ts
@@ -291,7 +293,7 @@ segment002.ts
     });
 
     test('parseM3u8 handles master playlist', () {
-      final content = '''
+      const content = '''
 #EXTM3U
 #EXT-X-STREAM-INF:BANDWIDTH=1000000
 low.m3u8

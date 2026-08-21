@@ -1,11 +1,4 @@
 class SnifferRule {
-  final String name;
-  final String urlPattern;
-  final String? contentPattern;
-  final Map<String, String> headers;
-  final bool enabled;
-  final int priority;
-
   const SnifferRule({
     required this.name,
     required this.urlPattern,
@@ -25,6 +18,12 @@ class SnifferRule {
       priority: json['priority'] as int? ?? 100,
     );
   }
+  final String name;
+  final String urlPattern;
+  final String? contentPattern;
+  final Map<String, String> headers;
+  final bool enabled;
+  final int priority;
 
   Map<String, dynamic> toJson() {
     return {
@@ -68,12 +67,12 @@ class SnifferRule {
     SnifferRule(
       name: 'M3U8 Playlist',
       urlPattern: r'playlist\.m3u8',
-      contentPattern: r'#EXTM3U',
+      contentPattern: '#EXTM3U',
       priority: 5,
     ),
     SnifferRule(
       name: 'API Video URL',
-      urlPattern: r'/api/.*video',
+      urlPattern: '/api/.*video',
       priority: 80,
     ),
   ];

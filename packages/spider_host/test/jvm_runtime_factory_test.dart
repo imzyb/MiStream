@@ -114,7 +114,7 @@ int extractId(List<int> frame) {
 /// 从请求帧中提取 method 字段。
 String? extractMethod(List<int> frame) {
   final raw = utf8.decode(frame);
-  return RegExp(r'"method":"([^"]+)"').firstMatch(raw)?.group(1);
+  return RegExp('"method":"([^"]+)"').firstMatch(raw)?.group(1);
 }
 
 /// 解析请求帧的 params 映射。

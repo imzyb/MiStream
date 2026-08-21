@@ -16,19 +16,18 @@ const _defaultUserAgent =
 
 /// 播放结果。
 class PlayResult {
-  final MediaSource mediaSource;
-  final String? title;
-  final String? coverUrl;
-
-  /// 该地址是否经由页面嗅探得到（诊断用）。
-  final bool viaSniffing;
-
   const PlayResult({
     required this.mediaSource,
     this.title,
     this.coverUrl,
     this.viaSniffing = false,
   });
+  final MediaSource mediaSource;
+  final String? title;
+  final String? coverUrl;
+
+  /// 该地址是否经由页面嗅探得到（诊断用）。
+  final bool viaSniffing;
 }
 
 /// 播放编排器。
@@ -49,14 +48,13 @@ class PlayResult {
 /// 「打开媒体失败」。[resolver] 负责把后者解析成真实地址；不注入 resolver 时
 /// 退化为原来的行为（原地址直接返回），既保持向后兼容，也让单测不必联网。
 class PlayUseCase {
+  /// 构造播放编排器。
+  PlayUseCase(this.sites, {this.runtimeFactory, this.resolver});
   final SiteRepository sites;
   final SpiderRuntimeFactory? runtimeFactory;
 
   /// 嗅探解析器；`null` 表示不做嗅探，原地址直接返回。
   final SnifferResolver? resolver;
-
-  /// 构造播放编排器。
-  PlayUseCase(this.sites, {this.runtimeFactory, this.resolver});
 
   /// 获取可播放的媒体源。
   ///
@@ -128,7 +126,6 @@ class PlayUseCase {
             mediaSource: MediaSource(
               uri: Uri.parse(media.url),
               headers: media.headers,
-              isLive: false,
             ),
             viaSniffing: media.viaSniffing,
           ),
@@ -159,10 +156,9 @@ class PlayUseCase {
   PlayResult _plainResult(String url, String? referer) => PlayResult(
     mediaSource: MediaSource(
       uri: Uri.parse(url),
-      isLive: false,
       headers: {
         'User-Agent': _defaultUserAgent,
-        if (referer != null) 'Referer': referer,
+        'Referer': ?referer,
       },
     ),
   );

@@ -1,5 +1,5 @@
-import 'package:test/test.dart';
 import 'package:live/live.dart';
+import 'package:test/test.dart';
 
 void main() {
   group('LiveChannel', () {
@@ -98,7 +98,7 @@ void main() {
     });
 
     test('parses simple m3u playlist', () {
-      final content = '''
+      const content = '''
 #EXTM3U
 #EXTINF:-1 tvg-name="CCTV1" group-title="央视" tvg-logo="http://logo.png",
 CCTV1
@@ -119,7 +119,7 @@ http://example.com/hunan.m3u8
     });
 
     test('deduplicates channels by url', () {
-      final content = '''
+      const content = '''
 #EXTM3U
 #EXTINF:-1,
 CCTV1
@@ -133,7 +133,7 @@ http://example.com/cctv1.m3u8
     });
 
     test('channelsByGroup groups correctly', () {
-      final content = '''
+      const content = '''
 #EXTM3U
 #EXTINF:-1 group-title="央视",
 CCTV1
@@ -228,7 +228,7 @@ http://example.com/cctv2.m3u8
     });
 
     test('importM3u loads channels and groups', () async {
-      final content = '''
+      const content = '''
 #EXTM3U
 #EXTINF:-1 group-title="央视",
 CCTV1
@@ -245,7 +245,7 @@ http://example.com/hunan.m3u8
     });
 
     test('addFavorite and getFavorites', () async {
-      final content = '''
+      const content = '''
 #EXTM3U
 #EXTINF:-1,
 CCTV1
@@ -260,7 +260,7 @@ http://example.com/cctv1.m3u8
     });
 
     test('removeFavorite removes channel', () async {
-      final content = '''
+      const content = '''
 #EXTM3U
 #EXTINF:-1,
 CCTV1
@@ -275,7 +275,7 @@ http://example.com/cctv1.m3u8
     });
 
     test('searchChannels finds by name', () async {
-      final content = '''
+      const content = '''
 #EXTM3U
 #EXTINF:-1,
 CCTV1

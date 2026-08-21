@@ -1,29 +1,5 @@
 /// 直播频道模型。
 class LiveChannel {
-  /// 频道ID。
-  final String id;
-
-  /// 频道名称。
-  final String name;
-
-  /// 播放地址。
-  final String url;
-
-  /// 频道图标URL（可选）。
-  final String? logo;
-
-  /// 分组ID（可选）。
-  final String? groupId;
-
-  /// 频道号（可选）。
-  final int? channelNumber;
-
-  /// 是否为高清源。
-  final bool isHd;
-
-  /// 最后更新时间戳。
-  final int? updatedAt;
-
   const LiveChannel({
     required this.id,
     required this.name,
@@ -48,6 +24,30 @@ class LiveChannel {
       updatedAt: json['updatedAt'] as int?,
     );
   }
+
+  /// 频道ID。
+  final String id;
+
+  /// 频道名称。
+  final String name;
+
+  /// 播放地址。
+  final String url;
+
+  /// 频道图标URL（可选）。
+  final String? logo;
+
+  /// 分组ID（可选）。
+  final String? groupId;
+
+  /// 频道号（可选）。
+  final int? channelNumber;
+
+  /// 是否为高清源。
+  final bool isHd;
+
+  /// 最后更新时间戳。
+  final int? updatedAt;
 
   /// 转换为JSON。
   Map<String, dynamic> toJson() {

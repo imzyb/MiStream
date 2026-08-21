@@ -215,7 +215,7 @@ void main() {
         permissions: [PluginPermission.network, PluginPermission.storage],
       );
 
-      final checker = PermissionChecker({
+      const checker = PermissionChecker({
         'test': [PluginPermission.network, PluginPermission.storage],
       });
 
@@ -231,7 +231,7 @@ void main() {
         permissions: [PluginPermission.network, PluginPermission.webview],
       );
 
-      final checker = PermissionChecker({
+      const checker = PermissionChecker({
         'test': [PluginPermission.network],
       });
 
@@ -251,7 +251,7 @@ void main() {
         ],
       );
 
-      final checker = PermissionChecker({
+      const checker = PermissionChecker({
         'test': [PluginPermission.network],
       });
 
@@ -262,7 +262,7 @@ void main() {
     });
 
     test('grant and revoke', () {
-      final checker = PermissionChecker({});
+      const checker = PermissionChecker({});
 
       checker.grant('test', PluginPermission.network);
       expect(checker.getGranted('test'), [PluginPermission.network]);

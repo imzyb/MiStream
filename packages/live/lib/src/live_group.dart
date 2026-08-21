@@ -1,20 +1,5 @@
 /// 直播分组模型。
 class LiveGroup {
-  /// 分组ID。
-  final String id;
-
-  /// 分组名称。
-  final String name;
-
-  /// 父分组ID（支持嵌套）。
-  final String? parentId;
-
-  /// 排序序号。
-  final int order;
-
-  /// 是否为收藏分组。
-  final bool isFavorite;
-
   const LiveGroup({
     required this.id,
     required this.name,
@@ -33,6 +18,21 @@ class LiveGroup {
       isFavorite: json['isFavorite'] as bool? ?? false,
     );
   }
+
+  /// 分组ID。
+  final String id;
+
+  /// 分组名称。
+  final String name;
+
+  /// 父分组ID（支持嵌套）。
+  final String? parentId;
+
+  /// 排序序号。
+  final int order;
+
+  /// 是否为收藏分组。
+  final bool isFavorite;
 
   /// 转换为JSON。
   Map<String, dynamic> toJson() {

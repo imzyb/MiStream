@@ -5,12 +5,11 @@ import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:storage/storage.dart';
-
 import 'package:mistream/app/router.dart' show globalRouterAssembly;
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
 import 'package:mistream/features/common/common.dart' show EmptyView;
 import 'package:mistream/features/library/widgets/library_tile.dart';
+import 'package:storage/storage.dart';
 
 /// 全局装配实例，供资源库页使用。
 AppAssembly? _globalLibraryAssembly;

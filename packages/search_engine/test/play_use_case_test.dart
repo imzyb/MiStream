@@ -19,7 +19,7 @@ class _FakeRuntime implements SpiderRuntime {
 
   final String detailBody;
   final AppError? detailError;
-  var detailCalls = 0;
+  int detailCalls = 0;
 
   @override
   Future<Result<HttpResponseData, AppError>> detail({
@@ -109,13 +109,13 @@ String _detailBody({
   final url =
       playUrl ??
       // 第一条是网页线路（share），第二条是直链线路（m3u8）。
-      'HD中字\$https://cdn.a.com/share/e1'
-          '#第2集\$https://cdn.a.com/share/e2'
-          '#第3集\$https://cdn.a.com/share/e3'
+      r'HD中字$https://cdn.a.com/share/e1'
+          r'#第2集$https://cdn.a.com/share/e2'
+          r'#第3集$https://cdn.a.com/share/e3'
           r'$$$'
-          'HD中字\$https://cdn.a.com/1/index.m3u8'
-          '#第2集\$https://cdn.a.com/2/index.m3u8'
-          '#第3集\$https://cdn.a.com/3/index.m3u8';
+          r'HD中字$https://cdn.a.com/1/index.m3u8'
+          r'#第2集$https://cdn.a.com/2/index.m3u8'
+          r'#第3集$https://cdn.a.com/3/index.m3u8';
   return jsonEncode({
     'code': 1,
     'list': [
@@ -344,9 +344,7 @@ void main() {
     });
 
     test('站点域名作为默认 Referer', () async {
-      final sites = await _sitesWith(
-        api: 'https://api.a.com/api.php/provide/vod/',
-      );
+      final sites = await _sitesWith();
       final useCase = PlayUseCase(
         sites,
         runtimeFactory: _FakeFactory(_FakeRuntime(_detailBody())),
@@ -381,7 +379,7 @@ void main() {
           _FakeRuntime(
             _detailBody(
               playFrom: 'liangzi',
-              playUrl: 'HD中字\$https://cdn.a.com/share/e1',
+              playUrl: r'HD中字$https://cdn.a.com/share/e1',
             ),
           ),
         ),
@@ -412,7 +410,7 @@ void main() {
           _FakeRuntime(
             _detailBody(
               playFrom: 'liangzi',
-              playUrl: 'HD中字\$https://cdn.a.com/share/e1',
+              playUrl: r'HD中字$https://cdn.a.com/share/e1',
             ),
           ),
         ),

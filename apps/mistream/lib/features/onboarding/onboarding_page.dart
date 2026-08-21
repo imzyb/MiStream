@@ -238,7 +238,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
   List<Map<String, String>> _extractConfigUrls(String html) {
     final results = <Map<String, String>>[];
     // 匹配 data-clipboard-text="..." 中的 URL
-    final regex = RegExp(r'data-clipboard-text="([^"]+)"');
+    final regex = RegExp('data-clipboard-text="([^"]+)"');
     for (final match in regex.allMatches(html)) {
       final url = match.group(1)!;
       // 只保留可能是配置的链接（.json 或以 / 结尾的 API）

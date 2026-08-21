@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'download_task.dart';
-import 'download_progress.dart';
+import 'package:download/src/download_progress.dart';
+import 'package:download/src/download_task.dart';
 
 /// 下载管理器：管理多个下载任务。
 class DownloadManager {
@@ -68,7 +68,7 @@ class DownloadManager {
     // TODO: 实际实现需要调用HLS下载器或HTTP下载器
     // 这里仅做状态演示
     await Future<void>.delayed(const Duration(seconds: 1));
-    _updateTask(task.copyWith(status: DownloadStatus.completed, progress: 1.0));
+    _updateTask(task.copyWith(status: DownloadStatus.completed, progress: 1));
   }
 
   /// 暂停下载。

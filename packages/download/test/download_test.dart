@@ -1,5 +1,5 @@
-import 'package:test/test.dart';
 import 'package:download/download.dart';
+import 'package:test/test.dart';
 
 void main() {
   group('DownloadTask', () {
@@ -32,7 +32,7 @@ void main() {
     });
 
     test('toJson roundtrip', () {
-      final task = DownloadTask(
+      const task = DownloadTask(
         id: 'task1',
         title: 'Test Video',
         url: 'http://example.com/video.m3u8',
@@ -51,7 +51,7 @@ void main() {
     });
 
     test('copyWith creates new instance', () {
-      final task = DownloadTask(
+      const task = DownloadTask(
         id: 'task1',
         title: 'Test',
         url: 'http://a.com',
@@ -66,7 +66,7 @@ void main() {
     });
 
     test('isResumable returns true for paused', () {
-      final task = DownloadTask(
+      const task = DownloadTask(
         id: 'task1',
         title: 'Test',
         url: 'http://a.com',
@@ -79,7 +79,7 @@ void main() {
     });
 
     test('isCompleted returns true for completed', () {
-      final task = DownloadTask(
+      const task = DownloadTask(
         id: 'task1',
         title: 'Test',
         url: 'http://a.com',
@@ -92,7 +92,7 @@ void main() {
     });
 
     test('equality by id', () {
-      final t1 = DownloadTask(
+      const t1 = DownloadTask(
         id: 'task1',
         title: 'A',
         url: 'http://a.com',
@@ -100,7 +100,7 @@ void main() {
         createdAt: 0,
         updatedAt: 0,
       );
-      final t2 = DownloadTask(
+      const t2 = DownloadTask(
         id: 'task1',
         title: 'B',
         url: 'http://b.com',
@@ -108,7 +108,7 @@ void main() {
         createdAt: 0,
         updatedAt: 0,
       );
-      final t3 = DownloadTask(
+      const t3 = DownloadTask(
         id: 'task2',
         title: 'A',
         url: 'http://a.com',
@@ -162,7 +162,6 @@ void main() {
       const progress = DownloadProgress(
         taskId: 't1',
         status: DownloadProgressStatus.downloading,
-        totalBytes: -1,
       );
       expect(progress.formattedTotal, '未知');
     });

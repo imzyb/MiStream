@@ -1,11 +1,4 @@
 class SnifferResult {
-  final String url;
-  final MediaType type;
-  final Map<String, String> headers;
-  final String? title;
-  final int? duration;
-  final String? referer;
-
   const SnifferResult({
     required this.url,
     required this.type,
@@ -14,6 +7,12 @@ class SnifferResult {
     this.duration,
     this.referer,
   });
+  final String url;
+  final MediaType type;
+  final Map<String, String> headers;
+  final String? title;
+  final int? duration;
+  final String? referer;
 
   @override
   bool operator ==(Object other) =>
@@ -51,8 +50,9 @@ enum MediaType {
 
   static MediaType fromMime(String mime) {
     final lower = mime.toLowerCase();
-    if (lower.contains('mpegurl') || lower.contains('x-mpegurl'))
+    if (lower.contains('mpegurl') || lower.contains('x-mpegurl')) {
       return MediaType.hls;
+    }
     if (lower.contains('video/mp4')) return MediaType.mp4;
     if (lower.contains('audio/mpeg')) return MediaType.mp3;
     if (lower.contains('video/x-flv')) return MediaType.flv;

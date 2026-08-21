@@ -6,26 +6,25 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:media_kit_video/media_kit_video.dart' as mkv;
+import 'package:mistream/application/app_assembly.dart' show AppAssembly;
+import 'package:mistream/features/common/common.dart'
+    show BreakpointContext, BreakpointType, ErrorView;
 import 'package:mistream/features/detail/detail_page.dart';
+import 'package:mistream/features/download/download_page.dart';
 import 'package:mistream/features/home/home_page.dart';
+import 'package:mistream/features/home/widgets/media_card.dart';
+import 'package:mistream/features/library/library_page.dart';
+import 'package:mistream/features/live/live_page.dart';
+import 'package:mistream/features/live/live_player_page.dart';
 import 'package:mistream/features/onboarding/onboarding_page.dart';
 import 'package:mistream/features/player/player_controller.dart';
 import 'package:mistream/features/player/player_page.dart';
 import 'package:mistream/features/search/search_page.dart';
 import 'package:mistream/features/settings/settings_page.dart';
-import 'package:mistream/features/library/library_page.dart';
-import 'package:mistream/features/live/live_page.dart';
-import 'package:mistream/features/live/live_player_page.dart';
-import 'package:mistream/features/download/download_page.dart';
+import 'package:mistream/features/shell/scaffold_with_nav_bar.dart';
 import 'package:mistream/features/sniffer/sniffer_settings_page.dart';
-import 'package:mistream/features/home/widgets/media_card.dart';
-import 'package:mistream/application/app_assembly.dart' show AppAssembly;
-import 'package:core_domain/core_domain.dart';
 import 'package:player_engine/player_engine.dart';
 import 'package:search_engine/search_engine.dart';
-import 'package:mistream/features/shell/scaffold_with_nav_bar.dart';
-import 'package:mistream/features/common/common.dart'
-    show BreakpointContext, BreakpointType, ErrorView;
 
 /// 全局装配实例。
 AppAssembly? _globalRouterAssembly;
@@ -567,13 +566,10 @@ class _CategoryDetailPageState extends State<_CategoryDetailPage> {
 
     setState(() => _loading = true);
 
-    final Result<CategoryDetailResult, AppError> result = await assembly
-        .homeUseCase
-        .getCategoryDetail(
-          typeId: widget.typeId,
-          page: 1,
-          siteId: widget.siteId,
-        );
+    final result = await assembly.homeUseCase.getCategoryDetail(
+      typeId: widget.typeId,
+      siteId: widget.siteId,
+    );
 
     result.fold(
       (ok) {
@@ -605,13 +601,11 @@ class _CategoryDetailPageState extends State<_CategoryDetailPage> {
 
     setState(() => _loading = true);
 
-    final Result<CategoryDetailResult, AppError> result = await assembly
-        .homeUseCase
-        .getCategoryDetail(
-          typeId: widget.typeId,
-          page: _page + 1,
-          siteId: widget.siteId,
-        );
+    final result = await assembly.homeUseCase.getCategoryDetail(
+      typeId: widget.typeId,
+      page: _page + 1,
+      siteId: widget.siteId,
+    );
 
     result.fold(
       (ok) {

@@ -5,12 +5,8 @@ import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:search_engine/search_engine.dart';
-
 import 'package:mistream/app/router.dart' show globalRouterAssembly;
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
-import 'package:mistream/features/home/widgets/home_section.dart';
-import 'package:mistream/features/home/widgets/media_card.dart';
 import 'package:mistream/features/common/common.dart'
     show
         BreakpointContext,
@@ -19,6 +15,9 @@ import 'package:mistream/features/common/common.dart'
         ResponsiveGridPresets,
         ResponsiveGridView,
         ResponsiveHorizontalList;
+import 'package:mistream/features/home/widgets/home_section.dart';
+import 'package:mistream/features/home/widgets/media_card.dart';
+import 'package:search_engine/search_engine.dart';
 
 /// 全局装配实例，供首页使用。
 AppAssembly? _globalHomeAssembly;
@@ -44,7 +43,7 @@ class _HomePageState extends State<HomePage> {
   String? _error;
   List<HomeItem> _recommends = [];
   List<CategoryItem> _categories = [];
-  Map<String, List<HomeItem>> _categoryDetails = {};
+  final Map<String, List<HomeItem>> _categoryDetails = {};
   final Map<String, int> _categoryPages = {};
   List<SourceOption> _availableSites = [];
   SourceOption? _currentSite;
@@ -71,8 +70,8 @@ class _HomePageState extends State<HomePage> {
         siteId: _currentSite?.id,
       );
 
-      List<HomeItem> recommends = [];
-      List<CategoryItem> categories = [];
+      var recommends = <HomeItem>[];
+      var categories = <CategoryItem>[];
 
       homeResult.fold(
         (ok) {
@@ -386,7 +385,6 @@ class _HomePageState extends State<HomePage> {
                         child: const Text('查看全部'),
                       ),
                       child: ResponsiveGridView(
-                        config: ResponsiveGridPresets.categoryChips,
                         itemCount: _categories.length.clamp(0, 8),
                         itemBuilder: (context, index) {
                           final cat = _categories[index];
@@ -401,8 +399,9 @@ class _HomePageState extends State<HomePage> {
                   // 分类详情（前 3 个）
                   ..._categories.take(3).map((cat) {
                     final items = _categoryDetails[cat.typeId] ?? [];
-                    if (items.isEmpty)
+                    if (items.isEmpty) {
                       return const SliverToBoxAdapter(child: SizedBox.shrink());
+                    }
                     return HomeSection(
                       title: cat.typeName,
                       action: TextButton(
@@ -412,7 +411,6 @@ class _HomePageState extends State<HomePage> {
                       child: ResponsiveHorizontalList(
                         itemCount: items.length.clamp(0, 10),
                         itemWidth: 120,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
                         spacing: 8,
                         itemBuilder: (context, index) {
                           final item = items[index];
@@ -469,8 +467,8 @@ class _HomeSkeleton extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: 6,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
-              itemBuilder: (_, __) => block(width: 120),
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (_, _) => block(width: 120),
             ),
           ),
           const SizedBox(height: 24),

@@ -50,7 +50,7 @@ class HttpDownloadClient {
         if (response.statusCode == 200 && downloadedBytes > 0) {
           // Server doesn't support Range, restart download
           downloadedBytes = 0;
-          await saveFile.writeAsBytes([], mode: FileMode.write);
+          await saveFile.writeAsBytes([]);
         } else if (response.statusCode != 200 && !isPartial) {
           throw HttpDownloadException(
             'Server returned ${response.statusCode}',

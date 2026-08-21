@@ -1,7 +1,7 @@
-import 'live_channel.dart';
-import 'live_group.dart';
-import 'live_epg.dart';
-import 'live_parser.dart';
+import 'package:live/src/live_channel.dart';
+import 'package:live/src/live_epg.dart';
+import 'package:live/src/live_group.dart';
+import 'package:live/src/live_parser.dart';
 
 /// 直播数据仓库接口。
 abstract class LiveRepository {

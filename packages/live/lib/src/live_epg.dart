@@ -1,5 +1,50 @@
 /// 电子节目单（EPG）模型。
 class LiveEpg {
+  const LiveEpg({
+    required this.channelId,
+    required this.channelName,
+    required this.programs,
+  });
+
+  /// 从XMLTV格式解析。
+  factory LiveEpg.fromXmltv(String channelId, String channelName, String xml) {
+    final programs = <EpgProgram>[];
+    final programMatches = RegExp(
+      '<programme[^>]+start="([^"]+)"[^>]+stop="([^"]+)"[^>]*>.*?</programme>',
+      dotAll: true,
+    ).allMatches(xml);
+
+    for (final match in programMatches) {
+      final startStr = match.group(1);
+      final stopStr = match.group(2);
+      final content = match.group(0)!;
+
+      if (startStr != null && stopStr != null) {
+        final titleMatch = RegExp(
+          '<title[^>]*>([^<]+)</title>',
+        ).firstMatch(content);
+        final descMatch = RegExp(
+          '<desc[^>]*>([^<]+)</desc>',
+        ).firstMatch(content);
+
+        programs.add(
+          EpgProgram(
+            title: titleMatch?.group(1) ?? '',
+            description: descMatch?.group(1),
+            startTime: _parseXmltvTime(startStr),
+            endTime: _parseXmltvTime(stopStr),
+          ),
+        );
+      }
+    }
+
+    return LiveEpg(
+      channelId: channelId,
+      channelName: channelName,
+      programs: programs,
+    );
+  }
+
   /// 频道ID。
   final String channelId;
 
@@ -8,12 +53,6 @@ class LiveEpg {
 
   /// 节目列表。
   final List<EpgProgram> programs;
-
-  const LiveEpg({
-    required this.channelId,
-    required this.channelName,
-    required this.programs,
-  });
 
   /// 获取当前节目。
   EpgProgram? get currentProgram {
@@ -35,45 +74,6 @@ class LiveEpg {
       }
     }
     return null;
-  }
-
-  /// 从XMLTV格式解析。
-  factory LiveEpg.fromXmltv(String channelId, String channelName, String xml) {
-    final programs = <EpgProgram>[];
-    final programMatches = RegExp(
-      r'<programme[^>]+start="([^"]+)"[^>]+stop="([^"]+)"[^>]*>.*?</programme>',
-      dotAll: true,
-    ).allMatches(xml);
-
-    for (final match in programMatches) {
-      final startStr = match.group(1);
-      final stopStr = match.group(2);
-      final content = match.group(0)!;
-
-      if (startStr != null && stopStr != null) {
-        final titleMatch = RegExp(
-          r'<title[^>]*>([^<]+)</title>',
-        ).firstMatch(content);
-        final descMatch = RegExp(
-          r'<desc[^>]*>([^<]+)</desc>',
-        ).firstMatch(content);
-
-        programs.add(
-          EpgProgram(
-            title: titleMatch?.group(1) ?? '',
-            description: descMatch?.group(1),
-            startTime: _parseXmltvTime(startStr),
-            endTime: _parseXmltvTime(stopStr),
-          ),
-        );
-      }
-    }
-
-    return LiveEpg(
-      channelId: channelId,
-      channelName: channelName,
-      programs: programs,
-    );
   }
 
   /// 解析XMLTV时间格式。
@@ -98,6 +98,13 @@ class LiveEpg {
 
 /// EPG节目。
 class EpgProgram {
+  const EpgProgram({
+    required this.title,
+    required this.startTime,
+    required this.endTime,
+    this.description,
+  });
+
   /// 节目标题。
   final String title;
 
@@ -109,13 +116,6 @@ class EpgProgram {
 
   /// 结束时间（Unix时间戳，秒）。
   final int endTime;
-
-  const EpgProgram({
-    required this.title,
-    this.description,
-    required this.startTime,
-    required this.endTime,
-  });
 
   /// 节目时长（秒）。
   int get duration => endTime - startTime;

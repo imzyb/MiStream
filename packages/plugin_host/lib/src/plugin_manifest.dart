@@ -88,7 +88,6 @@ enum PluginType {
   unknown('unknown');
 
   const PluginType(this.value);
-  final String value;
 
   factory PluginType.fromString(String value) {
     return PluginType.values.firstWhere(
@@ -96,6 +95,7 @@ enum PluginType {
       orElse: () => PluginType.unknown,
     );
   }
+  final String value;
 }
 
 /// Plugin permission model.

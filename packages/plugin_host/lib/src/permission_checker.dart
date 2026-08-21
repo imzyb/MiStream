@@ -1,4 +1,4 @@
-import 'plugin_manifest.dart';
+import 'package:plugin_host/src/plugin_manifest.dart';
 
 /// Checks whether a plugin has been granted required permissions.
 class PermissionChecker {
@@ -10,7 +10,7 @@ class PermissionChecker {
   /// Check if a plugin has all required permissions.
   bool hasAllPermissions(PluginManifest manifest) {
     final granted = _grantedPermissions[manifest.id] ?? [];
-    return manifest.permissions.every((p) => granted.contains(p));
+    return manifest.permissions.every(granted.contains);
   }
 
   /// Get missing permissions for a plugin.

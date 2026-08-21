@@ -214,7 +214,7 @@ class JsRuntimeAdapter implements SpiderRuntime {
           ),
         );
       },
-      (err) => Err(err),
+      Err.new,
     );
   }
 
@@ -226,8 +226,9 @@ class JsRuntimeAdapter implements SpiderRuntime {
           if (value is num) return '"${e.key}": $value';
           if (value is bool) return '"${e.key}": $value';
           if (value is List) return '"${e.key}": ${_jsonEncodeList(value)}';
-          if (value is Map)
+          if (value is Map) {
             return '"${e.key}": ${_jsonEncodeMap(value.cast<String, Object?>())}';
+          }
           return '"${e.key}": null';
         })
         .join(', ');
@@ -370,7 +371,7 @@ class JvmRuntimeAdapter implements SpiderRuntime {
           ),
         );
       },
-      (err) => Err(err),
+      Err.new,
     );
   }
 
@@ -382,8 +383,9 @@ class JvmRuntimeAdapter implements SpiderRuntime {
           if (value is num) return '"${e.key}": $value';
           if (value is bool) return '"${e.key}": $value';
           if (value is List) return '"${e.key}": ${_jsonEncodeList(value)}';
-          if (value is Map)
+          if (value is Map) {
             return '"${e.key}": ${_jsonEncodeMap(value.cast<String, Object?>())}';
+          }
           return '"${e.key}": null';
         })
         .join(', ');
@@ -485,8 +487,7 @@ class SpiderRuntimeFactory {
     // 注意：`.dart` 脚本文件「存在」但不能直接当可执行文件启动，必须走
     // `dart run`；只对编译产物（.exe 等）用直接启动。
     final isDartScript = spiderJsPath.endsWith('.dart');
-    final bool useDirectExe =
-        !isDartScript && await File(spiderJsPath).exists();
+    final useDirectExe = !isDartScript && await File(spiderJsPath).exists();
 
     _jsHost = SpiderHost(
       executable: useDirectExe ? spiderJsPath : Platform.resolvedExecutable,

@@ -48,7 +48,7 @@ class RecommendationEngine {
           id: 'continue_${item.vodId}',
           title: item.vodName,
           reason: 'Continue watching',
-          score: 1.0,
+          score: 1,
           type: RecommendationType.continueWatching,
           data: {'vodId': item.vodId, 'progress': item.progress},
         ),

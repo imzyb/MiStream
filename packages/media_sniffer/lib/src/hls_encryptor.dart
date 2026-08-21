@@ -14,7 +14,7 @@ class HlsEncryptor {
   EncryptionInfo? parseEncryptionInfo(String playlistContent) {
     // Look for #EXT-X-KEY line
     final keyMatch = RegExp(
-      r'#EXT-X-KEY:METHOD=([^,]+),URI="([^"]+)"(?:,IV=(0x[0-9A-Fa-f]+))?',
+      '#EXT-X-KEY:METHOD=([^,]+),URI="([^"]+)"(?:,IV=(0x[0-9A-Fa-f]+))?',
     ).firstMatch(playlistContent);
 
     if (keyMatch == null) return null;

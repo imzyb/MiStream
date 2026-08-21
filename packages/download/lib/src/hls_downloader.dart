@@ -2,10 +2,16 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'download_progress.dart';
+import 'package:download/src/download_progress.dart';
 
 /// HLS下载器：下载m3u8播放列表及其分片。
 class HlsDownloader {
+  HlsDownloader({
+    HttpClient? client,
+    this.maxConcurrency = 3,
+    this.timeoutSeconds = 30,
+  }) : _client = client ?? HttpClient();
+
   /// HTTP客户端。
   final HttpClient _client;
 
@@ -14,12 +20,6 @@ class HlsDownloader {
 
   /// 下载超时（秒）。
   final int timeoutSeconds;
-
-  HlsDownloader({
-    HttpClient? client,
-    this.maxConcurrency = 3,
-    this.timeoutSeconds = 30,
-  }) : _client = client ?? HttpClient();
 
   /// 下载HLS流。
   ///
@@ -38,7 +38,7 @@ class HlsDownloader {
     final startTime = DateTime.now();
     var totalSegments = 0;
     var downloadedSegments = 0;
-    var totalBytes = 0;
+    const totalBytes = 0;
     var downloadedBytes = 0;
 
     try {
@@ -178,7 +178,7 @@ class HlsDownloader {
     final response = await request.close().timeout(
       Duration(seconds: timeoutSeconds),
     );
-    return await response.transform(utf8.decoder).join();
+    return response.transform(utf8.decoder).join();
   }
 
   Future<List<int>> _fetchBytes(String url) async {
@@ -187,7 +187,7 @@ class HlsDownloader {
     final response = await request.close().timeout(
       Duration(seconds: timeoutSeconds),
     );
-    return await response.toList().then(
+    return response.toList().then(
       (chunks) => chunks.expand((c) => c).toList(),
     );
   }
@@ -276,11 +276,10 @@ class CancelToken {
 
 /// 信号量（控制并发）。
 class Semaphore {
+  Semaphore(this.maxCount) : _currentCount = maxCount;
   final int maxCount;
   int _currentCount;
   final _waiters = <Completer<void>>[];
-
-  Semaphore(this.maxCount) : _currentCount = maxCount;
 
   Future<void> acquire() async {
     if (_currentCount > 0) {
@@ -305,6 +304,16 @@ class Semaphore {
 
 /// 下载结果。
 class DownloadResult {
+  const DownloadResult({
+    required this.success,
+    this.savePath,
+    this.error,
+    this.totalSegments = 0,
+    this.downloadedSegments = 0,
+    this.totalBytes = 0,
+    this.duration,
+  });
+
   /// 是否成功。
   final bool success;
 
@@ -325,16 +334,6 @@ class DownloadResult {
 
   /// 下载耗时。
   final Duration? duration;
-
-  const DownloadResult({
-    required this.success,
-    this.savePath,
-    this.error,
-    this.totalSegments = 0,
-    this.downloadedSegments = 0,
-    this.totalBytes = 0,
-    this.duration,
-  });
 
   @override
   String toString() =>

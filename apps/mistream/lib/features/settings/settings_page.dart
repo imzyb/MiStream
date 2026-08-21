@@ -5,12 +5,11 @@ import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:storage/storage.dart';
-
 import 'package:mistream/app/router.dart' show globalRouterAssembly;
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
 import 'package:mistream/features/settings/widgets/settings_section.dart';
 import 'package:mistream/features/settings/widgets/settings_tile.dart';
+import 'package:storage/storage.dart';
 
 /// 全局装配实例，供设置页使用。
 AppAssembly? _globalAssembly;
@@ -26,7 +25,7 @@ void setGlobalAssembly(AppAssembly? assembly) {
 /// 主题模式设置项：存储 ThemeMode.index (0=system, 1=light, 2=dark)。
 final _themeModeKey = SettingKey<int>(
   'theme_mode',
-  (json) => (json as num).toInt(),
+  (json) => (json! as num).toInt(),
   (value) => value,
 );
 
@@ -338,13 +337,13 @@ class _SettingsPageState extends State<SettingsPage> {
                       title: '查看诊断日志',
                       subtitle: '应用事件、错误、性能数据',
                       leading: const Icon(Icons.bug_report_outlined),
-                      onTap: () => _showDiagnostics(),
+                      onTap: _showDiagnostics,
                     ),
                     SettingsTile(
                       title: '导出调试包',
                       subtitle: '包含数据库、日志、配置（用于反馈问题）',
                       leading: const Icon(Icons.file_download_outlined),
-                      onTap: () => _exportDebugPackage(),
+                      onTap: _exportDebugPackage,
                     ),
                   ],
                 ),
@@ -380,23 +379,23 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
 
                 // 关于
-                SettingsSection(
+                const SettingsSection(
                   title: '关于',
                   children: [
                     SettingsTile(
                       title: '版本',
                       subtitle: '0.1.0 (MVP)',
-                      leading: const Icon(Icons.info_outline),
+                      leading: Icon(Icons.info_outline),
                     ),
                     SettingsTile(
                       title: '开源协议',
                       subtitle: 'MIT License',
-                      leading: const Icon(Icons.gavel_outlined),
+                      leading: Icon(Icons.gavel_outlined),
                     ),
                     SettingsTile(
                       title: '项目地址',
                       subtitle: 'github.com/.../mistream',
-                      leading: const Icon(Icons.code_outlined),
+                      leading: Icon(Icons.code_outlined),
                     ),
                   ],
                 ),
@@ -469,8 +468,9 @@ class _SettingsPageState extends State<SettingsPage> {
   String _formatBytes(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024)
+    if (bytes < 1024 * 1024 * 1024) {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 }

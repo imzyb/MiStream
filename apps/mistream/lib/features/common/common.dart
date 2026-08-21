@@ -1,20 +1,20 @@
 /// Common feature barrel.
 library;
 
-export 'widgets/state_views.dart'
-    show LoadingView, EmptyView, ErrorView, SuccessView, SliverStateView;
 export 'widgets/poster_image.dart' show PosterImage;
 export 'widgets/responsive.dart'
     show
-        Breakpoints,
+        BreakpointContext,
         BreakpointType,
-        getBreakpoint,
+        Breakpoints,
+        ResponsiveBuilder,
         ResponsiveGridConfig,
         ResponsiveGridPresets,
-        ResponsiveBuilder,
         ResponsiveGridView,
         ResponsiveHorizontalList,
         ResponsiveScaffold,
-        ResponsiveValue,
         ResponsiveSliverGrid,
-        BreakpointContext;
+        ResponsiveValue,
+        getBreakpoint;
+export 'widgets/state_views.dart'
+    show EmptyView, ErrorView, LoadingView, SliverStateView, SuccessView;

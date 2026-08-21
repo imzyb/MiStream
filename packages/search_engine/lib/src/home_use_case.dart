@@ -9,12 +9,6 @@ import 'package:storage/storage.dart';
 
 /// 首页推荐项。
 class HomeItem {
-  final String vodId;
-  final String vodName;
-  final String? vodPic;
-  final String? vodRemarks;
-  final String? vodYear;
-
   const HomeItem({
     required this.vodId,
     required this.vodName,
@@ -22,32 +16,35 @@ class HomeItem {
     this.vodRemarks,
     this.vodYear,
   });
+  final String vodId;
+  final String vodName;
+  final String? vodPic;
+  final String? vodRemarks;
+  final String? vodYear;
 }
 
 /// 分类项。
 class CategoryItem {
-  final String typeId;
-  final String typeName;
-
   const CategoryItem({
     required this.typeId,
     required this.typeName,
   });
+  final String typeId;
+  final String typeName;
 }
 
 /// 分类详情项（带分页）。
 class CategoryDetailResult {
-  final List<HomeItem> items;
-  final int page;
-  final int pageCount;
-  final int total;
-
   const CategoryDetailResult({
     required this.items,
     required this.page,
     required this.pageCount,
     required this.total,
   });
+  final List<HomeItem> items;
+  final int page;
+  final int pageCount;
+  final int total;
 }
 
 /// 首页完整数据（推荐 + 分类，单次 API 调用）。
@@ -99,14 +96,13 @@ class SourceOption {
 
 /// 首页编排器。
 class HomeUseCase {
+  /// 构造首页编排器。
+  HomeUseCase(this.sites, {this.runtimeFactory});
   final SiteRepository sites;
   final SpiderRuntimeFactory? runtimeFactory;
 
   /// 最近一次成功请求的站点（用于详情页导航）。
   Site? workingSite;
-
-  /// 构造首页编排器。
-  HomeUseCase(this.sites, {this.runtimeFactory});
 
   /// 最近一次成功取数的站点 id；还没成功过时为 `null`。
   int? get workingSiteId => workingSite?.id;
@@ -233,7 +229,7 @@ class HomeUseCase {
     final result = await _trySites(siteList, (runtime) => runtime.home());
     return result.fold(
       (ok) => _parseList(ok.body, ok.finalUrl),
-      (err) => Err(err),
+      Err.new,
     );
   }
 
@@ -251,7 +247,7 @@ class HomeUseCase {
     final result = await _trySites(siteList, (runtime) => runtime.category());
     return result.fold(
       (ok) => _parseCategories(ok.body),
-      (err) => Err(err),
+      Err.new,
     );
   }
 
@@ -284,7 +280,7 @@ class HomeUseCase {
           ),
         );
       },
-      (err) => Err(err),
+      Err.new,
     );
   }
 
@@ -309,7 +305,7 @@ class HomeUseCase {
     );
     return result.fold(
       (ok) => _parseCategoryDetail(ok.body, page, ok.finalUrl),
-      (err) => Err(err),
+      Err.new,
     );
   }
 
@@ -343,7 +339,7 @@ class HomeUseCase {
       final json = jsonDecode(body) as Map<String, Object?>;
       final list = json['list'] as List?;
       if (list == null) {
-        return Err(
+        return const Err(
           LocalError(
             code: ErrorCode.spiderParseFailed,
             message: '首页数据格式非法',
@@ -384,7 +380,7 @@ class HomeUseCase {
       // 优先取 class（home 响应里 list 是影片），fallback 到 list（category 响应）。
       final list = json['class'] as List? ?? json['list'] as List?;
       if (list == null) {
-        return Err(
+        return const Err(
           LocalError(
             code: ErrorCode.spiderParseFailed,
             message: '分类数据格式非法',
@@ -428,7 +424,7 @@ class HomeUseCase {
       final total = (json['total'] as num?)?.toInt() ?? 0;
 
       if (list == null) {
-        return Err(
+        return const Err(
           LocalError(
             code: ErrorCode.spiderParseFailed,
             message: '分类详情数据格式非法',

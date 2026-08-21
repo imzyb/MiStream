@@ -4,8 +4,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:plugin_host/plugin_host.dart' show PluginManager;
+import 'package:plugin_host/src/plugin_manager.dart' show PluginManager;
 
-import 'plugin_manifest.dart';
+import 'package:plugin_host/src/plugin_manifest.dart';
 
 /// Loads plugins from zip archives or directories.
 ///
@@ -76,7 +78,7 @@ class PluginLoader {
   Future<IntegrityResult> verifyIntegrity(String pluginPath) async {
     final dir = Directory(pluginPath);
     if (!dir.existsSync()) {
-      return IntegrityResult(valid: false, hash: '');
+      return const IntegrityResult(valid: false, hash: '');
     }
 
     final bytes = BytesBuilder();

@@ -159,7 +159,6 @@ class MacosPlatformAdapter implements PlatformAdapter {
     supportsWebView: true,
     supportsBackground: true,
     supportsNotifications: true,
-    supportsSystemTray: false,
     libraryExtension: '.dylib',
   );
 }
@@ -196,11 +195,9 @@ class LinuxPlatformAdapter implements PlatformAdapter {
   @override
   PlatformConfig getConfig() => const PlatformConfig(
     type: PlatformType.linux,
-    supportsWebView: false,
     supportsBackground: true,
     supportsNotifications: true,
     supportsSystemTray: true,
-    libraryExtension: '.so',
   );
 }
 

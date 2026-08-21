@@ -51,7 +51,7 @@ class LibrarySection extends StatelessWidget {
                   ],
                 ),
               ),
-              if (action != null) action!,
+              ?action,
             ],
           ),
         ),

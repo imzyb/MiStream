@@ -164,7 +164,7 @@ void main() {
       expect(outcome.media!.headers['Referer'], page);
     });
 
-    test('转义成 \\/ 的 JS 地址能还原', () async {
+    test(r'转义成 \/ 的 JS 地址能还原', () async {
       const page = 'https://cdn.a.com/share/abc';
       const stream = 'https://cdn.a.com/2026/x/index.m3u8';
       final fetcher = _FakeFetcher({

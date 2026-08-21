@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'live_epg.dart';
+import 'package:live/src/live_epg.dart';
 
 /// Fetches and parses EPG (Electronic Program Guide) data from XMLTV sources.
 class EpgFetcher {

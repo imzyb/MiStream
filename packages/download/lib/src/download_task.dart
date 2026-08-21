@@ -1,5 +1,43 @@
 /// 下载任务模型。
 class DownloadTask {
+  const DownloadTask({
+    required this.id,
+    required this.title,
+    required this.url,
+    required this.savePath,
+    required this.createdAt,
+    required this.updatedAt,
+    this.status = DownloadStatus.pending,
+    this.progress = 0.0,
+    this.downloadedBytes = 0,
+    this.totalBytes = -1,
+    this.error,
+    this.downloadedSegments = 0,
+    this.totalSegments = -1,
+  });
+
+  /// 从JSON构造。
+  factory DownloadTask.fromJson(Map<String, dynamic> json) {
+    return DownloadTask(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      url: json['url'] as String? ?? '',
+      savePath: json['savePath'] as String? ?? '',
+      status: DownloadStatus.values.firstWhere(
+        (s) => s.name == json['status'],
+        orElse: () => DownloadStatus.pending,
+      ),
+      progress: (json['progress'] as num?)?.toDouble() ?? 0.0,
+      downloadedBytes: json['downloadedBytes'] as int? ?? 0,
+      totalBytes: json['totalBytes'] as int? ?? -1,
+      createdAt: json['createdAt'] as int? ?? 0,
+      updatedAt: json['updatedAt'] as int? ?? 0,
+      error: json['error'] as String?,
+      downloadedSegments: json['downloadedSegments'] as int? ?? 0,
+      totalSegments: json['totalSegments'] as int? ?? -1,
+    );
+  }
+
   /// 任务ID。
   final String id;
 
@@ -38,44 +76,6 @@ class DownloadTask {
 
   /// 总分片数（HLS，-1表示未知）。
   final int totalSegments;
-
-  const DownloadTask({
-    required this.id,
-    required this.title,
-    required this.url,
-    required this.savePath,
-    this.status = DownloadStatus.pending,
-    this.progress = 0.0,
-    this.downloadedBytes = 0,
-    this.totalBytes = -1,
-    required this.createdAt,
-    required this.updatedAt,
-    this.error,
-    this.downloadedSegments = 0,
-    this.totalSegments = -1,
-  });
-
-  /// 从JSON构造。
-  factory DownloadTask.fromJson(Map<String, dynamic> json) {
-    return DownloadTask(
-      id: json['id'] as String? ?? '',
-      title: json['title'] as String? ?? '',
-      url: json['url'] as String? ?? '',
-      savePath: json['savePath'] as String? ?? '',
-      status: DownloadStatus.values.firstWhere(
-        (s) => s.name == json['status'],
-        orElse: () => DownloadStatus.pending,
-      ),
-      progress: (json['progress'] as num?)?.toDouble() ?? 0.0,
-      downloadedBytes: json['downloadedBytes'] as int? ?? 0,
-      totalBytes: json['totalBytes'] as int? ?? -1,
-      createdAt: json['createdAt'] as int? ?? 0,
-      updatedAt: json['updatedAt'] as int? ?? 0,
-      error: json['error'] as String?,
-      downloadedSegments: json['downloadedSegments'] as int? ?? 0,
-      totalSegments: json['totalSegments'] as int? ?? -1,
-    );
-  }
 
   /// 转换为JSON。
   Map<String, dynamic> toJson() {

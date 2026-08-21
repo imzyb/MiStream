@@ -1,16 +1,15 @@
-import 'sniffer_result.dart';
-import 'sniffer_rule.dart';
-import 'media_detector.dart';
+import 'package:media_sniffer/src/media_detector.dart';
+import 'package:media_sniffer/src/sniffer_result.dart';
+import 'package:media_sniffer/src/sniffer_rule.dart';
 
 class SnifferEngine {
-  final MediaDetector _detector;
-  final List<SnifferRule> _rules;
-
   SnifferEngine({
     MediaDetector? detector,
     List<SnifferRule>? rules,
   }) : _detector = detector ?? MediaDetector(),
        _rules = rules ?? List.of(SnifferRule.defaults);
+  final MediaDetector _detector;
+  final List<SnifferRule> _rules;
 
   List<SnifferRule> get rules => List.unmodifiable(_rules);
 
@@ -113,15 +112,14 @@ class SnifferEngine {
 }
 
 class M3u8ParseResult {
-  final bool isMaster;
-  final List<M3u8StreamInfo> streams;
-  final List<String> segments;
-
   const M3u8ParseResult({
     required this.isMaster,
     this.streams = const [],
     this.segments = const [],
   });
+  final bool isMaster;
+  final List<M3u8StreamInfo> streams;
+  final List<String> segments;
 
   M3u8StreamInfo? get bestStream {
     if (streams.isEmpty) return null;
