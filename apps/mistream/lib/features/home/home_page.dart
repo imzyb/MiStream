@@ -32,7 +32,10 @@ void setGlobalHomeAssembly(AppAssembly? assembly) {
 
 /// 首页：展示推荐、分类与分类详情。
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({super.key, this.assembly});
+
+  /// 注入的装配（测试或上级注入），为空时回退到全局装配。
+  final AppAssembly? assembly;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -54,8 +57,11 @@ class _HomePageState extends State<HomePage> {
     unawaited(_loadData());
   }
 
+  AppAssembly? get _assembly =>
+      widget.assembly ?? globalHomeAssembly ?? globalRouterAssembly;
+
   Future<void> _loadData({bool forceRefresh = false}) async {
-    final assembly = globalHomeAssembly ?? globalRouterAssembly;
+    final assembly = _assembly;
     if (assembly == null) {
       if (mounted) setState(() => _loading = false);
       return;
@@ -121,7 +127,7 @@ class _HomePageState extends State<HomePage> {
     int page = 1,
     int? siteId,
   }) async {
-    final assembly = globalHomeAssembly ?? globalRouterAssembly;
+    final assembly = _assembly;
     if (assembly == null) return;
 
     final result = await assembly.homeUseCase.getCategoryDetail(
@@ -160,7 +166,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _navigateToDetail(HomeItem item) {
-    final assembly = globalHomeAssembly ?? globalRouterAssembly;
+    final assembly = _assembly;
     if (assembly == null) return;
     // 用「实际取数成功的那个站点」的 id，而不是列表里的第一个：首页数据可能
     // 来自轮询中的第 N 个源，拿错 id 会让详情页去一个空站点上查这条影片。
