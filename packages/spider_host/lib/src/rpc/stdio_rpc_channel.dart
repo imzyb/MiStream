@@ -49,6 +49,12 @@ class StdioRpcChannel {
   bool _closed = false;
   int _writeQueueLength = 0;
 
+  /// 在途请求数。
+  ///
+  /// 心跳用它判断子进程是「正忙于长任务」（如 JVM 首次 jar 转换）还是真的失联
+  /// ——有在途请求时子进程只是没空回 ping，不能算失联。
+  int get pendingCount => _pending.length;
+
   void _onData(List<int> data) {
     if (_closed) return;
     _processChunk(data);

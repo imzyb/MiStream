@@ -47,6 +47,8 @@ export 'src/runtime/spider_runtime_factory.dart'
     show
         HttpRuntimeAdapter,
         JsRuntimeAdapter,
+        JvmRuntimeAdapter,
+        SpiderJvmConfig,
         SpiderRuntime,
         SpiderRuntimeFactory,
         SpiderRuntimeType;

@@ -12,6 +12,7 @@ environment:
 dependencies:
   core_domain:
     path: ../core_domain
+  crypto: ^3.0.0
   meta: ^1.18.0
 
 dev_dependencies:

@@ -360,6 +360,9 @@ class SpiderHost {
     _heartbeatTimer = Timer.periodic(kHeartbeatInterval, (_) async {
       final channel = _channel;
       if (channel == null || !_handshaken) return;
+      // 有在途请求时子进程正忙于长任务（JVM 首次 jar 转换可达数十秒），
+      // 不是失联——跳过本次心跳，避免把健康的子进程误杀重启。
+      if (channel.pendingCount > 0) return;
       final result = await channel.call(
         'runtime.ping',
         timeout: const Duration(seconds: 5),
@@ -379,8 +382,15 @@ class SpiderHost {
   void _onProcessExit(String reason) {
     if (_disposed) return;
     _handshaken = false;
+    final old = _channel;
     _channel = null;
     _heartbeatTimer?.cancel();
+    // 心跳触发的重启里子进程通常还活着，必须先杀掉，否则变成僵尸进程
+    // 独占端口/资源；进程自然退出时这里只是无害的二次 kill。
+    if (old != null) {
+      unawaited(old.close());
+    }
+    _killProcess();
     _scheduleRestart(reason);
   }
 
