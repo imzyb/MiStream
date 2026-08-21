@@ -1,13 +1,25 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:download/src/download_progress.dart';
 import 'package:download/src/download_task.dart';
+import 'package:download/src/hls_downloader.dart';
+import 'package:download/src/http_download_client.dart';
 
 /// 下载管理器：管理多个下载任务。
 class DownloadManager {
+  DownloadManager({
+    HttpDownloadClient? httpClient,
+    HlsDownloader? hlsDownloader,
+  }) : _httpClient = httpClient ?? HttpDownloadClient(),
+       _hlsDownloader = hlsDownloader ?? HlsDownloader();
+
+  final HttpDownloadClient _httpClient;
+  final HlsDownloader _hlsDownloader;
   final Map<String, DownloadTask> _tasks = {};
   final Map<String, StreamController<DownloadProgress>> _progressControllers =
       {};
+  final Map<String, CancelToken> _cancelTokens = {};
   final List<void Function(DownloadTask)> _taskListeners = [];
 
   /// 获取所有任务。
@@ -62,13 +74,103 @@ class DownloadManager {
     _updateTask(task.copyWith(status: DownloadStatus.downloading));
 
     // 创建进度流
-    _progressControllers[taskId] =
+    _progressControllers[taskId] ??=
         StreamController<DownloadProgress>.broadcast();
+    final cancelToken = CancelToken();
+    _cancelTokens[taskId] = cancelToken;
 
-    // TODO: 实际实现需要调用HLS下载器或HTTP下载器
-    // 这里仅做状态演示
-    await Future<void>.delayed(const Duration(seconds: 1));
-    _updateTask(task.copyWith(status: DownloadStatus.completed, progress: 1));
+    final isHls = task.url.contains('.m3u8') || task.url.contains('m3u8');
+
+    try {
+      if (isHls) {
+        final result = await _hlsDownloader.download(
+          url: task.url,
+          savePath: task.savePath,
+          title: task.title,
+          cancelToken: cancelToken,
+          onProgress: (p) {
+            _updateTask(
+              task.copyWith(
+                progress: p.progress,
+                downloadedBytes: p.downloadedBytes,
+                totalBytes: p.totalBytes,
+                downloadedSegments: p.downloadedSegments,
+                totalSegments: p.totalSegments,
+                status: DownloadStatus.downloading,
+              ),
+            );
+          },
+        );
+        if (cancelToken.isCancelled) {
+          _updateTask(task.copyWith(status: DownloadStatus.paused));
+          return;
+        }
+        if (result.success) {
+          _updateTask(
+            task.copyWith(
+              status: DownloadStatus.completed,
+              progress: 1,
+              downloadedSegments: result.downloadedSegments,
+              totalSegments: result.totalSegments,
+              downloadedBytes: result.totalBytes,
+              totalBytes: result.totalBytes,
+            ),
+          );
+        } else {
+          _updateTask(
+            task.copyWith(
+              status: DownloadStatus.failed,
+              error: result.error,
+            ),
+          );
+        }
+      } else {
+        final result = await _httpClient.download(
+          url: task.url,
+          savePath: task.savePath,
+          onProgress: (received, total) {
+            if (cancelToken.isCancelled) return;
+            _updateTask(
+              task.copyWith(
+                downloadedBytes: received,
+                totalBytes: total ?? -1,
+                progress: total != null && total > 0 ? received / total : 0,
+                status: DownloadStatus.downloading,
+              ),
+            );
+          },
+        );
+        if (cancelToken.isCancelled) {
+          _updateTask(task.copyWith(status: DownloadStatus.paused));
+          return;
+        }
+        if (result.success) {
+          _updateTask(
+            task.copyWith(
+              status: DownloadStatus.completed,
+              progress: 1,
+              downloadedBytes: result.downloadedBytes,
+              totalBytes: result.totalBytes,
+            ),
+          );
+        } else {
+          _updateTask(
+            task.copyWith(
+              status: DownloadStatus.failed,
+              error: result.error,
+            ),
+          );
+        }
+      }
+    } on Object catch (e) {
+      if (cancelToken.isCancelled) {
+        _updateTask(task.copyWith(status: DownloadStatus.paused));
+      } else {
+        _updateTask(task.copyWith(status: DownloadStatus.failed, error: '$e'));
+      }
+    } finally {
+      _cancelTokens.remove(taskId);
+    }
   }
 
   /// 暂停下载。
@@ -77,6 +179,7 @@ class DownloadManager {
     if (task == null) throw StateError('Task not found: $taskId');
     if (task.status != DownloadStatus.downloading) return;
 
+    _cancelTokens[taskId]?.cancel();
     _updateTask(task.copyWith(status: DownloadStatus.paused));
   }
 
@@ -94,8 +197,19 @@ class DownloadManager {
     final task = _tasks[taskId];
     if (task == null) throw StateError('Task not found: $taskId');
 
+    _cancelTokens[taskId]?.cancel();
+    _cancelTokens.remove(taskId);
+    // 删除已下载的临时文件
+    try {
+      final f = File(task.savePath);
+      if (await f.exists()) await f.delete();
+      final dir = Directory(task.savePath);
+      if (await dir.exists()) await dir.delete(recursive: true);
+    } on Object {
+      // 忽略清理失败
+    }
     _updateTask(task.copyWith(status: DownloadStatus.cancelled));
-    _progressControllers[taskId]?.close();
+    await _progressControllers[taskId]?.close();
     _progressControllers.remove(taskId);
   }
 
@@ -188,6 +302,9 @@ class DownloadManager {
       controller.close();
     }
     _progressControllers.clear();
+    _cancelTokens.clear();
     _taskListeners.clear();
+    _httpClient.dispose();
+    _hlsDownloader.dispose();
   }
 }
