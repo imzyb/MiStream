@@ -9,6 +9,7 @@ class LiveChannel {
     this.channelNumber,
     this.isHd = false,
     this.updatedAt,
+    this.extraUrls = const [],
   });
 
   /// 从JSON构造。
@@ -22,6 +23,7 @@ class LiveChannel {
       channelNumber: json['channelNumber'] as int?,
       isHd: json['isHd'] as bool? ?? false,
       updatedAt: json['updatedAt'] as int?,
+      extraUrls: (json['extraUrls'] as List?)?.cast<String>() ?? const [],
     );
   }
 
@@ -49,6 +51,12 @@ class LiveChannel {
   /// 最后更新时间戳。
   final int? updatedAt;
 
+  /// 备用地址（同一频道名的多源，自动重试时按序尝试）。
+  final List<String> extraUrls;
+
+  /// 全部可试地址（主 + 备用）。
+  List<String> get allUrls => [url, ...extraUrls];
+
   /// 转换为JSON。
   Map<String, dynamic> toJson() {
     return {
@@ -60,6 +68,7 @@ class LiveChannel {
       if (channelNumber != null) 'channelNumber': channelNumber,
       'isHd': isHd,
       if (updatedAt != null) 'updatedAt': updatedAt,
+      if (extraUrls.isNotEmpty) 'extraUrls': extraUrls,
     };
   }
 
@@ -73,6 +82,7 @@ class LiveChannel {
     int? channelNumber,
     bool? isHd,
     int? updatedAt,
+    List<String>? extraUrls,
   }) {
     return LiveChannel(
       id: id ?? this.id,
@@ -83,6 +93,7 @@ class LiveChannel {
       channelNumber: channelNumber ?? this.channelNumber,
       isHd: isHd ?? this.isHd,
       updatedAt: updatedAt ?? this.updatedAt,
+      extraUrls: extraUrls ?? this.extraUrls,
     );
   }
 

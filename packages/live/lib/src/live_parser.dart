@@ -3,7 +3,13 @@ import 'package:live/src/live_group.dart';
 
 class LiveParser {
   LiveParseResult parse(String content) {
+    // txt 无 #EXTINF 时按 “频道名,url” 每行解析
+    if (!content.contains('#EXTINF')) {
+      return _parseTxt(content);
+    }
+
     final channels = <LiveChannel>[];
+    final channelByName = <String, LiveChannel>{};
     final groups = <LiveGroup>[];
     final groupMap = <String, LiveGroup>{};
     final seenUrls = <String>{};
@@ -27,11 +33,12 @@ class LiveParser {
         if (nameLine.isNotEmpty && !nameLine.startsWith('#')) {
           i++;
           if (i < lines.length) {
-            final url = lines[i].trim();
-            if (url.isNotEmpty &&
-                !url.startsWith('#') &&
-                !seenUrls.contains(url)) {
-              seenUrls.add(url);
+            final rawUrl = lines[i].trim();
+            final urls = _splitUrls(rawUrl);
+            for (final url in urls) {
+              if (url.isEmpty || url.startsWith('#') || !seenUrls.add(url)) {
+                continue;
+              }
 
               LiveGroup? group;
               final groupName = info['group'];
@@ -49,8 +56,16 @@ class LiveParser {
                 }
               }
 
-              channels.add(
-                LiveChannel(
+              final existing = channelByName[nameLine];
+              if (existing != null) {
+                // 同名频道：把新地址加入备用列表，供重试
+                final idx = channels.indexOf(existing);
+                channels[idx] = existing.copyWith(
+                  extraUrls: [...existing.extraUrls, url],
+                );
+                channelByName[nameLine] = channels[idx];
+              } else {
+                final ch = LiveChannel(
                   id: _generateId(url),
                   name: nameLine,
                   url: url,
@@ -59,8 +74,10 @@ class LiveParser {
                   isHd:
                       nameLine.contains('HD') ||
                       nameLine.contains('\u9ad8\u6e05'),
-                ),
-              );
+                );
+                channels.add(ch);
+                channelByName[nameLine] = ch;
+              }
             }
           }
         }
@@ -73,6 +90,62 @@ class LiveParser {
       channels: channels,
       groups: groups,
     );
+  }
+
+  LiveParseResult _parseTxt(String content) {
+    final channels = <LiveChannel>[];
+    final channelByName = <String, LiveChannel>{};
+    final seenUrls = <String>{};
+    for (final raw in content.split('\n')) {
+      final line = raw.trim();
+      if (line.isEmpty || line.startsWith('#')) continue;
+      // txt: 频道名,url 或 频道名,url1|url2
+      final comma = line.indexOf(',');
+      if (comma <= 0) continue;
+      final name = line.substring(0, comma).trim();
+      final urlPart = line.substring(comma + 1).trim();
+      if (name.isEmpty || urlPart.isEmpty) continue;
+      final urls = _splitUrls(urlPart);
+      for (final url in urls) {
+        if (!seenUrls.add(url)) continue;
+        final existing = channelByName[name];
+        if (existing != null) {
+          final idx = channels.indexOf(existing);
+          channels[idx] = existing.copyWith(
+            extraUrls: [...existing.extraUrls, url],
+          );
+          channelByName[name] = channels[idx];
+        } else {
+          final ch = LiveChannel(id: _generateId(url), name: name, url: url);
+          channels.add(ch);
+          channelByName[name] = ch;
+        }
+      }
+    }
+    return LiveParseResult(channels: channels, groups: const []);
+  }
+
+  List<String> _splitUrls(String raw) {
+    // 常见分隔：逗号、分号、竖线、空格
+    if (raw.contains(','))
+      return raw
+          .split(',')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
+    if (raw.contains('|'))
+      return raw
+          .split('|')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
+    if (raw.contains(';'))
+      return raw
+          .split(';')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
+    return [raw.trim()];
   }
 
   Map<String, String?> _parseExtInf(String line) {
