@@ -132,6 +132,10 @@ melos:
       description: 校验并安装 vendored QuickJS DLL 到 spider_js 引擎目录
       run: dart run tools/quickjs_dist/bin/quickjs_dist.dart install
 
+    jvm:build:
+      description: 编译 spider_jvm_runtime.jar（需 JDK17，libs 已随包）
+      run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_jvm_runtime.ps1
+
     spider-js:bundle:
       description: 编译并验证 Windows Spider JS AOT 运行时包
       run: >
