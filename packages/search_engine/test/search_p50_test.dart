@@ -55,7 +55,7 @@ void main() {
     final p95 = elapsedMs[(elapsedMs.length * 0.95).floor().clamp(0, runs - 1)];
 
     // 输出供 CI 日志观察
-    // ignore: avoid_print
+    // ignore: avoid_print -- 基准日志需打印
     print('P50=${p50}ms P95=${p95}ms samples=$elapsedMs');
 
     expect(p50, lessThan(3000), reason: 'P50 $p50 ms 超过 3s 预算');

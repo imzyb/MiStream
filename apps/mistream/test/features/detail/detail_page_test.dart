@@ -13,7 +13,7 @@ import 'package:storage/storage.dart';
 
 class _FakeDetailUseCase extends DetailUseCase {
   // 父类构造参数是库私有 `_sites`，跨库无法用 super 参数，只能显式转发。
-  // ignore: use_super_parameters
+  // ignore: use_super_parameters -- 父类私有字段无法用 super
   _FakeDetailUseCase(SiteRepository sites) : super(sites);
 
   @override
@@ -135,7 +135,7 @@ void main() {
 
 class _FailingDetailUseCase extends DetailUseCase {
   // 父类构造参数是库私有 `_sites`，跨库无法用 super 参数，只能显式转发。
-  // ignore: use_super_parameters
+  // ignore: use_super_parameters -- 父类私有字段无法用 super
   _FailingDetailUseCase(SiteRepository sites) : super(sites);
 
   @override

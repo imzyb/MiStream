@@ -9,7 +9,7 @@ import 'package:mistream/app/router.dart' show globalRouterAssembly;
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
 import 'package:mistream/features/settings/widgets/settings_section.dart';
 import 'package:mistream/features/settings/widgets/settings_tile.dart';
-import 'package:storage/storage.dart';
+import 'package:storage/storage.dart'; // ignore: layering -- 临时直连存储，M10后迁至 Application 层
 
 /// 全局装配实例，供设置页使用。
 AppAssembly? _globalAssembly;

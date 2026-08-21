@@ -152,12 +152,18 @@ Future<List<Violation>> checkForbiddenImports(
   final violations = <Violation>[];
   await for (final file in _dartFiles(dir)) {
     final content = await file.readAsString();
+    final lines = const LineSplitter().convert(content);
     for (final match in _directive.allMatches(content)) {
       final uri = match[2]!;
       if (!uri.startsWith('package:')) continue;
 
       final name = uri.substring('package:'.length).split('/').first;
       if (!forbidden.contains(name)) continue;
+
+      final lineIdx = _lineOf(content, match.start) - 1;
+      final line = lineIdx >= 0 && lineIdx < lines.length ? lines[lineIdx] : '';
+      // 允许 `// ignore: layering -- 理由` 显式豁免
+      if (line.contains('ignore:') && line.contains('layering')) continue;
 
       violations.add(
         Violation(
