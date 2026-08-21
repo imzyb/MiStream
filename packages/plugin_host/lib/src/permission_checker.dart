@@ -2,7 +2,10 @@ import 'package:plugin_host/src/plugin_manifest.dart';
 
 /// Checks whether a plugin has been granted required permissions.
 class PermissionChecker {
-  const PermissionChecker(this._grantedPermissions);
+  PermissionChecker(Map<String, List<PluginPermission>> granted)
+    : _grantedPermissions = {
+        for (final e in granted.entries) e.key: List.of(e.value),
+      };
 
   /// Permissions granted per plugin ID.
   final Map<String, List<PluginPermission>> _grantedPermissions;
