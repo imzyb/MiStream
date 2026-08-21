@@ -467,17 +467,17 @@ class JsRuntime {
 
     // 用 Function 包装，把 export xxx = 转为 __m__.xxx =
     var transformed = code
-      .replace(/export\s+default\s+/g, '__m__.default=')
-      .replace(/export\s+\{([^}]+)\}/g, function(_, names) {
+      .replace(/exports+defaults+/g, '__m__.default=')
+      .replace(/exports+{([^}]+)}/g, function(_, names) {
         return names.split(',').map(function(n) {
           n = n.trim();
-          var parts = n.split(/\s+as\s+/);
+          var parts = n.split(/s+ass+/);
           var local = parts[0].trim();
           var alias = (parts[1] || parts[0]).trim();
           return '__m__.' + alias + '=' + local + ';';
         }).join('');
       })
-      .replace(/export\s+(?:const|let|var|function)\s+/g, '__m__.');
+      .replace(/exports+(?:const|let|var|function)s+/g, '__m__.');
 
     var mod = {};
     var fn = Function('__m__', 'exports', 'module', 'require', transformed);

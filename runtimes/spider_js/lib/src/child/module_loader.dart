@@ -48,7 +48,7 @@ class ModuleDep {
     r'''\bimport\s*'''
     r'''(?:(\S+)\s+from\s*)?'''
     r'''(?:\{([^}]*)\}\s*from\s*)?'''
-    r'''["']([^"']+)["']''',
+    '''["']([^"']+)["']''',
   );
 
   final cleaned = StringBuffer();
@@ -214,7 +214,7 @@ String generateModuleLoader(
 
   // 转换 export 语句为 __m__ 赋值。正则全部允许无空白（minified 写法）：
   //   export default{...}  /  export{a as b,c as d}  /  export const a=1
-  var transformed = code
+  final transformed = code
       .replaceAllMapped(
         RegExp(r'export\s+default\s*'),
         (m) => '__m__.default = ',

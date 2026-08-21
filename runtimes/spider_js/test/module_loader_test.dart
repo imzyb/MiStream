@@ -5,7 +5,7 @@ void main() {
   group('parseImports', () {
     test('parses default import', () {
       final (deps, cleaned) = parseImports(
-        r'''import foo from "assets://lib/foo.js"; var x = 1;''',
+        '''import foo from "assets://lib/foo.js"; var x = 1;''',
       );
       expect(deps, hasLength(1));
       expect(deps[0].specifier, 'assets://lib/foo.js');
@@ -20,14 +20,14 @@ void main() {
       // The regex matches \S+ (default) before {…} (named) because of pattern order.
       // In practice, drpy2 only uses default imports, so this is acceptable.
       final (deps, cleaned) = parseImports(
-        r'''import {foo, bar as b} from "assets://lib/utils.js";''',
+        '''import {foo, bar as b} from "assets://lib/utils.js";''',
       );
       expect(deps, hasLength(1));
       expect(deps[0].specifier, 'assets://lib/utils.js');
     });
 
     test('parses multiple imports', () {
-      final script =
+      const script =
           'import a from "assets://a.js";\nimport {b} from "assets://b.js";\n'
           'import "assets://side.js";\nvar main = 1;';
       final (deps, cleaned) = parseImports(script);
@@ -43,7 +43,7 @@ void main() {
 
     test('handles minified format (no spaces)', () {
       final (deps, cleaned) = parseImports(
-        r'''import foo from"assets://lib/foo.js";import bar from"assets://lib/bar.js";''',
+        '''import foo from"assets://lib/foo.js";import bar from"assets://lib/bar.js";''',
       );
       expect(deps, hasLength(2));
       expect(deps[0].varName, 'foo');
@@ -52,7 +52,7 @@ void main() {
 
     test('handles Chinese identifiers', () {
       final (deps, cleaned) = parseImports(
-        r'''import 模板 from "assets://lib/模板.js";''',
+        '''import 模板 from "assets://lib/模板.js";''',
       );
       expect(deps, hasLength(1));
       expect(deps[0].varName, '模板');
@@ -118,7 +118,7 @@ void main() {
     });
 
     test('preserves non-export code', () {
-      final code = 'var x = 1; function home() { return x; }';
+      const code = 'var x = 1; function home() { return x; }';
       expect(stripExports(code), equals(code));
     });
   });

@@ -368,8 +368,9 @@ class RuntimeChild {
       final f = instance.runtime.lastFailure!;
       throw _RpcFailure(f.code, f.message, <String, Object?>{'stack': f.stack});
     }
-    if (raw == null || raw == 'null' || raw == 'undefined')
+    if (raw == null || raw == 'null' || raw == 'undefined') {
       return <String, Object?>{};
+    }
     try {
       return jsonDecode(raw) as Map<String, Object?>;
     } on FormatException {
