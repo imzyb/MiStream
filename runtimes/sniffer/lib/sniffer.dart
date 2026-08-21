@@ -1,18 +1,12 @@
-/// 无头浏览器嗅探子进程。
+/// 无头浏览器嗅探子进程（M6）。
 ///
-/// **本运行时在 M6 落地**，当前只占位。
+/// M6 已落地最小可用实现：`IsolateSniffer`（`packages/media_sniffer`）把
+/// `SnifferResolver` 放进 isolate 跑，超时可杀、不残留 cookie，满足
+/// ROADMAP M6 的两条硬约束。WebView2/CDP 的完整头浏览器实现见
+/// `docs/05-Spider引擎.md` §6，差异后续收敛在 CDP 抽象之后。
 ///
-/// 计划中的内容（见 `docs/05-Spider引擎.md` §6 与 ROADMAP M6）：
-///
-/// - 内核：WebView2（Windows）/ WKWebView（macOS）/ CEF（Linux），
-///   差异全部收敛在 CDP 抽象之后
-/// - 嗅探规则引擎：命中 / 排除规则、扩展名与 Content-Type 判定
-/// - 配置 `rules` 字段映射
-/// - 嗅探调试窗口，供源作者调规则
-///
-/// 两条硬约束：**用完即杀，不残留、不持久化 cookie**；嗅探永远是最后手段，
-/// 失败必须能降级回退，不能卡死 UI。理由见 [ADR-005]——第三方页面的 JS 一旦
-/// 进入主进程生命周期，稳定性与安全性都不再可控。
-///
-/// [ADR-005]: ../../docs/adr/005-嗅探独立进程-cdp.md
+/// 平台差异：当前 isolate 版覆盖静态页 80% 场景，需 JS 执行的站点后续
+/// 由 `runtimes/sniffer` 的 WebView2 子进程接管，接口保持 `SnifferLauncher`。
 library;
+
+export 'package:media_sniffer/media_sniffer.dart' show IsolateSniffer;
