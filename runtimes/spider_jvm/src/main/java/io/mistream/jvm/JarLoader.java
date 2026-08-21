@@ -372,6 +372,8 @@ public final class JarLoader {
             || name.startsWith("jdk/") || name.startsWith("sun/")
             || name.startsWith("com/sun/") || name.startsWith("org/w3c/")
             || name.startsWith("org/xml/") || name.startsWith("org/ietf/")
+            || name.startsWith("kotlin/") || name.startsWith("kotlinx/")
+            || name.startsWith("org/jetbrains/") || name.startsWith("org/intellij/")
             || name.startsWith("jrt-fs");
     }
 

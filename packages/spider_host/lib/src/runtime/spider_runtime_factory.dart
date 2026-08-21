@@ -16,6 +16,7 @@ import 'package:crypto/crypto.dart' as crypto;
 import 'package:spider_host/src/host/host_api.dart';
 import 'package:spider_host/src/host/spider_host.dart';
 import 'package:spider_host/src/runtime/http_runtime.dart';
+import 'package:spider_host/src/runtime/spider_codec.dart';
 
 /// 运行时类型。
 enum SpiderRuntimeType {
@@ -196,58 +197,7 @@ class JsRuntimeAdapter implements SpiderRuntime {
 
   Result<HttpResponseData, AppError> _parseResult(
     Result<Object?, AppError> result,
-  ) {
-    return result.fold(
-      (ok) {
-        final body = ok is Map<String, Object?>
-            ? _jsonEncodeMap(ok)
-            : (ok is Map
-                  ? _jsonEncodeMap(Map<String, Object?>.from(ok))
-                  : ok?.toString() ?? '');
-        return Ok(
-          HttpResponseData(
-            status: 200,
-            headers: const {},
-            body: body,
-            finalUrl: '',
-            elapsedMs: 0,
-          ),
-        );
-      },
-      Err.new,
-    );
-  }
-
-  String _jsonEncodeMap(Map<String, Object?> map) {
-    final entries = map.entries
-        .map((e) {
-          final value = e.value;
-          if (value is String) return '"${e.key}": "$value"';
-          if (value is num) return '"${e.key}": $value';
-          if (value is bool) return '"${e.key}": $value';
-          if (value is List) return '"${e.key}": ${_jsonEncodeList(value)}';
-          if (value is Map) {
-            return '"${e.key}": ${_jsonEncodeMap(value.cast<String, Object?>())}';
-          }
-          return '"${e.key}": null';
-        })
-        .join(', ');
-    return '{$entries}';
-  }
-
-  String _jsonEncodeList(List<Object?> list) {
-    final items = list
-        .map((e) {
-          if (e is String) return '"$e"';
-          if (e is num) return '$e';
-          if (e is bool) return '$e';
-          if (e is List) return _jsonEncodeList(e);
-          if (e is Map) return _jsonEncodeMap(e.cast<String, Object?>());
-          return 'null';
-        })
-        .join(', ');
-    return '[$items]';
-  }
+  ) => parseSpiderResult(result);
 
   @override
   Future<void> dispose() async {
@@ -353,58 +303,7 @@ class JvmRuntimeAdapter implements SpiderRuntime {
 
   Result<HttpResponseData, AppError> _parseResult(
     Result<Object?, AppError> result,
-  ) {
-    return result.fold(
-      (ok) {
-        final body = ok is Map<String, Object?>
-            ? _jsonEncodeMap(ok)
-            : (ok is Map
-                  ? _jsonEncodeMap(Map<String, Object?>.from(ok))
-                  : ok?.toString() ?? '');
-        return Ok(
-          HttpResponseData(
-            status: 200,
-            headers: const {},
-            body: body,
-            finalUrl: '',
-            elapsedMs: 0,
-          ),
-        );
-      },
-      Err.new,
-    );
-  }
-
-  String _jsonEncodeMap(Map<String, Object?> map) {
-    final entries = map.entries
-        .map((e) {
-          final value = e.value;
-          if (value is String) return '"${e.key}": "$value"';
-          if (value is num) return '"${e.key}": $value';
-          if (value is bool) return '"${e.key}": $value';
-          if (value is List) return '"${e.key}": ${_jsonEncodeList(value)}';
-          if (value is Map) {
-            return '"${e.key}": ${_jsonEncodeMap(value.cast<String, Object?>())}';
-          }
-          return '"${e.key}": null';
-        })
-        .join(', ');
-    return '{$entries}';
-  }
-
-  String _jsonEncodeList(List<Object?> list) {
-    final items = list
-        .map((e) {
-          if (e is String) return '"$e"';
-          if (e is num) return '$e';
-          if (e is bool) return '$e';
-          if (e is List) return _jsonEncodeList(e);
-          if (e is Map) return _jsonEncodeMap(e.cast<String, Object?>());
-          return 'null';
-        })
-        .join(', ');
-    return '[$items]';
-  }
+  ) => parseSpiderResult(result);
 
   @override
   Future<void> dispose() async {
@@ -677,38 +576,55 @@ class SpiderRuntimeFactory {
     final target = File('${cacheDir.path}${Platform.pathSeparator}$name');
     if (target.existsSync()) return target.path;
 
-    final client = HttpClient();
-    try {
-      final request = await client
-          .getUrl(Uri.parse(url))
-          .timeout(
-            const Duration(seconds: 15),
-          );
-      final response = await request.close().timeout(
-        const Duration(seconds: 15),
-      );
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        await response.drain<void>();
-        throw StateError('spider jar 下载失败: HTTP ${response.statusCode} ($url)');
+    // 带重试的下载：网络抖动时最多重试 2 次（共 3 次尝试）
+    List<int>? bytes;
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(Duration(seconds: 1 << (attempt - 1)));
       }
-      final bytes = await response.fold<List<int>>(
-        <int>[],
-        (a, b) => a..addAll(b),
-      );
-      if (expectedMd5 != null && expectedMd5.isNotEmpty) {
-        final actual = crypto.md5.convert(bytes).toString();
-        if (actual != expectedMd5.toLowerCase()) {
+      final client = HttpClient();
+      try {
+        final request = await client
+            .getUrl(Uri.parse(url))
+            .timeout(const Duration(seconds: 15));
+        final response = await request.close().timeout(
+          const Duration(seconds: 15),
+        );
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          await response.drain<void>();
           throw StateError(
-            'spider jar MD5 不匹配: 期望 $expectedMd5 实际 $actual ($url)',
+            'spider jar 下载失败: HTTP ${response.statusCode} ($url)',
           );
         }
+        bytes = await response.fold<List<int>>(
+          <int>[],
+          (a, b) => a..addAll(b),
+        );
+        break;
+      } on Object catch (e) {
+        lastError = e;
+        // MD5 不匹配属内容错误，不重试
+        if (e is StateError && e.message.contains('MD5 不匹配')) rethrow;
+        if (attempt == 2) break;
+      } finally {
+        client.close();
       }
-      await cacheDir.create(recursive: true);
-      await target.writeAsBytes(bytes, flush: true);
-      return target.path;
-    } finally {
-      client.close();
     }
+    if (bytes == null) {
+      throw StateError('spider jar 下载失败（重试 3 次后）: $lastError ($url)');
+    }
+    if (expectedMd5 != null && expectedMd5.isNotEmpty) {
+      final actual = crypto.md5.convert(bytes).toString();
+      if (actual != expectedMd5.toLowerCase()) {
+        throw StateError(
+          'spider jar MD5 不匹配: 期望 $expectedMd5 实际 $actual ($url)',
+        );
+      }
+    }
+    await cacheDir.create(recursive: true);
+    await target.writeAsBytes(bytes, flush: true);
+    return target.path;
   }
 
   static String _hashHex(String s) {

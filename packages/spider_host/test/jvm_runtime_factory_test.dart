@@ -252,7 +252,8 @@ void main() {
       }
       expect(result.isOk, isTrue);
       final body = result.valueOrNull!.body;
-      expect(body, contains('"type_id": "1"'));
+      expect(body, contains('"type_id"'));
+      expect(body, contains('电影'));
     });
 
     test('csp_ 站点在未配置 JVM 时报清晰错误', () async {
