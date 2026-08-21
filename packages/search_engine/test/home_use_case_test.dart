@@ -71,11 +71,19 @@ class _HomeFactory implements SpiderRuntimeFactory {
   String get spiderJsPath => '';
 
   @override
+  SpiderJvmConfig? get jvm => null;
+
+  @override
+  ProcessLauncher? get jvmLauncher => null;
+
+  @override
   Future<SpiderRuntime> create({
     required int typeCode,
     required String api,
     String? ext,
     String? sourceUrl,
+    String? spiderJarUrl,
+    String? spiderJarMd5,
   }) async => runtime;
 
   @override

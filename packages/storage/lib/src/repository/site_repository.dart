@@ -111,4 +111,13 @@ class SiteRepository {
     final row = await query.getSingleOrNull();
     return row?.read(db.configSources.spider);
   }
+
+  /// 获取站点所属配置源的 `spider` jar MD5（配置提供时用于下载校验）。
+  Future<String?> configSourceSpiderMd5(int siteId) async {
+    final query = db.select(db.configSources).join([
+      innerJoin(db.sites, db.sites.configId.equalsExp(db.configSources.id)),
+    ])..where(db.sites.id.equals(siteId));
+    final row = await query.getSingleOrNull();
+    return row?.read(db.configSources.spiderMd5);
+  }
 }

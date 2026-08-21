@@ -43,6 +43,12 @@ class PosterImage extends StatelessWidget {
       url!,
       fit: fit,
       gaplessPlayback: true,
+      headers: const {
+        // 不少封面图源带防盗链，按浏览器 UA 请求比 Flutter 默认的 Dart HttpClient
+        // 更容易命中白名单，避免整片封面 403 白块。
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
       frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
         if (wasSynchronouslyLoaded) return child;
         return AnimatedOpacity(

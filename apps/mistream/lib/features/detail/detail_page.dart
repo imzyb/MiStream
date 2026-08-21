@@ -22,6 +22,7 @@ class DetailPage extends StatefulWidget {
     required this.vodId,
     super.key,
     this.item,
+    this.useCase,
   });
 
   /// 站点 ID，用于查找 API 地址。
@@ -32,6 +33,9 @@ class DetailPage extends StatefulWidget {
 
   /// 从搜索结果传入的摘要信息（可选，用于即时展示标题/封面）。
   final SearchItem? item;
+
+  /// 可注入的详情用例（测试用）；`null` 时取 [AppScope] 装配里的默认实现。
+  final DetailUseCase? useCase;
 
   @override
   State<DetailPage> createState() => _DetailPageState();
@@ -60,7 +64,8 @@ class _DetailPageState extends State<DetailPage> {
       _error = null;
     });
 
-    final result = await AppScope.of(context).detailUseCase.load(
+    final useCase = widget.useCase ?? AppScope.of(context).detailUseCase;
+    final result = await useCase.load(
       siteId: widget.siteId,
       vodId: widget.vodId,
     );
@@ -84,10 +89,14 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Future<void> _refreshFavorite() async {
-    final liked = await AppScope.of(
-      context,
-    ).repositories.favorites.isFavorite(widget.siteId, widget.vodId);
-    if (mounted) setState(() => _favorite = liked);
+    try {
+      final liked = await AppScope.of(
+        context,
+      ).repositories.favorites.isFavorite(widget.siteId, widget.vodId);
+      if (mounted) setState(() => _favorite = liked);
+    } on Object {
+      // 收藏状态读取失败不影响详情浏览，保持未知态（收藏按钮禁用）。
+    }
   }
 
   Future<void> _toggleFavorite() async {

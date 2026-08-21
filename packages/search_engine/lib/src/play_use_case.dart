@@ -283,15 +283,22 @@ class PlayUseCase {
   /// 根据站点类型创建运行时。
   Future<SpiderRuntime> _createRuntime(Site site) async {
     if (runtimeFactory != null) {
+      // 查找配置源 URL（用于解析相对路径脚本）与 spider jar（csp_ 站点）
       String? sourceUrl;
+      String? spiderJarUrl;
+      String? spiderJarMd5;
       if (site.configId != null) {
         sourceUrl = await sites.configSourceUrl(site.id);
+        spiderJarUrl = await sites.configSourceSpider(site.id);
+        spiderJarMd5 = await sites.configSourceSpiderMd5(site.id);
       }
       return runtimeFactory!.create(
         typeCode: site.typeCode,
         api: site.api,
         ext: site.ext,
         sourceUrl: sourceUrl,
+        spiderJarUrl: spiderJarUrl,
+        spiderJarMd5: spiderJarMd5,
       );
     }
     // 降级：总是用 HttpRuntime

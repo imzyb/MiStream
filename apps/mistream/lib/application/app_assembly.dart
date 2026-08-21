@@ -25,6 +25,7 @@ class AppAssembly {
     _runtimeFactory = SpiderRuntimeFactory(
       spiderJsPath: exePath,
       hostApi: _hostApi,
+      jvm: _resolveJvmConfig(),
     );
 
     sourceProvider = StorageSourceProvider(repositories.sites);
@@ -35,7 +36,10 @@ class AppAssembly {
         runtimeFactory: _runtimeFactory,
       ),
     );
-    detailUseCase = DetailUseCase(repositories.sites);
+    detailUseCase = DetailUseCase(
+      repositories.sites,
+      runtimeFactory: _runtimeFactory,
+    );
     snifferResolver = SnifferResolver(
       fetcher: HttpSniffFetcher(timeout: const Duration(seconds: 6)).call,
       verifyDirectMedia: true,
@@ -88,6 +92,12 @@ class AppAssembly {
   /// 关闭底层资源。
   Future<void> dispose() => database.close();
 
+  /// 诊断：当前解析到的 JS 运行时路径。
+  static String debugSpiderJsPath() => _resolveSpiderJsPath();
+
+  /// 诊断：当前解析到的 JVM 配置；`null` 表示 JVM 不可用。
+  static SpiderJvmConfig? debugJvmConfig() => _resolveJvmConfig();
+
   /// 定位 spider_js_runtime 可执行文件。
   ///
   /// 开发时通过 `dart run` 执行 Dart 脚本；编译后优先使用同目录下的 exe。
@@ -108,6 +118,64 @@ class AppAssembly {
     }
     // fallback：假设在项目根目录下
     return 'runtimes/spider_js/bin/spider_js_runtime.dart';
+  }
+
+  /// 解析 JVM 运行时（spider_jvm）配置。
+  ///
+  /// 需要 java + 编译好的 spider_jvm_runtime.jar + libs 目录。找不到 java 或
+  /// jar 时返回 null（csp_ 站点将报「JVM 运行时未配置」）。
+  static SpiderJvmConfig? _resolveJvmConfig() {
+    final javaPath = _resolveJavaPath();
+    final base = _projectRoot();
+    final runtimeJar = File(
+      '${base.path}${Platform.pathSeparator}runtimes'
+      '${Platform.pathSeparator}spider_jvm${Platform.pathSeparator}build'
+      '${Platform.pathSeparator}spider_jvm_runtime.jar',
+    );
+    final libsDir = Directory(
+      '${base.path}${Platform.pathSeparator}runtimes'
+      '${Platform.pathSeparator}spider_jvm${Platform.pathSeparator}libs',
+    );
+    if (javaPath == null || !runtimeJar.existsSync() || !libsDir.existsSync()) {
+      return null;
+    }
+    final cacheDir = Directory(
+      '${Directory.systemTemp.path}'
+      '${Platform.pathSeparator}mistream-jvm-spiders',
+    );
+    return SpiderJvmConfig(
+      javaPath: javaPath,
+      runtimeJarPath: runtimeJar.path,
+      libsDirPath: libsDir.path,
+      jarCacheDir: cacheDir,
+    );
+  }
+
+  /// 定位 java 可执行文件：JAVA_HOME 优先，fallback 到 PATH 里的 `java`。
+  static String? _resolveJavaPath() {
+    final javaHome = Platform.environment['JAVA_HOME'];
+    if (javaHome != null && javaHome.isNotEmpty) {
+      final candidate = File(
+        '$javaHome${Platform.pathSeparator}bin'
+        '${Platform.pathSeparator}java.exe',
+      );
+      if (candidate.existsSync()) return candidate.path;
+    }
+    return null;
+  }
+
+  /// 向上找项目根目录（含 runtimes/ 的目录）。
+  static Directory _projectRoot() {
+    var dir = File(Platform.resolvedExecutable).parent;
+    for (var i = 0; i < 10; i++) {
+      if (Directory(
+        '${dir.path}${Platform.pathSeparator}runtimes',
+      ).existsSync()) {
+        return dir;
+      }
+      dir = dir.parent;
+    }
+    return Directory.current;
   }
 }
 
@@ -138,14 +206,20 @@ class _LazySearcher implements SpiderSearcher {
     }
     try {
       String? sourceUrl;
+      String? spiderJarUrl;
+      String? spiderJarMd5;
       if (site.configId != null) {
         sourceUrl = await sites.configSourceUrl(site.id);
+        spiderJarUrl = await sites.configSourceSpider(site.id);
+        spiderJarMd5 = await sites.configSourceSpiderMd5(site.id);
       }
       final runtime = await runtimeFactory!.create(
         typeCode: site.typeCode,
         api: site.api,
         ext: site.ext,
         sourceUrl: sourceUrl,
+        spiderJarUrl: spiderJarUrl,
+        spiderJarMd5: spiderJarMd5,
       );
       try {
         final result = await runtime.search(keyword: keyword);

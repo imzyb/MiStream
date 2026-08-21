@@ -232,6 +232,10 @@ String? findNativeLibrary(String name) {
     // 5. 同上但相对脚本位置（`dart run` 直接跑包内文件时）。
     if (scriptDir.isNotEmpty) '$scriptDir$sep$engineRel$sep$name',
     if (scriptDir.isNotEmpty) '$scriptDir${sep}engine$sep$name',
+    // 6. bin/ 脚本被宿主从任意 cwd 拉起时（如 `dart run <pkg>/bin/xx.dart`），
+    //    DLL 在包的 lib/src/engine，脚本上一级就是包根。
+    if (scriptDir.isNotEmpty)
+      '$scriptDir${sep}..${sep}lib${sep}src${sep}engine${sep}$name',
   ];
 
   for (final path in candidates) {

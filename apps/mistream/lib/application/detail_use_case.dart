@@ -4,6 +4,7 @@
 /// 由 `tools/arch_check` 强制），详情页的基础设施调用因此收在这里。
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:core_domain/core_domain.dart';
@@ -67,10 +68,13 @@ class VodDetail {
 
 /// 影片详情用例。
 class DetailUseCase {
-  /// 以站点仓储构造。
-  DetailUseCase(this._sites);
+  /// 以站点仓储构造；[runtimeFactory] 提供 type=3（JS/JVM Spider）运行时。
+  DetailUseCase(this._sites, {this.runtimeFactory});
 
   final SiteRepository _sites;
+
+  /// Spider 运行时工厂；`null` 时仅支持 type=1（HTTP JSON API）站点。
+  final SpiderRuntimeFactory? runtimeFactory;
 
   /// 加载 [siteId] 站点上 [vodId] 的详情。
   Future<Result<VodDetail, AppError>> load({
@@ -84,48 +88,109 @@ class DetailUseCase {
       );
     }
 
-    final result = await HttpRuntime(site.api).detail(ids: vodId);
-    return result.fold<Result<VodDetail, AppError>>(
-      (ok) {
-        try {
-          final json = jsonDecode(ok.body);
-          if (json is! Map<String, Object?>) {
-            return const Err<VodDetail, AppError>(
+    // 运行时创建失败（JVM 未配置/子进程启动失败）也要转成可展示的错误，
+    // 不能抛出去：详情页 `_load` 没有 try/catch，异常会让页面卡在骨架屏。
+    final SpiderRuntime runtime;
+    try {
+      runtime = await _createRuntime(site);
+    } on Object catch (e) {
+      return Err<VodDetail, AppError>(
+        LocalError(code: ErrorCode.invalidState, message: '详情加载失败: $e'),
+      );
+    }
+
+    try {
+      final result = await runtime
+          .detail(ids: vodId)
+          .timeout(const Duration(seconds: 10));
+      return result.fold<Result<VodDetail, AppError>>(
+        (ok) {
+          try {
+            final json = jsonDecode(ok.body);
+            if (json is! Map<String, Object?>) {
+              return const Err<VodDetail, AppError>(
+                LocalError(
+                  code: ErrorCode.invalidResultSchema,
+                  message: '详情返回不是 JSON 对象',
+                ),
+              );
+            }
+            final list = json['list'];
+            if (list is! List<Object?> || list.isEmpty) {
+              return const Err<VodDetail, AppError>(
+                LocalError(code: ErrorCode.emptyResult, message: '无详情数据'),
+              );
+            }
+            final first = list.first;
+            if (first is! Map<Object?, Object?>) {
+              return const Err<VodDetail, AppError>(
+                LocalError(
+                  code: ErrorCode.invalidResultSchema,
+                  message: '详情条目不是 JSON 对象',
+                ),
+              );
+            }
+            return Ok<VodDetail, AppError>(
+              parseDetail(
+                Map<String, Object?>.from(first),
+                baseUrl: ok.finalUrl,
+              ),
+            );
+          } on Object catch (e) {
+            return Err<VodDetail, AppError>(
               LocalError(
                 code: ErrorCode.invalidResultSchema,
-                message: '详情返回不是 JSON 对象',
+                message: '解析失败: $e',
               ),
             );
           }
-          final list = json['list'];
-          if (list is! List<Object?> || list.isEmpty) {
-            return const Err<VodDetail, AppError>(
-              LocalError(code: ErrorCode.emptyResult, message: '无详情数据'),
-            );
-          }
-          final first = list.first;
-          if (first is! Map<Object?, Object?>) {
-            return const Err<VodDetail, AppError>(
-              LocalError(
-                code: ErrorCode.invalidResultSchema,
-                message: '详情条目不是 JSON 对象',
-              ),
-            );
-          }
-          return Ok<VodDetail, AppError>(
-            parseDetail(Map<String, Object?>.from(first)),
-          );
-        } on Object catch (e) {
-          return Err<VodDetail, AppError>(
-            LocalError(
-              code: ErrorCode.invalidResultSchema,
-              message: '解析失败: $e',
-            ),
-          );
-        }
-      },
-      Err<VodDetail, AppError>.new,
-    );
+        },
+        Err<VodDetail, AppError>.new,
+      );
+    } on TimeoutException {
+      return const Err<VodDetail, AppError>(
+        LocalError(code: ErrorCode.timeout, message: '详情加载超时'),
+      );
+    } on Object catch (e) {
+      // detail 调用抛异常（子进程崩溃 / RPC 断开），转成可展示的错误。
+      return Err<VodDetail, AppError>(
+        LocalError(code: ErrorCode.runtimeCrashed, message: '详情加载失败: $e'),
+      );
+    } finally {
+      // 无论成功失败都要回收运行时，避免 JS/JVM 子进程泄漏。
+      try {
+        await runtime.dispose();
+      } on Object {
+        // 回收失败不掩盖业务结果。
+      }
+    }
+  }
+
+  /// 根据站点类型创建运行时。
+  ///
+  /// 与 `HomeUseCase`/`PlayUseCase` 同款：type=1 走 HTTP；type=3 走运行时工厂，
+  /// 并透传所属配置源的 URL 与 spider jar（csp_ 站点解析相对路径脚本/加载 jar）。
+  Future<SpiderRuntime> _createRuntime(Site site) async {
+    if (runtimeFactory != null) {
+      String? sourceUrl;
+      String? spiderJarUrl;
+      String? spiderJarMd5;
+      if (site.configId != null) {
+        sourceUrl = await _sites.configSourceUrl(site.id);
+        spiderJarUrl = await _sites.configSourceSpider(site.id);
+        spiderJarMd5 = await _sites.configSourceSpiderMd5(site.id);
+      }
+      return runtimeFactory!.create(
+        typeCode: site.typeCode,
+        api: site.api,
+        ext: site.ext,
+        sourceUrl: sourceUrl,
+        spiderJarUrl: spiderJarUrl,
+        spiderJarMd5: spiderJarMd5,
+      );
+    }
+    // 降级：总是用 HttpRuntime
+    return HttpRuntimeAdapter(HttpRuntime(site.api));
   }
 
   /// 把 TVBox `detail` 返回的单条记录解析为 [VodDetail]。
@@ -133,7 +198,12 @@ class DetailUseCase {
   /// 线路以 `$$$` 分隔（`vod_play_from`），各线路的剧集列表以 `##` 分隔
   /// （`vod_play_url`），线路内剧集以 `$` 分隔、`名称$地址` 成对出现。
   /// 公开以便单测直接喂样本，不必起 HTTP。
-  static VodDetail parseDetail(Map<String, Object?> vod) {
+  ///
+  /// [baseUrl] 为详情请求的最终 URL，用于把相对封面地址解析成完整 URL。
+  static VodDetail parseDetail(
+    Map<String, Object?> vod, {
+    String? baseUrl,
+  }) {
     final desc =
         (vod['vod_content'] as String?) ?? (vod['vod_blurb'] as String?) ?? '';
 
@@ -166,7 +236,7 @@ class DetailUseCase {
 
     return VodDetail(
       name: (vod['vod_name'] as String?) ?? '',
-      pic: vod['vod_pic'] as String?,
+      pic: _resolveImageUrl(vod['vod_pic'] as String?, baseUrl),
       year: vod['vod_year'] as String?,
       area: vod['vod_area'] as String?,
       genre: vod['vod_class'] as String?,
@@ -175,6 +245,20 @@ class DetailUseCase {
       flags: episodes.keys.toList(),
       episodes: episodes,
     );
+  }
+
+  /// 把相对图片地址解析成完整 URL（多数源返回绝对地址，直接透传）。
+  static String? _resolveImageUrl(String? url, String? baseUrl) {
+    if (url == null || url.isEmpty) return null;
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme) {
+      final base = Uri.tryParse(baseUrl ?? '');
+      if (base != null && base.hasScheme) {
+        return base.resolve(url).toString();
+      }
+      return url;
+    }
+    return url;
   }
 
   static String _stripHtml(String html) =>

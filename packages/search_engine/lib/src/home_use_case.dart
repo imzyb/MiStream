@@ -232,7 +232,7 @@ class HomeUseCase {
     }
     final result = await _trySites(siteList, (runtime) => runtime.home());
     return result.fold(
-      (ok) => _parseList(ok.body),
+      (ok) => _parseList(ok.body, ok.finalUrl),
       (err) => Err(err),
     );
   }
@@ -273,7 +273,7 @@ class HomeUseCase {
     final result = await _trySites(siteList, (runtime) => runtime.home());
     return result.fold(
       (ok) {
-        final recommends = _parseList(ok.body);
+        final recommends = _parseList(ok.body, ok.finalUrl);
         final categories = _parseCategories(ok.body);
         if (recommends.isErr) return Err(recommends.errorOrNull!);
         if (categories.isErr) return Err(categories.errorOrNull!);
@@ -308,7 +308,7 @@ class HomeUseCase {
       (runtime) => runtime.categoryDetail(typeId: typeId, page: page),
     );
     return result.fold(
-      (ok) => _parseCategoryDetail(ok.body, page),
+      (ok) => _parseCategoryDetail(ok.body, page, ok.finalUrl),
       (err) => Err(err),
     );
   }
@@ -316,23 +316,29 @@ class HomeUseCase {
   /// 根据站点类型创建运行时。
   Future<SpiderRuntime> _createRuntime(Site site) async {
     if (runtimeFactory != null) {
-      // 查找配置源 URL（用于解析相对路径脚本）
+      // 查找配置源 URL（用于解析相对路径脚本）与 spider jar（csp_ 站点）
       String? sourceUrl;
+      String? spiderJarUrl;
+      String? spiderJarMd5;
       if (site.configId != null) {
         sourceUrl = await sites.configSourceUrl(site.id);
+        spiderJarUrl = await sites.configSourceSpider(site.id);
+        spiderJarMd5 = await sites.configSourceSpiderMd5(site.id);
       }
       return runtimeFactory!.create(
         typeCode: site.typeCode,
         api: site.api,
         ext: site.ext,
         sourceUrl: sourceUrl,
+        spiderJarUrl: spiderJarUrl,
+        spiderJarMd5: spiderJarMd5,
       );
     }
     // 降级：总是用 HttpRuntime
     return HttpRuntimeAdapter(HttpRuntime(site.api));
   }
 
-  Result<List<HomeItem>, AppError> _parseList(String body) {
+  Result<List<HomeItem>, AppError> _parseList(String body, String? baseUrl) {
     try {
       final json = jsonDecode(body) as Map<String, Object?>;
       final list = json['list'] as List?;
@@ -353,7 +359,7 @@ class HomeUseCase {
         return HomeItem(
           vodId: '${map['vod_id'] ?? ''}',
           vodName: (map['vod_name'] as String?) ?? '',
-          vodPic: map['vod_pic'] as String?,
+          vodPic: _resolveImageUrl(map['vod_pic'] as String?, baseUrl),
           vodRemarks: map['vod_remarks'] as String?,
           vodYear: map['vod_year'] as String?,
         );
@@ -410,6 +416,7 @@ class HomeUseCase {
   Result<CategoryDetailResult, AppError> _parseCategoryDetail(
     String body,
     int page,
+    String? baseUrl,
   ) {
     try {
       final json = jsonDecode(body) as Map<String, Object?>;
@@ -437,7 +444,7 @@ class HomeUseCase {
         return HomeItem(
           vodId: '${map['vod_id'] ?? ''}',
           vodName: (map['vod_name'] as String?) ?? '',
-          vodPic: map['vod_pic'] as String?,
+          vodPic: _resolveImageUrl(map['vod_pic'] as String?, baseUrl),
           vodRemarks: map['vod_remarks'] as String?,
           vodYear: map['vod_year'] as String?,
         );
@@ -458,5 +465,22 @@ class HomeUseCase {
         ),
       );
     }
+  }
+
+  /// 把相对图片地址解析成完整 URL。
+  ///
+  /// 不少源返回的 `vod_pic` 是相对路径（如 `/upload/xx.jpg`），`Image.network`
+  /// 无法直接加载，需按请求的最终 URL 补全协议与主机。
+  String? _resolveImageUrl(String? url, String? baseUrl) {
+    if (url == null || url.isEmpty) return null;
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme) {
+      final base = Uri.tryParse(baseUrl ?? '');
+      if (base != null && base.hasScheme) {
+        return base.resolve(url).toString();
+      }
+      return url;
+    }
+    return url;
   }
 }

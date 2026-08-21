@@ -45,6 +45,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  test: ^1.31.0
 
 # 不引 flutter_lints：全仓库统一用根 analysis_options.yaml 的 very_good_analysis，
 # 两套规则集叠加只会产生互相矛盾的告警（docs/10-开发规范.md §3.1）。

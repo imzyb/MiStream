@@ -81,6 +81,8 @@ class _FakeFactory implements SpiderRuntimeFactory {
     required String api,
     String? ext,
     String? sourceUrl,
+    String? spiderJarUrl,
+    String? spiderJarMd5,
   }) async => runtime;
 
   @override
@@ -88,6 +90,12 @@ class _FakeFactory implements SpiderRuntimeFactory {
 
   @override
   HostApi get hostApi => throw UnimplementedError();
+
+  @override
+  SpiderJvmConfig? get jvm => null;
+
+  @override
+  ProcessLauncher? get jvmLauncher => null;
 
   @override
   Future<void> dispose() async {}
