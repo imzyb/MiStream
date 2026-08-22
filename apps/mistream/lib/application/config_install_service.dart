@@ -5,7 +5,10 @@
 /// （`docs/10` §3.3，由 `tools/arch_check` 强制）。
 library;
 
+import 'dart:io';
+
 import 'package:core_config/core_config.dart';
+import 'package:core_domain/core_domain.dart';
 import 'package:storage/storage.dart';
 
 /// 引导完成标记的设置键。
@@ -76,5 +79,52 @@ class ConfigInstallService {
 
     await markOnboardingDone();
     return result.config.sites.length;
+  }
+
+  /// 从 URL 拉取并安装配置，`replace` 为真时先清空旧订阅。
+  Future<Result<int, AppError>> installFromUrl(
+    String url, {
+    bool replace = true,
+    String? aesKey,
+  }) async {
+    try {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 10);
+      final req = await client
+          .getUrl(Uri.parse(url))
+          .timeout(
+            const Duration(seconds: 10),
+          );
+      final resp = await req.close().timeout(const Duration(seconds: 15));
+      if (resp.statusCode < 200 || resp.statusCode >= 300) {
+        await resp.drain<void>();
+        return Err(
+          RemoteError(
+            code: ErrorCode.configFetchFailed,
+            message: '订阅拉取失败 HTTP ${resp.statusCode}',
+          ),
+        );
+      }
+      final bytes = await resp.fold<List<int>>(
+        <int>[],
+        (a, b) => a..addAll(b),
+      );
+      client.close();
+      final result = ConfigImportService.import(bytes, aesKey: aesKey);
+      if (result.isErr) return Err(result.errorOrNull!);
+      if (replace) {
+        // 清理旧订阅与站点（保留收藏/历史）
+        await _repositories.sites.clear();
+        await _repositories.configSources.clear();
+      }
+      final count = await install(
+        result.valueOrNull!,
+        name: '订阅 ${DateTime.now().toIso8601String().substring(0, 10)}',
+        sourceUrl: url,
+      );
+      return Ok(count);
+    } on Object catch (e, st) {
+      return Err(AppError.from(e, st));
+    }
   }
 }

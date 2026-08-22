@@ -40,6 +40,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   bool _loading = true;
   List<Site> _sites = [];
+  List<ConfigSource> _sources = [];
   int _cacheSize = 0;
   int _historyCount = 0;
   int _favoriteCount = 0;
@@ -63,6 +64,7 @@ class _SettingsPageState extends State<SettingsPage> {
       final sites = await assembly.repositories.sites.enabled(
         searchable: false,
       );
+      final sources = await assembly.repositories.configSources.all();
       final cacheSize = await _getCacheSize(assembly.database);
       final historyCount = await assembly.repositories.histories
           .recent(limit: 1000)
@@ -74,6 +76,7 @@ class _SettingsPageState extends State<SettingsPage> {
       if (mounted) {
         setState(() {
           _sites = sites;
+          _sources = sources;
           _cacheSize = cacheSize;
           _historyCount = historyCount;
           _favoriteCount = favoriteCount;
@@ -200,6 +203,91 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _showAddSubscription({bool replace = false}) async {
+    final controller = TextEditingController();
+    final url = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(replace ? '更换订阅' : '添加订阅'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                hintText: 'https://example.com/config.json',
+                labelText: '订阅 URL',
+              ),
+              autofocus: true,
+            ),
+            if (replace)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  '将清空现有站点并导入新订阅',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: Text(replace ? '更换' : '添加'),
+          ),
+        ],
+      ),
+    );
+    if (url == null || url.isEmpty) return;
+    final assembly = globalAssembly ?? globalRouterAssembly;
+    if (assembly == null) return;
+    // 简单校验
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme) {
+      _showError('URL 格式不正确');
+      return;
+    }
+    _showError(replace ? '正在更换订阅...' : '正在添加订阅...');
+    final result = await assembly.configInstaller.installFromUrl(
+      url,
+      replace: replace,
+    );
+    result.fold(
+      (count) {
+        _showError('成功导入 $count 个站点');
+        unawaited(_loadData());
+      },
+      (err) => _showError('导入失败: ${err.message}'),
+    );
+  }
+
+  Future<void> _refreshSubscription() async {
+    if (_sources.isEmpty) return;
+    final assembly = globalAssembly ?? globalRouterAssembly;
+    if (assembly == null) return;
+    final url = _sources.first.url;
+    if (url == null || url.isEmpty) {
+      _showError('当前订阅无 URL，无法刷新');
+      return;
+    }
+    _showError('正在刷新订阅...');
+    final result = await assembly.configInstaller.installFromUrl(
+      url,
+      replace: true,
+    );
+    result.fold(
+      (count) {
+        _showError('刷新成功 $count 个站点');
+        unawaited(_loadData());
+      },
+      (err) => _showError('刷新失败: ${err.message}'),
+    );
+  }
+
   void _showThemeDialog() {
     showDialog<void>(
       context: context,
@@ -255,6 +343,48 @@ class _SettingsPageState extends State<SettingsPage> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                // 订阅
+                SettingsSection(
+                  title: '订阅',
+                  subtitle: _sources.isEmpty
+                      ? '未设置订阅'
+                      : '${_sources.length} 个订阅 · ${_sites.length} 个站点',
+                  children: [
+                    if (_sources.isEmpty)
+                      const SettingsTile(
+                        title: '暂无订阅',
+                        subtitle: '添加订阅 URL 以获取站点',
+                        leading: Icon(Icons.link_off_outlined),
+                      )
+                    else
+                      ..._sources.map(
+                        (s) => SettingsTile(
+                          title: s.name,
+                          subtitle: s.url ?? '本地导入',
+                          leading: const Icon(Icons.link_outlined),
+                        ),
+                      ),
+                    SettingsTile(
+                      title: '添加订阅',
+                      subtitle: '输入 TVBox 配置 URL',
+                      leading: const Icon(Icons.add_link_outlined),
+                      onTap: _showAddSubscription,
+                    ),
+                    SettingsTile(
+                      title: '更换订阅',
+                      subtitle: '输入新 URL 并替换现有站点',
+                      leading: const Icon(Icons.swap_horiz_outlined),
+                      onTap: () => _showAddSubscription(replace: true),
+                    ),
+                    SettingsTile(
+                      title: '刷新订阅',
+                      subtitle: '重新拉取当前订阅',
+                      leading: const Icon(Icons.refresh_outlined),
+                      onTap: _sources.isEmpty ? null : _refreshSubscription,
+                    ),
+                  ],
+                ),
+
                 // 源管理
                 SettingsSection(
                   title: '源管理',
