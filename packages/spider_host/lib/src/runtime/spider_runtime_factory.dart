@@ -658,6 +658,15 @@ class SpiderRuntimeFactory {
     if (ext == null || ext.isEmpty) return ext;
     if (ext.startsWith('http://') || ext.startsWith('https://')) return ext;
     if (sourceUrl == null || sourceUrl.isEmpty) return ext;
+    final trimmed = ext.trimLeft();
+    if (trimmed.startsWith('var ') ||
+        trimmed.startsWith('const ') ||
+        trimmed.startsWith('let ') ||
+        trimmed.startsWith('var\t') ||
+        trimmed.startsWith('const\t') ||
+        trimmed.startsWith('let\t')) {
+      return ext;
+    }
     final looksRelative =
         ext.startsWith('./') ||
         ext.startsWith('../') ||

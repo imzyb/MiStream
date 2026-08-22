@@ -205,28 +205,26 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('主题模式'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            RadioListTile<ThemeMode>(
-              title: const Text('跟随系统'),
-              value: ThemeMode.system,
-              groupValue: _themeMode,
-              onChanged: (v) => _setThemeMode(v!),
-            ),
-            RadioListTile<ThemeMode>(
-              title: const Text('亮色'),
-              value: ThemeMode.light,
-              groupValue: _themeMode,
-              onChanged: (v) => _setThemeMode(v!),
-            ),
-            RadioListTile<ThemeMode>(
-              title: const Text('深色'),
-              value: ThemeMode.dark,
-              groupValue: _themeMode,
-              onChanged: (v) => _setThemeMode(v!),
-            ),
-          ],
+        content: RadioGroup<ThemeMode>(
+          groupValue: _themeMode,
+          onChanged: (v) => _setThemeMode(v!),
+          child: const Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioListTile<ThemeMode>(
+                title: Text('跟随系统'),
+                value: ThemeMode.system,
+              ),
+              RadioListTile<ThemeMode>(
+                title: Text('亮色'),
+                value: ThemeMode.light,
+              ),
+              RadioListTile<ThemeMode>(
+                title: Text('深色'),
+                value: ThemeMode.dark,
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(

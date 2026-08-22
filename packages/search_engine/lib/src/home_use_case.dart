@@ -503,18 +503,16 @@ class HomeUseCase {
   /// 把相对图片地址解析成完整 URL。
   ///
   /// 不少源返回的 `vod_pic` 是相对路径（如 `/upload/xx.jpg`），`Image.network`
-  /// 无法直接加载，需按请求的最终 URL 补全协议与主机。
+  /// 无法直接加载，需按 site.api 的 origin 补全。
   String? _resolveImageUrl(String? url, String? baseUrl) {
     if (url == null || url.isEmpty) return null;
     final uri = Uri.tryParse(url);
-    if (uri == null || !uri.hasScheme) {
-      final base = Uri.tryParse(baseUrl ?? '');
-      if (base != null && base.hasScheme) {
-        return base.resolve(url).toString();
-      }
-      return url;
-    }
-    return url;
+    if (uri != null && uri.hasScheme) return url;
+    final base = Uri.tryParse(baseUrl ?? '');
+    if (base == null || !base.hasScheme) return url;
+    if (url.startsWith('//')) return '${base.scheme}:$url';
+    if (url.startsWith('/')) return '${base.scheme}://${base.authority}$url';
+    return base.resolve(url).toString();
   }
 }
 
