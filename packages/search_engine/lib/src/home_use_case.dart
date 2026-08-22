@@ -289,7 +289,10 @@ class HomeUseCase {
     final result = await _trySites(siteList, (runtime) => runtime.home());
     return result.fold(
       (ok) {
-        final recommends = _parseList(ok.body, ok.finalUrl);
+        final base = ok.finalUrl.isNotEmpty
+            ? ok.finalUrl
+            : workingSite?.api ?? '';
+        final recommends = _parseList(ok.body, base);
         final categories = _parseCategories(ok.body);
         if (recommends.isErr) return Err(recommends.errorOrNull!);
         if (categories.isErr) return Err(categories.errorOrNull!);
@@ -298,7 +301,7 @@ class HomeUseCase {
           categories: categories.valueOrNull!,
         );
         final site = workingSite;
-        if (site != null) {
+        if (site != null && data.categories.isNotEmpty) {
           _homeCache[cacheKey] = _CachedHome(data, site, DateTime.now());
         }
         return Ok(data);
@@ -327,7 +330,12 @@ class HomeUseCase {
       (runtime) => runtime.categoryDetail(typeId: typeId, page: page),
     );
     return result.fold(
-      (ok) => _parseCategoryDetail(ok.body, page, ok.finalUrl),
+      (ok) {
+        final base = ok.finalUrl.isNotEmpty
+            ? ok.finalUrl
+            : workingSite?.api ?? '';
+        return _parseCategoryDetail(ok.body, page, base);
+      },
       Err.new,
     );
   }
@@ -401,7 +409,13 @@ class HomeUseCase {
       // Apple CMS v2 category: {"list":[{type_id, type_name}]}
       // TVBox 标准: {"class": [{"type_id":"1", "type_name":"电影"}]}
       // 优先取 class（home 响应里 list 是影片），fallback 到 list（category 响应）。
-      final list = json['class'] as List? ?? json['list'] as List?;
+      final list =
+          json['class'] as List? ??
+          json['list'] as List? ??
+          json['data'] as List? ??
+          json['category'] as List? ??
+          json['categories'] as List? ??
+          json['types'] as List?;
       if (list == null) {
         return const Err(
           LocalError(

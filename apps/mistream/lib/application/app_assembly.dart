@@ -102,22 +102,26 @@ class AppAssembly {
   ///
   /// 开发时通过 `dart run` 执行 Dart 脚本；编译后优先使用同目录下的 exe。
   static String _resolveSpiderJsPath() {
+    final sep = Platform.pathSeparator;
     // 编译后：exe 旁边有 spider_js_runtime.exe
     final exeDir = File(Platform.resolvedExecutable).parent;
-    final compiledExe = File('${exeDir.path}\\spider_js_runtime.exe');
+    final compiledExe = File('${exeDir.path}$sep${'spider_js_runtime.exe'}');
     if (compiledExe.existsSync()) return compiledExe.path;
 
-    // 开发时：通过 dart run 执行脚本
-    // 向上找 runtimes/spider_js/bin/spider_js_runtime.dart
+    // 开发时：向上找 runtimes/spider_js/bin/spider_js_runtime.dart
     var dir = exeDir;
-    for (var i = 0; i < 10; i++) {
+    for (var i = 0; i < 12; i++) {
       dir = dir.parent;
       final scriptPath =
-          '${dir.path}\\runtimes\\spider_js\\bin\\spider_js_runtime.dart';
+          '${dir.path}${sep}runtimes${sep}spider_js${sep}bin${sep}spider_js_runtime.dart';
       if (File(scriptPath).existsSync()) return scriptPath;
     }
-    // fallback：假设在项目根目录下
-    return 'runtimes/spider_js/bin/spider_js_runtime.dart';
+    // 额外：从当前工作目录找（flutter run 时 Directory.current 为项目根）
+    final cwdScript =
+        '${Directory.current.path}${sep}runtimes${sep}spider_js${sep}bin${sep}spider_js_runtime.dart';
+    if (File(cwdScript).existsSync()) return cwdScript;
+    // fallback：相对路径，依赖 melos 相对根
+    return 'runtimes${sep}spider_js${sep}bin${sep}spider_js_runtime.dart';
   }
 
   /// 解析 JVM 运行时（spider_jvm）配置。

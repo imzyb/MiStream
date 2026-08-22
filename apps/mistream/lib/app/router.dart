@@ -4,6 +4,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:media_kit_video/media_kit_video.dart' as mkv;
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
@@ -272,6 +273,7 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
   Timer? _historyTimer;
   Duration? _resumeAt;
   String? _error;
+  bool _isFullscreen = false;
 
   @override
   void initState() {
@@ -362,6 +364,9 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
     // 引擎持有 libmpv 实例，必须显式释放，否则离开播放页后 mpv 还在后台解码。
     final engine = _engine;
     if (engine != null) unawaited(engine.dispose());
+    if (_isFullscreen) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
     super.dispose();
   }
 
@@ -473,6 +478,15 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
     }
   }
 
+  void _toggleFullscreen() {
+    setState(() => _isFullscreen = !_isFullscreen);
+    if (_isFullscreen) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    } else {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final error = _error;
@@ -512,6 +526,7 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
         ),
       ),
       title: widget.title,
+      onToggleFullscreen: _toggleFullscreen,
     );
   }
 }
