@@ -67,6 +67,11 @@ class ScaffoldWithNavBar extends StatelessWidget {
             selectedIcon: Icon(Icons.bookmark),
             label: '资源库',
           ),
+          NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: '设置',
+          ),
         ],
       ),
     );
@@ -118,6 +123,11 @@ class _DesktopRail extends StatelessWidget {
           selectedIcon: Icon(Icons.bookmark),
           label: Text('资源库'),
         ),
+        NavigationRailDestination(
+          icon: Icon(Icons.settings_outlined),
+          selectedIcon: Icon(Icons.settings),
+          label: Text('设置'),
+        ),
       ],
       trailing: Expanded(
         child: Align(
@@ -129,11 +139,6 @@ class _DesktopRail extends StatelessWidget {
                 icon: const Icon(Icons.search_outlined),
                 tooltip: '搜索',
                 onPressed: () => context.pushNamed('search'),
-              ),
-              IconButton(
-                icon: const Icon(Icons.settings_outlined),
-                tooltip: '设置',
-                onPressed: () => context.pushNamed('settings'),
               ),
               const SizedBox(height: 8),
             ],

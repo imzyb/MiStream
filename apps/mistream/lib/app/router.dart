@@ -140,6 +140,15 @@ List<RouteBase> get _routes => [
           ),
         ],
       ),
+      StatefulShellBranch(
+        routes: [
+          GoRoute(
+            path: '/settings',
+            name: 'settings',
+            builder: (context, state) => const SettingsPage(),
+          ),
+        ],
+      ),
     ],
   ),
   GoRoute(
@@ -162,11 +171,6 @@ List<RouteBase> get _routes => [
     path: '/search',
     name: 'search',
     builder: (context, state) => const SearchPage(),
-  ),
-  GoRoute(
-    path: '/settings',
-    name: 'settings',
-    builder: (context, state) => const SettingsPage(),
   ),
   GoRoute(
     path: '/sniffer-settings',

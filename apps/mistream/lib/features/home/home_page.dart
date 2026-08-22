@@ -9,7 +9,7 @@ import 'package:mistream/app/router.dart' show globalRouterAssembly;
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
 import 'package:mistream/features/common/common.dart'
     show
-        BreakpointContext,
+        BreakpointContext, // ignore: unused_shown_name -- 提供 context.isDesktop 扩展
         EmptyView,
         ErrorView,
         ResponsiveGridView,
@@ -308,21 +308,13 @@ class _HomePageState extends State<HomePage> {
                 ),
               )
             : const Text('MiStream'),
-        actions: context.isDesktop
-            // 桌面端搜索/设置已移到左侧导航栏，避免同一图标出现两次。
-            ? null
-            : [
-                IconButton(
-                  icon: const Icon(Icons.search),
-                  onPressed: () => context.pushNamed('search'),
-                  tooltip: '搜索',
-                ),
-                IconButton(
-                  icon: const Icon(Icons.settings),
-                  onPressed: () => context.pushNamed('settings'),
-                  tooltip: '设置',
-                ),
-              ],
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.search),
+            onPressed: () => context.pushNamed('search'),
+            tooltip: '搜索',
+          ),
+        ],
       ),
       body: _loading
           ? const _HomeSkeleton()
