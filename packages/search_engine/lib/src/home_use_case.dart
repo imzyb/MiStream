@@ -287,8 +287,8 @@ class HomeUseCase {
       );
     }
     final result = await _trySites(siteList, (runtime) => runtime.home());
-    return result.fold(
-      (ok) {
+    return await result.fold(
+      (ok) async {
         final base = ok.finalUrl.isNotEmpty
             ? ok.finalUrl
             : workingSite?.api ?? '';
@@ -296,17 +296,35 @@ class HomeUseCase {
         final categories = _parseCategories(ok.body);
         if (recommends.isErr) return Err(recommends.errorOrNull!);
         if (categories.isErr) return Err(categories.errorOrNull!);
+        var catList = categories.valueOrNull!;
+        // 部分源 videolist 不带 class，尝试用 category 接口补全
+        if (catList.isEmpty) {
+          final catResult = await _trySites(
+            siteList,
+            (runtime) => runtime.category(),
+          );
+          catResult.fold(
+            (ok2) {
+              final parsed = _parseCategories(ok2.body);
+              if (parsed.isOk && parsed.valueOrNull!.isNotEmpty) {
+                catList = parsed.valueOrNull!;
+              }
+            },
+            (_) {},
+          );
+        }
         final data = HomeData(
           recommends: recommends.valueOrNull!,
-          categories: categories.valueOrNull!,
+          categories: catList,
         );
         final site = workingSite;
-        if (site != null && data.categories.isNotEmpty) {
+        if (site != null &&
+            (data.categories.isNotEmpty || data.recommends.isNotEmpty)) {
           _homeCache[cacheKey] = _CachedHome(data, site, DateTime.now());
         }
         return Ok(data);
       },
-      Err.new,
+      (err) async => Err(err),
     );
   }
 
