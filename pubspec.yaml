@@ -35,7 +35,7 @@ workspace:
   - tools/commit_lint
 
 dev_dependencies:
-  melos: ^8.2.2
+  melos: ^8.6.0
   very_good_analysis: ^10.3.0
 
 melos:
