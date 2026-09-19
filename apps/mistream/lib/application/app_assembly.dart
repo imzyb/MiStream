@@ -11,6 +11,7 @@ import 'package:media_sniffer/media_sniffer.dart';
 import 'package:mistream/application/config_install_service.dart';
 import 'package:mistream/application/detail_use_case.dart';
 import 'package:search_engine/search_engine.dart';
+import 'package:sniffer/sniffer.dart';
 import 'package:source_adapter/source_adapter.dart';
 import 'package:spider_host/spider_host.dart';
 import 'package:storage/storage.dart';
@@ -44,10 +45,14 @@ class AppAssembly {
       fetcher: HttpSniffFetcher(timeout: const Duration(seconds: 6)).call,
       verifyDirectMedia: true,
     );
+    // 浏览器嗅探器：**惰性**创建，构造时不探测内核（不扫文件系统）。
+    // 只有静态嗅探失败时 `PlayUseCase` 才会调它，多数源根本走不到。
+    browserSniffer = CdpSnifferLauncher();
     playUseCase = PlayUseCase(
       repositories.sites,
       runtimeFactory: _runtimeFactory,
       resolver: snifferResolver,
+      browserSniffer: browserSniffer.sniff,
     );
     homeUseCase = HomeUseCase(
       repositories.sites,
@@ -74,8 +79,15 @@ class AppAssembly {
   /// 首页编排用例。
   late final HomeUseCase homeUseCase;
 
-  /// 播放地址嗅探解析器。
+  /// 播放地址嗅探解析器（静态 HTML + 正则）。
   late final SnifferResolver snifferResolver;
+
+  /// 浏览器嗅探器（CDP），静态嗅探失败后的兜底。
+  ///
+  /// 暴露出来是为了诊断链路能读到 `lastOutcome`——**为什么没嗅到**这件事
+  /// 只有它知道（内核缺失 / 超时 / 页面报错 / 没命中），播放链路只需要一个
+  /// 「能不能播」的答案。
+  late final CdpSnifferLauncher browserSniffer;
 
   /// 配置导入与引导状态。
   late final ConfigInstallService configInstaller;

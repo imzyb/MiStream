@@ -479,6 +479,249 @@ void main() {
     });
   });
 
+  group('浏览器嗅探兜底', () {
+    /// 静态 HTML 里没有任何媒体地址，只有一段会在运行时拼地址的脚本。
+    const staticMissPage = '<html><body><div id="p"></div></body></html>';
+
+    test('静态嗅探没命中时，用浏览器嗅探拿到的地址起播', () async {
+      final sites = await _sitesWith();
+      final fetcher = _FakeFetcher({
+        'https://cdn.a.com/share/e1': const SniffResponse(
+          statusCode: 200,
+          body: staticMissPage,
+          contentType: 'text/html',
+        ),
+      });
+      final browserCalls = <String>[];
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(_FakeRuntime(_detailBody())),
+        resolver: SnifferResolver(fetcher: fetcher.call),
+        browserSniffer: (url, headers) async {
+          browserCalls.add(url);
+          return 'https://cdn.a.com/dynamic/index.m3u8';
+        },
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'liangzi',
+      );
+
+      expect(result.isOk, isTrue);
+      final play = result.valueOrNull!;
+      expect(
+        play.mediaSource.uri.toString(),
+        'https://cdn.a.com/dynamic/index.m3u8',
+      );
+      expect(play.viaSniffing, isTrue);
+      // 播放大体上还是要带播放页作 Referer。
+      expect(play.mediaSource.headers['Referer'], 'https://cdn.a.com/share/e1');
+      expect(browserCalls, <String>['https://cdn.a.com/share/e1']);
+    });
+
+    test('静态嗅探已命中时不起浏览器（不做预判性调用）', () async {
+      // 起浏览器是秒级开销，绝大多数线路静态 HTML 里就有地址，不该白花这钱。
+      final sites = await _sitesWith();
+      final fetcher = _FakeFetcher({
+        'https://cdn.a.com/share/e1': const SniffResponse(
+          statusCode: 200,
+          body: '<script>var u="https://cdn.a.com/real/index.m3u8";</script>',
+          contentType: 'text/html',
+        ),
+        'https://cdn.a.com/real/index.m3u8': _playlist(),
+      });
+      var browserCalls = 0;
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(_FakeRuntime(_detailBody())),
+        resolver: SnifferResolver(fetcher: fetcher.call),
+        browserSniffer: (url, headers) async {
+          browserCalls++;
+          return null;
+        },
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'liangzi',
+      );
+
+      expect(result.isOk, isTrue);
+      expect(browserCalls, 0);
+    });
+
+    test('浏览器也没嗅到时，网页地址不会丢给播放器', () async {
+      final sites = await _sitesWith();
+      final fetcher = _FakeFetcher({
+        'https://cdn.a.com/share/e1': const SniffResponse(
+          statusCode: 200,
+          body: staticMissPage,
+          contentType: 'text/html',
+        ),
+      });
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(
+          // 只用一条线路，把「两级都失败」这条路径隔离开。默认 detail 里还有
+          // 第二条直链线路，回退链会切过去并成功，测不到想要的分支。
+          _FakeRuntime(
+            _detailBody(
+              playFrom: 'liangzi',
+              playUrl: r'HD中字$https://cdn.a.com/share/e1',
+            ),
+          ),
+        ),
+        resolver: SnifferResolver(fetcher: fetcher.call),
+        browserSniffer: (url, headers) async => null,
+      );
+
+      // 网页线路（非 m3u8 形态）两级都失败时应报错，而不是把网页地址丢给播放器。
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'liangzi',
+      );
+
+      expect(result.isOk, isFalse);
+      expect(result.errorOrNull!.code, ErrorCode.sniffNoMatch);
+    });
+
+    test('浏览器返回空串等同于没嗅到', () async {
+      final sites = await _sitesWith();
+      final fetcher = _FakeFetcher({
+        'https://cdn.a.com/share/e1': const SniffResponse(
+          statusCode: 200,
+          body: staticMissPage,
+          contentType: 'text/html',
+        ),
+      });
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(
+          _FakeRuntime(
+            _detailBody(
+              playFrom: 'liangzi',
+              playUrl: r'HD中字$https://cdn.a.com/share/e1',
+            ),
+          ),
+        ),
+        resolver: SnifferResolver(fetcher: fetcher.call),
+        browserSniffer: (url, headers) async => '',
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'liangzi',
+      );
+
+      expect(result.isOk, isFalse);
+    });
+
+    test('只装浏览器嗅探器（无静态嗅探）也能工作', () async {
+      // 回退链不该因为少装一级而断掉。
+      final sites = await _sitesWith();
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(_FakeRuntime(_detailBody())),
+        browserSniffer: (url, headers) async =>
+            'https://cdn.a.com/only-dynamic/index.m3u8',
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'liangzi',
+      );
+
+      expect(result.isOk, isTrue);
+      expect(
+        result.valueOrNull!.mediaSource.uri.toString(),
+        'https://cdn.a.com/only-dynamic/index.m3u8',
+      );
+    });
+
+    test('多线路：前一条两级都失败时继续试下一条', () async {
+      final sites = await _sitesWith();
+      final fetcher = _FakeFetcher({
+        'https://cdn.a.com/share/dead': const SniffResponse(
+          statusCode: 200,
+          body: staticMissPage,
+          contentType: 'text/html',
+        ),
+        'https://cdn.a.com/share/alive': const SniffResponse(
+          statusCode: 200,
+          body: staticMissPage,
+          contentType: 'text/html',
+        ),
+      });
+      final browserCalls = <String>[];
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(
+          _FakeRuntime(
+            // 两条线路用 $$$ 分隔；用户点的是第一条（dead）。
+            _detailBody(
+              playFrom: r'liangzi$$$liangzi2',
+              playUrl:
+                  r'HD中字$https://cdn.a.com/share/dead'
+                  r'$$$'
+                  r'HD中字$https://cdn.a.com/share/alive',
+            ),
+          ),
+        ),
+        resolver: SnifferResolver(fetcher: fetcher.call),
+        browserSniffer: (url, headers) async {
+          browserCalls.add(url);
+          return url.endsWith('alive')
+              ? 'https://cdn.a.com/alive/index.m3u8'
+              : null;
+        },
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'liangzi',
+      );
+
+      expect(result.isOk, isTrue);
+      expect(
+        result.valueOrNull!.mediaSource.uri.toString(),
+        'https://cdn.a.com/alive/index.m3u8',
+      );
+      // 用户点的那条排最前，所以先试 dead、再试 alive。
+      expect(browserCalls, <String>[
+        'https://cdn.a.com/share/dead',
+        'https://cdn.a.com/share/alive',
+      ]);
+    });
+
+    test('两级都没装时保持旧行为，原地址直接返回', () async {
+      final sites = await _sitesWith();
+      // 线路名带 m3u8 只是名字，地址仍是 share/ 网页形态；这里验证的是
+      // 「没装嗅探就原样返回」这条向后兼容路径。
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(_FakeRuntime(_detailBody())),
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'liangzi',
+      );
+
+      expect(result.isOk, isTrue);
+      final play = result.valueOrNull!;
+      expect(play.mediaSource.uri.toString(), 'https://cdn.a.com/share/e1');
+      expect(play.viaSniffing, isFalse);
+    });
+  });
+
   group('错误路径', () {
     test('站点不存在', () async {
       final sites = await _sitesWith();

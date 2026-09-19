@@ -9,4 +9,14 @@ environment:
   sdk: ^3.12.0
 
 dependencies:
+  # 媒体判定规则（MediaDetector / SnifferRule）复用这里，
+  # 保证 CDP 版与 WebView 版只有一份命中标准。
+  media_sniffer:
+    path: ../../packages/media_sniffer
   meta: ^1.18.0
+  # 实现 play_engine 的 SnifferLauncher 接缝需要这个接口。
+  play_engine:
+    path: ../../packages/play_engine
+
+dev_dependencies:
+  test: ^1.26.0

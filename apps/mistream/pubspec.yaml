@@ -27,6 +27,9 @@ dependencies:
   media_kit_video: ^1.2.4
   media_sniffer:
     path: ../../packages/media_sniffer
+  # 纯注解包：application 层的纯逻辑（如 resume_policy）用它标注不可变
+  # 而不必引入 Flutter，这样这些逻辑能在 dart test 下测。
+  meta: ^1.16.0
   path: ^1.9.0
   # 数据库落盘位置按 docs/07-数据库设计.md 开头规定的各平台应用支持目录解析。
   path_provider: ^2.1.0
@@ -35,6 +38,10 @@ dependencies:
   punycoder: ^0.3.0
   search_engine:
     path: ../../packages/search_engine
+  # 浏览器嗅探（CDP）。只在静态嗅探拿不到地址时才用到，见
+  # runtimes/sniffer 与 docs/ADR-005。
+  sniffer:
+    path: ../../runtimes/sniffer
   source_adapter:
     path: ../../packages/source_adapter
   spider_host:
@@ -45,6 +52,8 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  mock_source_server:
+    path: ../../tools/mock_source_server
   test: ^1.31.0
 
 # 不引 flutter_lints：全仓库统一用根 analysis_options.yaml 的 very_good_analysis，

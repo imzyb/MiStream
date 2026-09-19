@@ -30,6 +30,14 @@ class PlayResult {
   final bool viaSniffing;
 }
 
+/// 浏览器嗅探回调：给定播放页地址与请求头，返回真实流地址（没嗅到返回 null）。
+///
+/// 刻意用函数类型而不是 `play_engine` 的 `SnifferLauncher`：那个类型要求
+/// `search_engine` 反向依赖 `play_engine`，而本包只需要「调一次拿个地址」。
+/// 适配层放在装配处（`app_assembly.dart`）更合适 —— 依赖方向也保持单向。
+typedef BrowserSniffCallback =
+    Future<String?> Function(String url, Map<String, String> headers);
+
 /// 播放编排器。
 ///
 /// 职责：根据 siteId + vodId + flag 调用 Apple CMS v2 detail API，
@@ -47,14 +55,31 @@ class PlayResult {
 /// `share/xxxx` 的返回一个**网页播放页**——直接把后者喂给 mpv 只会得到
 /// 「打开媒体失败」。[resolver] 负责把后者解析成真实地址；不注入 resolver 时
 /// 退化为原来的行为（原地址直接返回），既保持向后兼容，也让单测不必联网。
+///
+/// ## 两级嗅探
+///
+/// [resolver] 是「抓 HTML + 正则抽地址」，便宜但只能看到静态标记；
+/// [browserSniffer] 是「开真实浏览器跑一遍页面 JS」，贵但能看到脚本执行后
+/// 才出现的地址。**只有前者失败时才调后者**——绝大多数网页线路在静态 HTML
+/// 里就有地址，没必要为每一部片起一个浏览器进程。
 class PlayUseCase {
   /// 构造播放编排器。
-  PlayUseCase(this.sites, {this.runtimeFactory, this.resolver});
+  PlayUseCase(
+    this.sites, {
+    this.runtimeFactory,
+    this.resolver,
+    this.browserSniffer,
+  });
   final SiteRepository sites;
   final SpiderRuntimeFactory? runtimeFactory;
 
   /// 嗅探解析器；`null` 表示不做嗅探，原地址直接返回。
   final SnifferResolver? resolver;
+
+  /// 静态嗅探失败后的浏览器兜底；`null` 表示不做这一步。
+  ///
+  /// 需要本机装有 Edge/Chrome，且 CDP 嗅探运行时可用（见 `runtimes/sniffer`）。
+  final BrowserSniffCallback? browserSniffer;
 
   /// 获取可播放的媒体源。
   ///
@@ -104,8 +129,8 @@ class PlayUseCase {
         : null;
 
     final sniffer = resolver;
-    if (sniffer == null) {
-      // 没装嗅探器：保持旧行为，原地址直接交给播放器。
+    if (sniffer == null && browserSniffer == null) {
+      // 两级嗅探都没装：保持旧行为，原地址直接交给播放器。
       return Ok(_plainResult(candidates.first.url, siteReferer));
     }
 
@@ -115,11 +140,11 @@ class PlayUseCase {
     // 比让用户自己在详情页反复切线路合理。
     AppError? lastError;
     for (final candidate in candidates) {
-      final outcome = await sniffer.resolve(
+      final outcome = await sniffer?.resolve(
         candidate.url,
         referer: siteReferer,
       );
-      if (outcome.isOk) {
+      if (outcome != null && outcome.isOk) {
         final media = outcome.media!;
         return Ok(
           PlayResult(
@@ -131,7 +156,36 @@ class PlayUseCase {
           ),
         );
       }
-      lastError = _snifferError(outcome, candidate.url);
+      // 没有静态嗅探器时，把「没解析出来」记成 noMatch，好让下面的浏览器
+      // 兜底仍然跑得起来——不能因为少装了一级就让整条回退链断掉。
+      lastError = outcome == null
+          ? const LocalError(
+              code: ErrorCode.sniffNoMatch,
+              message: '静态嗅探未启用',
+            )
+          : _snifferError(outcome, candidate.url);
+
+      // 5b. 静态 HTML 里没找到地址 —— 多半是地址由页面 JS 运行时拼出来的。
+      // 这时才起浏览器（贵，所以不做预判性调用），命中即返回。
+      final browser = browserSniffer;
+      if (browser != null) {
+        final headers = <String, String>{
+          'User-Agent': _defaultUserAgent,
+          'Referer': ?siteReferer,
+        };
+        final hit = await browser(candidate.url, headers);
+        if (hit != null && hit.isNotEmpty) {
+          return Ok(
+            PlayResult(
+              mediaSource: MediaSource(
+                uri: Uri.parse(hit),
+                headers: {...headers, 'Referer': candidate.url},
+              ),
+              viaSniffing: true,
+            ),
+          );
+        }
+      }
     }
 
     // 全部线路都没解析成功。若其中有直链形态的地址，仍交给播放器碰运气——
