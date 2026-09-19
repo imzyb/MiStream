@@ -55,6 +55,72 @@ class ConfigDecoder {
     );
   }
 
+  /// 解码并对非 JSON 内容做类型探测，返回针对性错误。
+  ///
+  /// 与 [decode] 的区别：三条解码路径都失败后，不再笼统报「解码失败」，
+  /// 而是探测原始字节，区分为「返回的是网页（HTML）」或「返回的是图片
+  /// （JPEG/PNG/GIF/BMP）」，让用户在导入一个反爬/导航页地址时能立刻
+  /// 明白原因，而不是困惑于一句「失败」。
+  ///
+  /// 返回值语义与 [decode] 一致；类型探测失败时仍回退 `configDecodeFailed`
+  /// 作为兜底，不新增错误码。
+  static Result<DecodeResult, AppError> decodeWithProbe(
+    List<int> raw, {
+    String? aesKey,
+  }) {
+    final result = decode(raw, aesKey: aesKey);
+    if (result.isOk) return result;
+
+    final kind = _probeNonJson(raw);
+    if (kind != null) {
+      return Err(
+        LocalError(
+          code: ErrorCode.configNotJson,
+          message: '返回的是$kind，不是 TVBox JSON 配置；请确认接口地址',
+        ),
+      );
+    }
+    return result;
+  }
+
+  /// 探测原始字节是不是「不是 JSON」的内容（网页 / 图片等）。
+  ///
+  /// 用来在解码全失败后给出更可读的错误：比如某些源的接口地址实际上
+  /// 是导航页，或对非客户端 UA 返回占位图（见 [ErrorCode.configNotJson]）。
+  /// 认不出来返回 `null`，调用方仍用笼统的 `configDecodeFailed`。
+  ///
+  /// 返回值为内容类别文案（供 message 拼接），或 `null` 表示不明。
+  static String? _probeNonJson(List<int> raw) {
+    if (raw.isEmpty) return null;
+
+    // 图片：JPEG（FFD8）、PNG（89504E47）、GIF（474946）、BMP（424D）。
+    if (raw.length >= 2 && raw[0] == 0xFF && raw[1] == 0xD8) {
+      return '图片（JPEG）';
+    }
+    if (raw.length >= 4 &&
+        raw[0] == 0x89 &&
+        raw[1] == 0x50 &&
+        raw[2] == 0x4E &&
+        raw[3] == 0x47) {
+      return '图片（PNG）';
+    }
+    if (raw.length >= 3 && raw[0] == 0x47 && raw[1] == 0x49 && raw[2] == 0x46) {
+      return '图片（GIF）';
+    }
+    if (raw.length >= 2 && raw[0] == 0x42 && raw[1] == 0x4D) {
+      return '图片（BMP）';
+    }
+
+    // HTML：大小写不敏感地找 <!DOCTYPE 或 <html。
+    final head = utf8.decode(raw.take(512).toList(), allowMalformed: true);
+    final lower = head.toLowerCase();
+    if (lower.contains('<!doctype') || lower.contains('<html')) {
+      return '网页（HTML）';
+    }
+
+    return null;
+  }
+
   /// 尝试明文 JSON 解码。
   static DecodeResult? _tryPlain(List<int> raw) {
     final text = utf8.decode(raw, allowMalformed: true);

@@ -105,9 +105,9 @@ class ConfigParser {
         type: _toIntOrZero(map['type']),
         api: (map['api'] as String?) ?? '',
         ext: _toStringOrJson(map['ext']),
-        searchable: _toIntOrZero(map['searchable']) == 1,
-        quickSearch: _toIntOrZero(map['quickSearch']) == 1,
-        filterable: _toIntOrZero(map['filterable']) == 1,
+        searchable: _toBool(map['searchable'], defaultValue: true),
+        quickSearch: _toBool(map['quickSearch']),
+        filterable: _toBool(map['filterable']),
         priority: _toIntOrZero(map['priority']),
       );
     }).toList();
@@ -169,5 +169,27 @@ class ConfigParser {
     if (value is num) return value.toInt();
     if (value is String) return int.tryParse(value) ?? 0;
     return 0;
+  }
+
+  /// 将 TVBox 中常见的数字、字符串或布尔开关转为 bool。
+  static bool _toBool(Object? value, {bool defaultValue = false}) {
+    if (value == null) return defaultValue;
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      switch (value.trim().toLowerCase()) {
+        case '1':
+        case 'true':
+        case 'yes':
+        case 'on':
+          return true;
+        case '0':
+        case 'false':
+        case 'no':
+        case 'off':
+          return false;
+      }
+    }
+    return defaultValue;
   }
 }

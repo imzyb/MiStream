@@ -9,7 +9,40 @@ import 'dart:io';
 
 import 'package:core_config/core_config.dart';
 import 'package:core_domain/core_domain.dart';
+import 'package:punycoder/punycoder.dart';
 import 'package:storage/storage.dart';
+
+/// 将配置 URL 中的 Unicode 域名规范化为 ASCII/Punycode。
+///
+/// 保留 scheme、端口、查询参数和路径；无效或无法转换时返回原值，
+/// 交由 HTTP 层返回可读错误。
+String normalizeConfigUrl(String rawUrl) {
+  final value = rawUrl.trim();
+  final schemeEnd = value.indexOf('://');
+  if (schemeEnd < 0) return value;
+
+  final prefix = value.substring(0, schemeEnd + 3);
+  final rest = value.substring(schemeEnd + 3);
+  final authorityEnd = RegExp(r'[/\\?#]').firstMatch(rest)?.start;
+  final authority = authorityEnd == null
+      ? rest
+      : rest.substring(0, authorityEnd);
+  final suffix = authorityEnd == null ? '' : rest.substring(authorityEnd);
+  final hostStart = authority.lastIndexOf('@') + 1;
+  final hostPort = authority.substring(hostStart);
+  final colon = hostPort.lastIndexOf(':');
+  final host = colon > 0 ? hostPort.substring(0, colon) : hostPort;
+  if (!host.runes.any((rune) => rune > 0x7f)) return value;
+
+  try {
+    final asciiHost = domainToAscii(host);
+    final authorityPrefix = authority.substring(0, hostStart);
+    final port = colon > 0 ? hostPort.substring(colon) : '';
+    return '$prefix$authorityPrefix$asciiHost$port$suffix';
+  } on Object {
+    return value;
+  }
+}
 
 /// 引导完成标记的设置键。
 ///
@@ -87,14 +120,34 @@ class ConfigInstallService {
     bool replace = true,
     String? aesKey,
   }) async {
+    final normalizedUrl = normalizeConfigUrl(url);
+    final uri = Uri.tryParse(normalizedUrl);
+    if (uri == null ||
+        (uri.scheme != 'http' && uri.scheme != 'https') ||
+        uri.host.isEmpty) {
+      return const Err(
+        LocalError(
+          code: ErrorCode.invalidArgument,
+          message: '配置地址无效，请输入完整的 HTTP/HTTPS 地址',
+        ),
+      );
+    }
+
     try {
       final client = HttpClient()
         ..connectionTimeout = const Duration(seconds: 10);
       final req = await client
-          .getUrl(Uri.parse(url))
+          .getUrl(uri)
           .timeout(
             const Duration(seconds: 10),
           );
+      req.headers.set(
+        HttpHeaders.userAgentHeader,
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/120.0.0.0 Safari/537.36',
+      );
+      req.headers.set(HttpHeaders.acceptHeader, '*/*');
       final resp = await req.close().timeout(const Duration(seconds: 15));
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
         await resp.drain<void>();
@@ -120,7 +173,7 @@ class ConfigInstallService {
       final count = await install(
         result.valueOrNull!,
         name: '订阅 ${DateTime.now().toIso8601String().substring(0, 10)}',
-        sourceUrl: url,
+        sourceUrl: normalizedUrl,
       );
       return Ok(count);
     } on Object catch (e, st) {

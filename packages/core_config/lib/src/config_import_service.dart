@@ -36,8 +36,8 @@ class ConfigImportService {
     List<int> raw, {
     String? aesKey,
   }) {
-    // 1. 解码
-    final decoded = ConfigDecoder.decode(raw, aesKey: aesKey);
+    // 1. 解码（带非 JSON 内容探测，见 config_decoder.dart 的 decodeWithProbe）
+    final decoded = ConfigDecoder.decodeWithProbe(raw, aesKey: aesKey);
     if (decoded.isErr) {
       return Err(decoded.errorOrNull!);
     }

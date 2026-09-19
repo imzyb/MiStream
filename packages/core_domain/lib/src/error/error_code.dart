@@ -309,6 +309,14 @@ final class ErrorCode {
   /// 解析成功但没有任何可用站点。
   static const configEmpty = ErrorCode(1005, 'CONFIG_EMPTY');
 
+  /// 返回的不是 TVBox JSON 配置（是网页/图片等）。
+  ///
+  /// 常见于「接口地址指向的是导航页」或「源对非客户端请求返回占位图」
+  /// 的源——比如某些接口用 UA 区分客户端，浏览器拿到 HTML 导航页、
+  /// 真实客户端才拿到 JSON。此时让用户看到明确原因，而不是笼统的
+  /// 「解码失败」。
+  static const configNotJson = ErrorCode(1006, 'CONFIG_NOT_JSON');
+
   // ---------------------------------------------------------------------
   // 本地：存储
   // ---------------------------------------------------------------------
@@ -530,6 +538,7 @@ final class ErrorCode {
     configSchemaInvalid,
     configUnsupportedVersion,
     configEmpty,
+    configNotJson,
     dbOpenFailed,
     dbMigrationFailed,
     dbBackupFailed,

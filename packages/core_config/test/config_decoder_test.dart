@@ -58,4 +58,44 @@ void main() {
       expect(result.isErr, isTrue);
     });
   });
+
+  group('ConfigDecoder.decodeWithProbe', () {
+    test('HTML 内容识别为 CONFIG_NOT_JSON', () {
+      const html =
+          '<!DOCTYPE html><html><head><title>导航</title></head><body></body></html>';
+      final result = ConfigDecoder.decodeWithProbe(utf8.encode(html));
+      expect(result.isErr, isTrue);
+      expect(result.errorOrNull?.code, ErrorCode.configNotJson);
+      expect(result.errorOrNull?.message, contains('网页（HTML）'));
+    });
+
+    test('图片（JPEG）识别为 CONFIG_NOT_JSON', () {
+      // JPEG 魔数 FFD8FFE0 + 少量填充
+      final jpeg = [0xFF, 0xD8, 0xFF, 0xE0, ...List.filled(16, 0x00)];
+      final result = ConfigDecoder.decodeWithProbe(jpeg);
+      expect(result.isErr, isTrue);
+      expect(result.errorOrNull?.code, ErrorCode.configNotJson);
+      expect(result.errorOrNull?.message, contains('图片（JPEG）'));
+    });
+
+    test('图片（BMP）识别为 CONFIG_NOT_JSON', () {
+      // BMP 魔数 424D + 少量填充
+      final bmp = [0x42, 0x4D, ...List.filled(16, 0x00)];
+      final result = ConfigDecoder.decodeWithProbe(bmp);
+      expect(result.isErr, isTrue);
+      expect(result.errorOrNull?.code, ErrorCode.configNotJson);
+    });
+
+    test('普通乱码仍回退 CONFIG_DECODE_FAILED', () {
+      final result = ConfigDecoder.decodeWithProbe(utf8.encode('not valid {{'));
+      expect(result.isErr, isTrue);
+      expect(result.errorOrNull?.code, ErrorCode.configDecodeFailed);
+    });
+
+    test('合法 JSON 仍正常解码', () {
+      final result = ConfigDecoder.decodeWithProbe(utf8.encode(configJson));
+      expect(result.isOk, isTrue);
+      expect(result.valueOrNull?.format, 'plain');
+    });
+  });
 }

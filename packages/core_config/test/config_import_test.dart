@@ -66,6 +66,23 @@ void main() {
       final config = ConfigParser.parse('{"sites":[{"key":"x"}]}');
       expect(config, isNotNull);
       expect(config!.sites.first.name, '');
+      expect(config.sites.first.searchable, isTrue);
+    });
+
+    test('站点开关兼容数字、字符串和布尔值', () {
+      final config = ConfigParser.parse('''
+        {"sites":[
+          {"key":"a","searchable":true,"quickSearch":"1","filterable":1},
+          {"key":"b","searchable":0,"quickSearch":"false","filterable":false}
+        ]}
+      ''');
+      expect(config, isNotNull);
+      expect(config!.sites[0].searchable, isTrue);
+      expect(config.sites[0].quickSearch, isTrue);
+      expect(config.sites[0].filterable, isTrue);
+      expect(config.sites[1].searchable, isFalse);
+      expect(config.sites[1].quickSearch, isFalse);
+      expect(config.sites[1].filterable, isFalse);
     });
   });
 

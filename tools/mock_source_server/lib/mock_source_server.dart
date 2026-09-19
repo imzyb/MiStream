@@ -43,6 +43,22 @@ class MockSourceServer {
 
   void _handle(HttpRequest request) {
     final path = request.uri.path;
+    if (path == '/diagnostic.html') {
+      _respondText(
+        request,
+        '<!DOCTYPE html><html><body>导航页</body></html>',
+        contentType: 'text/html; charset=utf-8',
+      );
+      return;
+    }
+    if (path == '/diagnostic.jpg') {
+      _respondBytes(
+        request,
+        const [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46],
+        contentType: 'image/x-ms-bmp',
+      );
+      return;
+    }
     if (path == '/config.json') {
       _respondJson(request, _config());
       return;
@@ -173,6 +189,19 @@ class MockSourceServer {
     String contentType = 'text/plain; charset=utf-8',
   }) {
     _respond(request, 200, body, contentType: contentType);
+  }
+
+  void _respondBytes(
+    HttpRequest request,
+    List<int> bytes, {
+    required String contentType,
+  }) {
+    final response = request.response
+      ..statusCode = 200
+      ..headers.contentType = ContentType.parse(contentType)
+      ..contentLength = bytes.length
+      ..add(bytes);
+    unawaited(response.close());
   }
 
   void _respond(
