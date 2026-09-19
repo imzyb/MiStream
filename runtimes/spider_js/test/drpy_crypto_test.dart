@@ -38,17 +38,23 @@ void main() {
       const key = '0123456789abcdef';
       const iv = 'abcdef0123456789';
       final encrypted = aes(
+        mode: 'AES/CBC/PKCS5Padding',
         encrypt: true,
         input: 'MiStream',
+        inBase64: false,
         key: key,
         iv: iv,
+        outBase64: true,
       );
       expect(encrypted, isNotEmpty);
       final decrypted = aes(
+        mode: 'AES/CBC/PKCS5Padding',
         encrypt: false,
         input: encrypted,
+        inBase64: true,
         key: key,
         iv: iv,
+        outBase64: false,
       );
       expect(decrypted, 'MiStream');
     });
@@ -56,16 +62,22 @@ void main() {
     test('AES-ECB 加密→解密往返', () {
       const key = '0123456789abcdef';
       final encrypted = aes(
+        mode: 'AES/ECB/PKCS5Padding',
         encrypt: true,
         input: 'test data',
+        inBase64: false,
         key: key,
-        mode: 'AES/ECB/PKCS5Padding',
+        iv: '',
+        outBase64: true,
       );
       final decrypted = aes(
+        mode: 'AES/ECB/PKCS5Padding',
         encrypt: false,
         input: encrypted,
+        inBase64: true,
         key: key,
-        mode: 'AES/ECB/PKCS5Padding',
+        iv: '',
+        outBase64: false,
       );
       expect(decrypted, 'test data');
     });

@@ -403,6 +403,14 @@ class JsRuntime {
   g.urldecode = function (s) { return H('urldecode', [s]); };
   g.base64Encode = function (s) { return H('base64Encode', [s]); };
   g.base64Decode = function (s) { return H('base64Decode', [s]); };
+  // GBK 站点的响应体是裸字节。脚本一般拿 req(url, {buffer: true}) 的 body，
+  // 也可能直接喂已经变成字符串的响应。两种形态宿主都接受。
+  g.gbkDecode = function (s) { return H('gbkDecode', [s]); };
+  // RSA。签名按位置对齐 drpy 的 rsaX(mode, pub, encrypt, input, inBase64, key, outBase64)，
+  // 这里只做转调，不给默认值——漏传参数时宿主能如实报错，比猜一个默认值更好排查。
+  g.rsaX = function (mode, pub, encrypt, input, inBase64, key, outBase64) {
+    return H('rsaX', [mode, pub, encrypt, input, inBase64, key, outBase64]);
+  };
   g.joinUrl = function (b, p) { return H('joinUrl', [b, p]); };
 
   // req 与 local.* 必须过宿主（ADR-001），只有子进程装了对应的处理器时才可用。
@@ -415,13 +423,23 @@ class JsRuntime {
     'delete': function (k) { return H('local.delete', [k]); }
   };
 
-  g.aes = function (o) {
-    o = o || {};
-    return H('aes', [
-      !!o.encrypt, o.input, o.key,
-      o.iv || null,
-      o.mode || 'AES/CBC/PKCS5Padding'
-    ]);
+  g.aes = function (mode, encrypt, input, inBase64, key, iv, outBase64) {
+    // 存量源全是按位置传的，签名不能动。但历史上有过一版按对象传的
+    // 包装（第一参是对象），本机缓存里的老源可能还带着那种写法，
+    // 所以这里留一条兼容分支，把对象摊成位置参数再转调。
+    if (mode !== null && typeof mode === 'object') {
+      var o = mode;
+      return g.aes(
+        o.mode || 'AES/CBC/PKCS5Padding',
+        !!o.encrypt,
+        o.input,
+        !!o.inBase64,
+        o.key,
+        o.iv || '',
+        !!o.outBase64
+      );
+    }
+    return H('aes', [mode, encrypt, input, inBase64, key, iv, outBase64]);
   };
 
   function emit(level) {

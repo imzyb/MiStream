@@ -1,0 +1,58 @@
+[
+  {
+    "name": "不支持的 mode 返回空串（对齐参考实现）",
+    "method": "rsaX",
+    "args": ["RSA/MD5/Whatever", true, true, "data", false, "x", false],
+    "expected": ""
+  },
+  {
+    "name": "密钥非法时返回空串而非抛异常",
+    "method": "rsaX",
+    "args": ["RSA/PKCS1", true, true, "data", false, "not-a-pem", true],
+    "expected": ""
+  },
+  {
+    "name": "空密钥返回空串",
+    "method": "rsaX",
+    "args": ["RSA/PKCS1", true, true, "data", false, "", true],
+    "expected": ""
+  },
+  {
+    "name": "inBase64 声称是 base64 但内容非法，返回空串",
+    "method": "rsaX",
+    "args": [
+      "RSA/PKCS1",
+      true,
+      true,
+      "!!! definitely not base64 !!!",
+      true,
+      "x",
+      false
+    ],
+    "expected": ""
+  },
+  {
+    "name": "OAEP 模式配非法密钥，返回空串",
+    "method": "rsaX",
+    "args": ["RSA/None/OAEPPadding", true, true, "data", false, "x", true],
+    "expected": ""
+  },
+  {
+    "name": "NoPadding 模式配非法密钥，返回空串",
+    "method": "rsaX",
+    "args": ["RSA/None/NoPadding", false, false, "data", false, "x", false],
+    "expected": ""
+  },
+  {
+    "name": "pub=false 走私钥分支，密钥非法同样返回空串",
+    "method": "rsaX",
+    "args": ["RSA/PKCS1", false, false, "data", false, "bad", false],
+    "expected": ""
+  },
+  {
+    "name": "空输入不崩（PKCS1 加密空串仍应产出密文或空串，不抛异常）",
+    "method": "rsaX",
+    "args": ["RSA/PKCS1", true, true, "", false, "bad", true],
+    "expected": ""
+  }
+]

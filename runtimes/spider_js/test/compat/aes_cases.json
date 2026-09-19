@@ -1,0 +1,114 @@
+[
+  {
+    "name": "CFB 等未支持模式返回空串（对齐参考实现）",
+    "method": "aes",
+    "args": [
+      "AES/CFB/PKCS5Padding",
+      true,
+      "data",
+      false,
+      "k",
+      "v",
+      true
+    ],
+    "expected": ""
+  },
+  {
+    "name": "CBC 缺 iv 返回空串",
+    "method": "aes",
+    "args": [
+      "AES/CBC/PKCS5Padding",
+      true,
+      "data",
+      false,
+      "1234567890123456",
+      "",
+      true
+    ],
+    "expected": ""
+  },
+  {
+    "name": "aes 的 inBase64 输入非法时返回空串",
+    "method": "aes",
+    "args": [
+      "AES/ECB/PKCS5Padding",
+      true,
+      "!!! definitely not base64 !!!",
+      true,
+      "1234567890123456",
+      "",
+      true
+    ],
+    "expected": ""
+  },
+  {
+    "name": "解密密文长度不是块长整数倍，返回空串",
+    "method": "aes",
+    "args": [
+      "AES/ECB/PKCS5Padding",
+      false,
+      "AAAA",
+      true,
+      "1234567890123456",
+      "",
+      true
+    ],
+    "expected": ""
+  },
+  {
+    "name": "ECB 空 iv 正常加密（不因缺 iv 报错）",
+    "method": "aes",
+    "args": [
+      "AES/ECB/PKCS5Padding",
+      true,
+      "abc",
+      false,
+      "1234567890123456",
+      "",
+      true
+    ],
+    "expected": "Iig1Q00eW0x+EAlVOUTDNw=="
+  },
+  {
+    "name": "CBC 固定 key/iv 加密结果稳定（回归基线）",
+    "method": "aes",
+    "args": [
+      "AES/CBC/PKCS5Padding",
+      true,
+      "hello drpy",
+      false,
+      "1234567890123456",
+      "abcdefghijklmnop",
+      true
+    ],
+    "expected": "BsC+758hTLoxeE7I2AYnHA=="
+  },
+  {
+    "name": "AES-128 ECB 单块明文补满整块（长度校验）",
+    "method": "aes",
+    "args": [
+      "AES/ECB/PKCS5Padding",
+      true,
+      "0123456789abcdef",
+      false,
+      "1234567890123456",
+      "",
+      true
+    ],
+    "expected": "6OHXh2GUsK5DnV6DlD2ihAUBh6DN5amHLLqwkatz5VM="
+  },
+  {
+    "name": "短 key 走零补齐到 16 字节（基线值即补齐后的结果）",
+    "method": "aes",
+    "args": [
+      "AES/ECB/PKCS5Padding",
+      true,
+      "abc",
+      false,
+      "k",
+      "",
+      true
+    ],
+    "expected": "qiFYYs+gSbKIbn4Kl+yK0w=="
+  }
+]

@@ -3,7 +3,9 @@ library;
 
 export 'src/drpy/crypto.dart'
     show
+        AesResult,
         aes,
+        aesDecode,
         base64DecodeDrpy,
         base64EncodeDrpy,
         hmac256,
@@ -15,6 +17,11 @@ export 'src/drpy/crypto.dart'
         urlencode;
 
 export 'src/drpy/html_parser.dart' show pd, pdfa, pdfh, pdfl;
+
+export 'src/drpy/gbk.dart'
+    show GbkDecodeReport, GbkDecodeResult, gbkDecode, gbkDecodeWithReport;
+
+export 'src/drpy/rsa.dart' show RsaMode, RsaResult, rsa, rsaDecode;
 
 export 'src/drpy/type0_script.dart' show type0Script;
 

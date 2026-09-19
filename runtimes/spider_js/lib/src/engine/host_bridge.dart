@@ -15,7 +15,9 @@ import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
 import 'package:spider_js/src/drpy/crypto.dart' as drpy;
+import 'package:spider_js/src/drpy/gbk.dart' as drpy;
 import 'package:spider_js/src/drpy/html_parser.dart' as drpy;
+import 'package:spider_js/src/drpy/rsa.dart' as drpy;
 import 'package:spider_js/src/engine/quickjs_bindings.dart' as qjs;
 
 /// 一个宿主函数：接 JSON 解出的实参表，返回可 JSON 序列化的结果。
@@ -137,18 +139,40 @@ class HostBridge {
     'urldecode': (a) => drpy.urldecode(_str(a, 0)),
     'base64Encode': (a) => base64Encode(utf8.encode(_str(a, 0))),
     'base64Decode': (a) => utf8.decode(base64Decode(_str(a, 0))),
+    // GBK 站点（老视频站居多）的响应体是裸字节，脚本按 UTF-8 取会变乱码。
+    // 传参可能是字节数组，也可能是 latin1 口径的字符串，gbkDecode 两种都吃。
+    'gbkDecode': (a) => drpy.gbkDecode(a.isEmpty ? null : a[0]),
 
     // ---- 工具 ----
     'joinUrl': (a) => drpy.joinUrl(_str(a, 0), _str(a, 1)),
-    'aes': (a) => drpy.aes(
-      encrypt: a.isNotEmpty && a[0] == true,
-      input: _str(a, 1),
-      key: _str(a, 2),
-      iv: a.length > 3 && a[3] != null ? a[3].toString() : null,
-      mode: a.length > 4 && a[4] != null
-          ? a[4].toString()
-          : 'AES/CBC/PKCS5Padding',
-    ),
+    // AES 加解密。位置参数严格对齐 drpy 的
+    // `aesX(mode, encrypt, input, inBase64, key, iv, outBase64)`，
+    // 参数形态不能"优化"成对象——存量源全是按位置传的。
+    'aes': (a) => drpy
+        .aesDecode(
+          mode: _str(a, 0),
+          encrypt: _bool(a, 1),
+          input: _str(a, 2),
+          inBase64: _bool(a, 3),
+          key: _str(a, 4),
+          iv: _str(a, 5),
+          outBase64: _bool(a, 6),
+        )
+        .text,
+    // RSA 加解密。位置参数严格对齐 drpy 的
+    // `rsaX(mode, pub, encrypt, input, inBase64, key, outBase64)`，
+    // 参数形态不能"优化"成对象——存量源全是按位置传的。
+    'rsaX': (a) => drpy
+        .rsaDecode(
+          mode: _str(a, 0),
+          pub: _bool(a, 1),
+          encrypt: _bool(a, 2),
+          input: _str(a, 3),
+          inBase64: _bool(a, 4),
+          key: _str(a, 5),
+          outBase64: _bool(a, 6),
+        )
+        .text,
     'console.log': (a) {
       consoleOutput.add(a.map((e) => e?.toString() ?? 'null').join(' '));
       return null;
@@ -157,4 +181,18 @@ class HostBridge {
 
   static String _str(List<Object?> args, int index) =>
       index < args.length && args[index] != null ? args[index].toString() : '';
+
+  /// 取布尔实参。
+  ///
+  /// JS 侧的 `true` 经 QuickJS 桥过来是 `bool`，但源里写 `1` / `'1'` / `'true'`
+  /// 的也不少，所以不能只认 `bool`——按 JS 的真值语义统一转换。
+  static bool _bool(List<Object?> args, int index) {
+    if (index >= args.length) return false;
+    final v = args[index];
+    if (v == null || v == false || v == 0) return false;
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    final s = v.toString().toLowerCase();
+    return s == 'true' || s == '1';
+  }
 }

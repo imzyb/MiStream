@@ -9,7 +9,10 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:spider_js/src/drpy/crypto.dart';
+import 'package:spider_js/src/drpy/gbk.dart';
 import 'package:spider_js/src/drpy/html_parser.dart';
+import 'package:spider_js/src/drpy/rsa.dart';
 
 /// 一条兼容性测试用例。
 class CompatCase {
@@ -17,30 +20,50 @@ class CompatCase {
   const CompatCase({
     required this.name,
     required this.method,
-    required this.html,
-    required this.rule,
     required this.expected,
+    this.html = '',
+    this.rule = '',
     this.baseUrl,
+    this.input,
+    this.args,
   });
 
   /// 从 JSON map 解码。
+  ///
+  /// `html` / `rule` 对 HTML 解析类用例是必填的，但编码类用例（`gbkDecode`…）
+  /// 用不上，所以从缺省空串起步；`input` 是编码类用例的入参。
   factory CompatCase.fromJson(Map<String, Object?> json) => CompatCase(
     name: json['name'] as String? ?? '',
     method: json['method'] as String? ?? 'pdfh',
     html: json['html'] as String? ?? '',
     rule: json['rule'] as String? ?? '',
     baseUrl: json['baseUrl'] as String?,
+    input: json['input'],
+    args: (json['args'] as List<Object?>?)?.cast<Object?>(),
     expected: json['expected']!,
   );
 
   /// 测试名称。
   final String name;
 
-  /// 解析方法：pdfh / pdfa / pd / pdfl。
+  /// 解析方法：pdfh / pdfa / pd / pdfl / gbkDecode / rsaX / aes。
   final String method;
 
   /// HTML 输入。
   final String html;
+
+  /// 编码类用例的入参。
+  ///
+  /// 形态取决于方法：`gbkDecode` 接受字节数组（JSON 里是 `List<int>`）或
+  /// 字符串（latin1 口径的字节串）。
+  final Object? input;
+
+  /// 位置参数形态用例的入参列表。
+  ///
+  /// `rsaX(mode, pub, encrypt, input, inBase64, key, outBase64)` 这类**纯位置
+  /// 传参**的 API 用不上 `html`/`rule`/`input` 那套字段，单开一个列表更贴合
+  /// 真实调用形态，也避免为一个 API 重复加七个命名参数。
+  final List<Object?>? args;
 
   /// 伪 XPath 规则。
   final String rule;
@@ -81,6 +104,50 @@ class CompatCase {
             return (true, result, null);
           }
           return (false, result, '期望 $exp，实际 $result');
+        case 'gbkDecode':
+          final result = gbkDecode(input ?? html);
+          if (result == expected as String) {
+            return (true, result, null);
+          }
+          return (false, result, '期望 "$expected"，实际 "$result"');
+        case 'rsaX':
+          // 位置参数：mode, pub, encrypt, input, inBase64, key, outBase64。
+          final a = args ?? const <Object?>[];
+          if (a.length < 7) {
+            return (false, null, 'rsaX 需要 7 个位置参数，实际 ${a.length} 个');
+          }
+          final result = rsa(
+            mode: a[0].toString(),
+            pub: a[1] == true,
+            encrypt: a[2] == true,
+            input: a[3].toString(),
+            inBase64: a[4] == true,
+            key: a[5].toString(),
+            outBase64: a[6] == true,
+          );
+          if (result == expected as String) {
+            return (true, result, null);
+          }
+          return (false, result, '期望 "$expected"，实际 "$result"');
+        case 'aes':
+          // 位置参数：mode, encrypt, input, inBase64, key, iv, outBase64。
+          final a = args ?? const <Object?>[];
+          if (a.length < 7) {
+            return (false, null, 'aes 需要 7 个位置参数，实际 ${a.length} 个');
+          }
+          final result = aes(
+            mode: a[0].toString(),
+            encrypt: a[1] == true,
+            input: a[2].toString(),
+            inBase64: a[3] == true,
+            key: a[4].toString(),
+            iv: a[5].toString(),
+            outBase64: a[6] == true,
+          );
+          if (result == expected as String) {
+            return (true, result, null);
+          }
+          return (false, result, '期望 "$expected"，实际 "$result"');
         default:
           return (false, null, '未知方法: $method');
       }
