@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:media_kit_video/media_kit_video.dart' as mkv;
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
+import 'package:mistream/application/resume_policy.dart';
 import 'package:mistream/features/common/common.dart'
     show BreakpointContext, BreakpointType, ErrorView;
 import 'package:mistream/features/detail/detail_page.dart';
@@ -225,7 +226,7 @@ List<RouteBase> get _routes => [
         vodPic = extra['vodPic'] as String?;
       }
 
-      return _PlayerPageWrapper(
+      return PlayerPageWrapper(
         siteId: siteId,
         vodId: vodId,
         flag: flag,
@@ -233,6 +234,7 @@ List<RouteBase> get _routes => [
         episodeId: episodeId,
         vodName: vodName,
         vodPic: vodPic,
+        assembly: globalRouterAssembly,
       );
     },
   ),
@@ -242,8 +244,9 @@ List<RouteBase> get _routes => [
 ///
 /// 由于 `PlayerEngine.initialize()` 是异步的，这里在 `initState` 中初始化，
 /// 完成后才展示真正的播放器。
-class _PlayerPageWrapper extends StatefulWidget {
-  const _PlayerPageWrapper({
+class PlayerPageWrapper extends StatefulWidget {
+  const PlayerPageWrapper({
+    super.key,
     required this.siteId,
     required this.vodId,
     required this.flag,
@@ -251,6 +254,8 @@ class _PlayerPageWrapper extends StatefulWidget {
     this.episodeId,
     this.vodName,
     this.vodPic,
+    this.assembly,
+    this.engineFactory,
   });
 
   final int siteId;
@@ -261,23 +266,33 @@ class _PlayerPageWrapper extends StatefulWidget {
   final String? vodName;
   final String? vodPic;
 
+  /// 注入的装配。[assembly] 为空时回退全局装配。
+  ///
+  /// 这个可选参数是测试缝：续播验收需要可控的仓库与播放用例，而全局装配
+  /// 在 widget 测试里起不来（它要真实数据库与子进程）。
+  final AppAssembly? assembly;
+
+  /// 注入的引擎构造器；为空时用 [MediaKitEngine]。
+  final PlayerEngine Function()? engineFactory;
+
   @override
-  State<_PlayerPageWrapper> createState() => _PlayerPageWrapperState();
+  State<PlayerPageWrapper> createState() => _PlayerPageWrapperState();
 }
 
-class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
+class _PlayerPageWrapperState extends State<PlayerPageWrapper> {
   static const _startupTimeout = Duration(seconds: 20);
-  static const _resumeMin = Duration(seconds: 5);
-  static const _resumeEndTail = Duration(seconds: 30);
 
   PlayerController? _controller;
-  MediaKitEngine? _engine;
+  PlayerEngine? _engine;
   mkv.VideoController? _videoController;
   Timer? _startupTimer;
   Timer? _historyTimer;
   Duration? _resumeAt;
   String? _error;
   bool _isFullscreen = false;
+
+  /// 当前可用的装配：优先注入的，其次全局。
+  AppAssembly? get _assembly => widget.assembly ?? globalRouterAssembly;
 
   @override
   void initState() {
@@ -287,7 +302,7 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
 
   Future<void> _init() async {
     try {
-      final engine = MediaKitEngine();
+      final engine = widget.engineFactory?.call() ?? MediaKitEngine();
       _engine = engine;
       final initResult = await engine.initialize(const PlayerConfig());
       if (initResult.isErr) {
@@ -298,7 +313,7 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
       }
 
       // 获取真实播放地址
-      final assembly = globalRouterAssembly;
+      final assembly = _assembly;
       if (assembly == null) {
         if (mounted) {
           setState(() => _error = '应用未初始化');
@@ -327,7 +342,12 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
 
       // VideoController 必须在 open 之前创建，否则 mpv 不会挂载视频输出，
       // 画面永远是黑的（media_kit 用 isVideoControllerAttached 决定 vo）。
-      final videoController = mkv.VideoController(engine.player);
+      //
+      // 只有真实 MediaKitEngine 才需要它；测试注入的假引擎没有 mpv 实例，
+      // 此时跳过（对应 widget 测试只关心状态流转，不看画面）。
+      final videoController = engine is MediaKitEngine
+          ? mkv.VideoController(engine.player)
+          : null;
 
       final mediaSource = playResult.valueOrNull!.mediaSource;
       final openResult = await engine.open(mediaSource);
@@ -376,13 +396,13 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
 
   /// 读取历史进度准备续播，并启动周期进度落库。
   ///
-  /// 历史里「离结尾不足 30s」或「位置不足 5s」的不续播：前者等于看完，后者
-  /// 没必要从头快进一点点。
+  /// 是否续播、续到哪由 [ResumePolicy] 决定（位置不足 5s 或离结尾不足 30s
+  /// 都不续播），这里只负责读库、把结果挂上监听。
   Future<void> _prepareResumeAndRecord(
     PlayerController controller,
     PlayResult playResult,
   ) async {
-    final assembly = globalRouterAssembly;
+    final assembly = _assembly;
     if (assembly == null || playResult.mediaSource.isLive) return;
 
     try {
@@ -391,15 +411,17 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
         widget.vodId,
       );
       if (!mounted || controller != _controller) return;
-      if (history != null) {
-        final position = Duration(milliseconds: history.positionMs);
-        final duration = Duration(milliseconds: history.durationMs);
-        final nearEnd =
-            duration > Duration.zero && position >= duration - _resumeEndTail;
-        if (position >= _resumeMin && !nearEnd) {
-          _resumeAt = position;
-          controller.addListener(_maybeResume);
-        }
+      final target = ResumePolicy.resolve(
+        history == null
+            ? null
+            : ResumePoint(
+                position: Duration(milliseconds: history.positionMs),
+                duration: Duration(milliseconds: history.durationMs),
+              ),
+      );
+      if (target != null) {
+        _resumeAt = target;
+        controller.addListener(_maybeResume);
       }
     } on Object {
       // 历史读取失败不影响正常起播。
@@ -415,13 +437,15 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
   /// 首个播放证据出现且位置仍接近开头时，一次性 seek 到续播点。
   void _maybeResume() {
     final controller = _controller;
-    final resumeAt = _resumeAt;
-    if (controller == null ||
-        resumeAt == null ||
-        !controller.hasPlaybackEvidence) {
+    if (controller == null) return;
+    if (!ResumePolicy.shouldSeekAfterStart(
+      pending: _resumeAt,
+      hasPlaybackEvidence: controller.hasPlaybackEvidence,
+      currentPosition: controller.position,
+    )) {
       return;
     }
-    if (controller.position >= const Duration(seconds: 3)) return;
+    final resumeAt = _resumeAt!;
     _resumeAt = null;
     controller.removeListener(_maybeResume);
     unawaited(controller.seekTo(resumeAt));
@@ -430,7 +454,7 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
   /// 把当前播放进度写入历史（周期 + 退出时各一次）。
   void _flushProgress() {
     final controller = _controller;
-    final assembly = globalRouterAssembly;
+    final assembly = _assembly;
     if (controller == null || assembly == null) return;
     final positionMs = controller.position.inMilliseconds;
     final durationMs = controller.duration.inMilliseconds;
@@ -516,19 +540,26 @@ class _PlayerPageWrapperState extends State<_PlayerPageWrapper> {
 
     final controller = _controller;
     final videoController = _videoController;
-    if (controller == null || videoController == null) {
+    if (controller == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    // 注入假引擎（单元测试）时没有 mpv 实例，用黑底占位代替视频区，
+    // 这样状态流转仍可断言，且不依赖真实内核。
+    if (videoController == null && widget.engineFactory == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return PlayerPage(
       controller: controller,
-      videoArea: ColoredBox(
-        color: Colors.black,
-        child: mkv.Video(
-          controller: videoController,
-          controls: null,
-        ),
-      ),
+      videoArea: videoController == null
+          ? const ColoredBox(color: Colors.black)
+          : ColoredBox(
+              color: Colors.black,
+              child: mkv.Video(
+                controller: videoController,
+                controls: null,
+              ),
+            ),
       title: widget.title,
       onToggleFullscreen: _toggleFullscreen,
     );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mistream/app/app.dart';
 import 'package:mistream/application/app_assembly.dart';
+import 'package:mistream/features/common/common.dart';
 import 'package:storage/storage.dart';
 
 /// 构造一个跑在内存库上的装配。
@@ -31,7 +32,14 @@ void main() {
     // 标题、搜索入口、设置入口。
     expect(find.text('MiStream'), findsOneWidget);
     expect(find.byIcon(Icons.search), findsOneWidget);
-    expect(find.byIcon(Icons.settings), findsOneWidget);
+    // 设置入口在首页初始处于未选中态，导航栏渲染的是 outline 变体；
+    // 选中后才变实心。这里只断言「有设置入口」，接受两种形态任一。
+    expect(
+      find.byIcon(Icons.settings_outlined).evaluate().isNotEmpty ||
+          find.byIcon(Icons.settings).evaluate().isNotEmpty,
+      isTrue,
+      reason: '首页应显示设置入口（outline 或实心任一）',
+    );
   });
 
   testWidgets('首页导航到搜索页', (tester) async {
@@ -51,6 +59,27 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('输入关键词开始搜索'), findsOneWidget);
+  });
+
+  testWidgets('响应式网格嵌套在 Sliver 中不会使用无限高度', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: CustomScrollView(
+          slivers: <Widget>[
+            SliverToBoxAdapter(
+              child: ResponsiveGridView(
+                itemCount: 1,
+                shrinkWrap: true,
+                itemBuilder: _testGridItem,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('引导未完成时启动落在引导页', (tester) async {
@@ -100,3 +129,5 @@ void main() {
     });
   });
 }
+
+Widget _testGridItem(BuildContext context, int index) => const SizedBox();

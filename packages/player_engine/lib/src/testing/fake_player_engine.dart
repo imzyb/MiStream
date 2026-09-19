@@ -77,9 +77,24 @@ final class FakePlayerEngine implements PlayerEngine {
   AppError? _initializeFailure;
   AppError? _openFailure;
 
+  final List<Duration> _seekTargets = <Duration>[];
+
   // -------------------------------------------------------------------
   // 测试钩子
   // -------------------------------------------------------------------
+
+  /// 历次 seek 的目标位置（按发生顺序，已钳制到 `[0, duration]`）。
+  ///
+  /// 续播验收需要断言「确实 seek 到了历史位置」，而不只看最终 position——
+  /// 后者可能被后续操作覆盖。
+  List<Duration> get seekTargets => List.unmodifiable(_seekTargets);
+
+  /// seek 发生的次数。
+  int get seekCount => _seekTargets.length;
+
+  /// 最近一次 seek 的目标位置；从未 seek 为 `null`。
+  Duration? get lastSeekTarget =>
+      _seekTargets.isEmpty ? null : _seekTargets.last;
 
   /// 让下一次 [initialize] 以 [error] 失败。
   void failNextInitialize(AppError error) {
@@ -97,9 +112,11 @@ final class FakePlayerEngine implements PlayerEngine {
   }
 
   /// 手动推进播放位置。到达时长即进入 [PlayerState.ended]。
+  ///
+  /// 不计入 [seekTargets]：这是模拟内核自行推进，而非外部下发 seek 命令。
   void advance(Duration delta) {
     _requireOpen();
-    _seekTo(_position.value + delta);
+    _seekTo(_position.value + delta, record: false);
   }
 
   /// 手动发一条内核日志。
@@ -283,7 +300,10 @@ final class FakePlayerEngine implements PlayerEngine {
   Future<void> stepFrame({bool backward = false}) async {
     _requireOpen();
     const frame = Duration(milliseconds: 40);
-    _seekTo(backward ? _position.value - frame : _position.value + frame);
+    _seekTo(
+      backward ? _position.value - frame : _position.value + frame,
+      record: false,
+    );
     _state.emitIfChanged(PlayerState.paused);
   }
 
@@ -447,8 +467,9 @@ final class FakePlayerEngine implements PlayerEngine {
   // 内部
   // -------------------------------------------------------------------
 
-  void _seekTo(Duration target) {
+  void _seekTo(Duration target, {bool record = true}) {
     final clamped = _clamp(target, _duration.value);
+    if (record) _seekTargets.add(clamped);
     _position.emit(clamped);
     _buffered.emit([DurationRange(Duration.zero, clamped)]);
 
