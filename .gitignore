@@ -13,7 +13,6 @@ pubspec_overrides.yaml
 # Flutter 生成物
 .flutter-plugins
 .flutter-plugins-dependencies
-.flutter_tool_state
 **/generated_plugin_registrant.dart
 **/Flutter/Generated.xcconfig
 **/Flutter/flutter_export_environment.sh
@@ -44,3 +43,9 @@ runtimes/spider_js/**/*.exp
 # 系统
 .DS_Store
 Thumbs.db
+
+# AI 助手工作区（含记忆与项目数据，属本地环境，不入库）
+.workbuddy-ai/
+
+# Flutter 工具链临时状态
+**/.flutter_tool_state
