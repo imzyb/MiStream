@@ -13,6 +13,7 @@ pubspec_overrides.yaml
 # Flutter 生成物
 .flutter-plugins
 .flutter-plugins-dependencies
+.flutter_tool_state
 **/generated_plugin_registrant.dart
 **/Flutter/Generated.xcconfig
 **/Flutter/flutter_export_environment.sh

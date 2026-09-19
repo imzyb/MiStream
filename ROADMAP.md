@@ -189,7 +189,7 @@ M0 工程奠基
 - [x] 脚本死循环被 interrupt 正确中断，不影响同进程其它源
 - [x] 脚本 OOM 被限制在 Context 级别，进程存活
 - [x] 脚本异常返回带堆栈的 `SCRIPT_RUNTIME_ERROR`，可在诊断面板查看
-- [ ] 单次 `search` P50 < 3s（本地 mock 源）——e2e 已跑通，缺基准断言
+- [x] 单次 `search` P50 < 3s（本地 mock 源）→ `search_engine/test/search_p50_test.dart`
 
 **依赖**：M3
 
@@ -218,7 +218,7 @@ M0 工程奠基
 - [ ] 从零启动 → 导入一份真实 TVBox 配置 → 搜索 → 进详情 → 起播成功，全程无需开发者干预（等真实配置源）
 - [x] 聚合搜索中任一源超时/崩溃不阻塞其它源结果显示
 - [x] 播放失败给出可读原因与错误码，不是笼统的「播放失败」
-- [ ] 关闭重开能从上次位置续播
+- [x] 关闭重开能从上次位置续播 → `resume_policy_test.dart`（15 用例）+ `player_resume_e2e_test.dart`（5 用例）
 - [x] 所有异步区域四态齐全
 - [ ] 无 P0 崩溃；源崩溃 100% 不影响主进程（进程隔离已就位，待长跑验证）
 - [x] 集成测试（mock 源）端到端通过
@@ -233,7 +233,7 @@ M0 工程奠基
 
 **交付物**
 
-- `runtimes/sniffer`：WebView2（Windows）+ CDP 驱动
+- `runtimes/sniffer`：CDP 驱动嗅探运行时（内核按序探测本机 Edge/Chrome/Chromium，不随包内核，见 ADR-005）
 - 嗅探规则引擎：命中/排除规则、扩展名与 Content-Type 判定
 - 配置 `rules` 字段映射
 - 解析器链：`parses` 的四种 type，按 flag 过滤
@@ -244,7 +244,7 @@ M0 工程奠基
 **出口标准**
 
 - [ ] 一个 type=0 网页源可通过嗅探成功起播
-- [ ] 嗅探进程用完即杀，不残留、不持久化 cookie
+- [x] 嗅探进程用完即杀，不残留、不持久化 cookie
 - [ ] 嗅探超时能正确回退到下一候选，不卡死 UI
 - [ ] 解析器成功率统计正确落库并影响排序
 - [ ] 起播成功率相对 M5 有可测量的提升（用固定源集合对比）
@@ -329,6 +329,12 @@ M0 工程奠基
 ---
 
 ## M10 · 发布工程 ══> **v1.0（Windows 正式版）**
+
+> **进度实况（2026-09-19）**：发布链草稿已就位——`.github/workflows/release.yml`
+> 的 tag 触发流水线（`check:arch` + `analyze` → 拉 libmpv/quickjs/JVM 运行时 →
+> `flutter build windows --release` → 合规扫描 → 产出草稿 release），以及
+> `tools/release_check.ps1` 的「安装包不含源配置」扫描脚本（提交 `d4c323e`、
+> `d17849d`）。出口标准尚未勾选，因为均需真实 tag 跑通或人工回归验证。
 
 **交付物**
 

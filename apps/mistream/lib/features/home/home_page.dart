@@ -388,6 +388,9 @@ class _HomePageState extends State<HomePage> {
                       ),
                       child: ResponsiveGridView(
                         itemCount: _categories.length.clamp(0, 8),
+                        // HomePage 位于 CustomScrollView 的 SliverToBoxAdapter
+                        // 内，内部 GridView 必须收缩包裹，否则会拿到无限高度。
+                        shrinkWrap: true,
                         itemBuilder: (context, index) {
                           final cat = _categories[index];
                           return _CategoryCard(

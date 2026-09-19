@@ -174,15 +174,34 @@ POST {api}/  { "method": "searchContent", "params": {...} }
 
 ### 5.1 解码链
 
+实现位于 `packages/core_config/lib/src/config_decoder.dart`，两条入口：
+
+**`decode(raw, {aesKey})` —— 三条解码路径依次尝试**
+
 ```
 原始字节
- ├─ 以 '{' 开头 → 明文 JSON
- ├─ Base64 特征 → 解码后重入
- ├─ 已知 AES 加密体（十六进制头部特征）→ 按约定密钥/IV 解密后重入
- └─ 都不匹配 → 报错「无法识别的配置格式」，附前 64 字节 hex 供排查
+ ├─ 明文 JSON（utf8 解码后 jsonDecode 成功）→ format=plain
+ ├─ Base64（decode 后重入 JSON 解析）→ format=base64
+ └─ AES-128-ECB（需调用方提供 aesKey，16/24/32 字节）→ format=aes
+      └─ 都不匹配 → configDecodeFailed
 ```
 
-解析器必须容忍脏 JSON：注释、尾逗号、单引号——现实中的配置文件经常不是严格 JSON。用宽松解析器，而不是标准 `jsonDecode`。
+**`decodeWithProbe(raw, {aesKey})` —— 解码失败后探测内容类型，给出可读错误**
+
+三条路径失败后，按魔数/标记探测原始字节，命中即返回 `configNotJson`（`ErrorCode(1006)`）：
+
+| 魔数 / 标记 | 判定 | message 前缀 |
+| --- | --- | --- |
+| `FF D8` | 图片（JPEG） | 图片（JPEG） |
+| `89 50 4E 47` | 图片（PNG） | 图片（PNG） |
+| `47 49 46` | 图片（GIF） | 图片（GIF） |
+| `42 4D` | 图片（BMP） | 图片（BMP） |
+| `<!doctype` / `<html`（大小写不敏感） | 网页（HTML） | 网页（HTML） |
+| 其它 | 不明 | 回退 `configDecodeFailed` |
+
+这一层探测的动机：现实中不少源的「接口地址」其实指向导航页，或对非 TVBox 客户端 UA 返回占位图（JPEG 伪装 `image/x-ms-bmp`）。让用户在引导页立刻看到「返回的是图片（JPEG），不是接口地址」，而不是困惑于笼统的「解码失败」。`ConfigImportService.import` 已默认走 `decodeWithProbe`。
+
+解析用标准 `jsonDecode` 兜底；现实配置偶有脏 JSON（注释/尾逗号），但当前以「能解析就解析」为准，遇到无法解析的真实源再按需引入宽松解析器。
 
 ### 5.2 字段映射
 
