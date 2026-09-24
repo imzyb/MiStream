@@ -121,15 +121,25 @@ class ConfigDecoder {
     return null;
   }
 
-  /// 尝试明文 JSON 解码。
-  static DecodeResult? _tryPlain(List<int> raw) {
-    final text = utf8.decode(raw, allowMalformed: true);
+  /// 把一段文本整理成 `jsonDecode` 能接受的 JSON，失败返回 `null`。
+  ///
+  /// 返回的是**整理后**的文本，调用方应拿它去解析——原文本可能含注释，
+  /// 直接交给 `ConfigParser` 会二次失败。
+  static String? _tryParse(String text) {
+    final cleaned = sanitizeJsonText(text);
     try {
-      jsonDecode(text);
-      return DecodeResult(json: text, format: 'plain');
+      jsonDecode(cleaned);
+      return cleaned;
     } on FormatException {
       return null;
     }
+  }
+
+  /// 尝试明文 JSON 解码。
+  static DecodeResult? _tryPlain(List<int> raw) {
+    final cleaned = _tryParse(utf8.decode(raw, allowMalformed: true));
+    if (cleaned == null) return null;
+    return DecodeResult(json: cleaned, format: 'plain');
   }
 
   /// 尝试 Base64 解码。
@@ -137,9 +147,9 @@ class ConfigDecoder {
     final text = utf8.decode(raw, allowMalformed: true).trim();
     try {
       final decoded = base64Decode(text);
-      final jsonText = utf8.decode(decoded, allowMalformed: true);
-      jsonDecode(jsonText);
-      return DecodeResult(json: jsonText, format: 'base64');
+      final cleaned = _tryParse(utf8.decode(decoded, allowMalformed: true));
+      if (cleaned == null) return null;
+      return DecodeResult(json: cleaned, format: 'base64');
     } on FormatException {
       return null;
     }
@@ -151,11 +161,113 @@ class ConfigDecoder {
       final key = enc.Key.fromUtf8(keyStr);
       final aes = enc.AES(key, mode: enc.AESMode.ecb);
       final decrypted = aes.decrypt(enc.Encrypted(Uint8List.fromList(raw)));
-      final text = utf8.decode(decrypted, allowMalformed: true);
-      jsonDecode(text);
-      return DecodeResult(json: text, format: 'aes');
+      final cleaned = _tryParse(utf8.decode(decrypted, allowMalformed: true));
+      if (cleaned == null) return null;
+      return DecodeResult(json: cleaned, format: 'aes');
     } on Object {
       return null;
     }
+  }
+
+  /// 把「非严格 JSON」整理成 `jsonDecode` 能吃的文本。
+  ///
+  /// TVBox 生态里的配置普遍不是严格 JSON，两类偏差最常见：
+  ///
+  /// 1. **`//` 与 `/* */` 注释**。字段后面跟一行免责声明、备用地址或分隔线
+  ///    是常态。实测某源的配置里有 29 行这样的注释。
+  /// 2. **字符串内的裸控制字符**（未转义的换行 / 制表符）。JSON 规范不允许，
+  ///    但手写配置里很常见。
+  ///
+  /// 两者都会让 `jsonDecode` 抛 `FormatException`，却都不代表配置本身有问题。
+  /// 参考实现（tvbox-ysc-config 的 `parse_json_lenient`）同样做了这两件事，
+  /// 这里对齐它的宽容度。
+  ///
+  /// **必须逐字符扫描，不能用正则。** JSON 字符串值里普遍含 `//`
+  /// （`"http://..."`），`//[^\n]*` 这类正则会把 URL 从中间截断——把一份好
+  /// 配置改成一份坏配置。实测某源的配置有 96 行字符串里带 `http://`。
+  /// 扫描时跟踪「是否在字符串内」与转义状态，字符串内的内容原样保留。
+  ///
+  /// 注释被替换为等量的换行（而不是直接删掉），这样报错时的行号仍然对得上。
+  static String sanitizeJsonText(String text) {
+    // 去 BOM：有些源会在开头带上，utf8 解出来是 U+FEFF，jsonDecode 不认。
+    final source = text.startsWith('\uFEFF') ? text.substring(1) : text;
+
+    final out = StringBuffer();
+    var inString = false;
+    var escaped = false;
+
+    var i = 0;
+    while (i < source.length) {
+      final ch = source[i];
+
+      if (inString) {
+        if (escaped) {
+          out.write(ch);
+          escaped = false;
+          i++;
+          continue;
+        }
+        if (ch == r'\') {
+          out.write(ch);
+          escaped = true;
+          i++;
+          continue;
+        }
+        if (ch == '"') {
+          out.write(ch);
+          inString = false;
+          i++;
+          continue;
+        }
+        // 字符串内的裸控制字符：补上转义，让 JSON 合法。
+        final code = ch.codeUnitAt(0);
+        if (code < 0x20) {
+          switch (ch) {
+            case '\n':
+              out.write(r'\n');
+            case '\r':
+              out.write(r'\r');
+            case '\t':
+              out.write(r'\t');
+            default:
+              out.write(r'\u');
+              out.write(code.toRadixString(16).padLeft(4, '0'));
+          }
+          i++;
+          continue;
+        }
+        out.write(ch);
+        i++;
+        continue;
+      }
+
+      // 字符串外：识别注释。
+      if (ch == '/' && i + 1 < source.length) {
+        final next = source[i + 1];
+        if (next == '/') {
+          // 行注释：吞到行尾（保留换行，行号才不会错位）。
+          final nl = source.indexOf('\n', i);
+          if (nl < 0) break;
+          i = nl;
+          continue;
+        }
+        if (next == '*') {
+          // 块注释：吞到 */，内部的换行原样保留。
+          final end = source.indexOf('*/', i + 2);
+          if (end < 0) break;
+          for (var k = i; k < end + 2; k++) {
+            if (source[k] == '\n') out.write('\n');
+          }
+          i = end + 2;
+          continue;
+        }
+      }
+
+      if (ch == '"') inString = true;
+      out.write(ch);
+      i++;
+    }
+
+    return out.toString();
   }
 }
