@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # 版本基线见 .tool-versions 与 docs/03-技术选型.md §2。三处要一起改。
+  FLUTTER_VERSION: 3.44.8
+
 jobs:
   build:
     name: 构建并发布草稿
@@ -16,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.44.8
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
       - run: dart pub global activate melos
@@ -25,14 +29,40 @@ jobs:
       - name: 门禁
         run: melos run check:arch && melos run analyze
       - name: 安装 libmpv/quickjs/jvm
-        run: melos run libmpv:install && melos run quickjs:install && powershell -File tools/build_jvm_runtime.ps1
+        # quickjs:install 与 spider-js:bundle 在下面的 CMake 里也会跑一次，是幂等的；
+        # 这里显式列出是为了让「Release 需要哪些 native 依赖」在流水线里可见。
+        run: >
+          melos run libmpv:install &&
+          melos run quickjs:install &&
+          powershell -File tools/build_jvm_runtime.ps1
       - name: 构建 Windows
+        # ⚠️ 仓库根不是 Flutter app：根 pubspec.yaml 只有 environment/workspace/melos，
+        # 真正的 app 在 apps/mistream。少了 working-directory 会在根目录报
+        # 「不是 Flutter 项目」，产物路径也会指空。与 ci.yml 的 build-check /
+        # release-windows 保持一致。
+        working-directory: apps/mistream
         run: flutter build windows --release
+      - name: 校验产物包链（spider_js 握手）
+        run: >
+          dart run tools/check_spider_js_bundle.dart
+          --bundle apps/mistream/build/windows/x64/runner/Release --smoke
       - name: 合规扫描（安装包不含源配置）
-        run: powershell -File tools/release_check.ps1
+        # 显式传构建目录：脚本的默认值是 apps/mistream/build，传参让 CI 与本地
+        # 手动执行走同一条路径，且目录不存在时脚本会直接失败而不是静默通过。
+        run: powershell -File tools/release_check.ps1 -BuildDir apps/mistream/build
+      - name: 打包
+        # 只发 mistream.exe 是发不出去的：它只有 92 KB，是薄启动器，真正的
+        # Dart AOT 代码在 data/app.so，还依赖同目录的一堆 dll（libmpv-2.dll、
+        # flutter_windows.dll、spider_js_runtime.exe…）。必须整目录打包。
+        shell: pwsh
+        run: |
+          $src = 'apps/mistream/build/windows/x64/runner/Release'
+          $dst = "dist/mistream-${{ github.ref_name }}-windows-x64.zip"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "$src/*" -DestinationPath $dst -Force
       - name: 创建草稿 Release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           generate_release_notes: true
-          files: build/windows/x64/runner/Release/mistream.exe
+          files: dist/*.zip
