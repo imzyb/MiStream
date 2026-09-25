@@ -190,6 +190,14 @@ class SpiderHost {
   Timer? _restartTimer;
   int _missedHeartbeats = 0;
 
+  /// 当前进程的退出**是否已经处理过**。
+  ///
+  /// 换新时会先主动关进程（调一次 [_onProcessExit]），老进程随后真正退出又
+  /// 会触发一次（挂在 `exitCode` 上的回调）。若两次都照单全收，第二次会落在
+  /// 第一次重启之后、再拉起一个进程——假进程测试里两次几乎同时发生，被
+  /// `_restartTimer != null` 挡住，真进程退出有延迟就暴露了。
+  bool _exitHandled = false;
+
   /// 本进程已经收掉的源实例数，到 [sourceTearDownsPerProcess] 就换新。
   int _sourceTearDowns = 0;
 
@@ -270,6 +278,8 @@ class SpiderHost {
       final proc = await _launcher(executable, arguments);
       _exitCode = proc.exitCode;
       _kill = proc.kill;
+      // 新进程：它的退出还没处理过，重置幂等标记。
+      _exitHandled = false;
 
       final channel = StdioRpcChannel(
         stdin: proc.stdout,
@@ -499,6 +509,10 @@ class SpiderHost {
 
   void _onProcessExit(String reason) {
     if (_disposed) return;
+    // 同一个进程只处理一次退出。换新是「先主动关、后自然退出」两步，
+    // 两次都会走到这里，第二次必须忽略，否则多起一个进程。
+    if (_exitHandled) return;
+    _exitHandled = true;
     _handshaken = false;
     final old = _channel;
     _channel = null;
