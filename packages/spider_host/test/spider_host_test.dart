@@ -101,6 +101,17 @@ List<int> responseFrame(int id, Object? result) {
   return header.followedBy(utf8.encode(body)).toList();
 }
 
+/// 构造一个错误响应帧。
+List<int> errorFrame(int id, {required int code, required String message}) {
+  final body = jsonEncode({
+    'jsonrpc': '2.0',
+    'id': id,
+    'error': {'code': code, 'message': message},
+  });
+  final header = utf8.encode('Content-Length: ${body.length}\r\n\r\n');
+  return header.followedBy(utf8.encode(body)).toList();
+}
+
 /// 从请求帧中提取 id。
 int extractId(List<int> frame) {
   final raw = utf8.decode(frame);
@@ -251,6 +262,127 @@ void main() {
       expect(result.isOk, isTrue);
       expect(host.isTripped, isFalse);
       expect(host.isReady, isTrue);
+    });
+  });
+
+  group('SpiderHost 换新（子进程内存回收）', () {
+    late List<_FakeProcess> processes;
+    late SpiderHost host;
+
+    _FakeProcess current() => processes.last;
+
+    Future<
+      ({
+        IOSink stdin,
+        Stream<List<int>> stdout,
+        Future<int> exitCode,
+        bool Function([ProcessSignal signal]) kill,
+      })
+    >
+    fakeLauncher(String exec, List<String> args) async {
+      final p = _FakeProcess();
+      processes.add(p);
+      return (
+        stdin: p.stdinSink,
+        stdout: p.stdout,
+        exitCode: p.exitCode,
+        kill: p.kill,
+      );
+    }
+
+    /// 启动并完成握手。
+    Future<void> startReady() async {
+      final future = host.start();
+      await Future<void>.delayed(Duration.zero);
+      current().stdoutCtrl.add(
+        handshakeResponse(extractId(current().stdinSink.written.first)),
+      );
+      await future;
+    }
+
+    /// 发一条请求，并把「最后写出的那一帧」当成它，回一个成功响应。
+    ///
+    /// 子进程侧是同步阻塞的，所以每次调用必定恰好写出一帧；用 `written.last`
+    /// 就能对上，不必自己维护 id 序列。
+    Future<void> callAndReply(String method, Object? result) async {
+      final pending = host.call(method);
+      await Future<void>.delayed(Duration.zero);
+      final frame = current().stdinSink.written.last;
+      current().stdoutCtrl.add(responseFrame(extractId(frame), result));
+      await pending;
+    }
+
+    setUp(() {
+      processes = [];
+      host = SpiderHost(
+        executable: 'fake',
+        arguments: [],
+        // 阈值压到 1，一次销毁就该换新。
+        sourceTearDownsPerProcess: 1,
+        backoffFor: (_) => Duration.zero,
+        launcher: fakeLauncher,
+      );
+    });
+
+    tearDown(() async {
+      await host.dispose();
+    });
+
+    test('攒够销毁次数后换新子进程，且发的是 runtime.shutdown', () async {
+      await startReady();
+      await callAndReply('spider.create', <String, Object?>{});
+      await callAndReply('spider.destroy', <String, Object?>{});
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final firstProcessFrames = processes.first.stdinSink.written
+          .map(utf8.decode)
+          .join();
+      expect(
+        firstProcessFrames,
+        contains('"method":"runtime.shutdown"'),
+        reason: '换新要走优雅关停，让子进程自己退出、把内存交还 OS',
+      );
+      expect(processes, hasLength(greaterThanOrEqualTo(2)), reason: '换新后要重新拉起');
+    });
+
+    test('还有活实例时不换新（换新会把别人的实例一起带走）', () async {
+      await startReady();
+      await callAndReply('spider.create', <String, Object?>{});
+      await callAndReply('spider.create', <String, Object?>{});
+      await callAndReply('spider.destroy', <String, Object?>{});
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(host.liveInstanceCount, 1);
+      expect(
+        processes,
+        hasLength(1),
+        reason: '此刻还挂着一个实例，换新会把它一起杀掉，得等它销毁',
+      );
+
+      // 最后一个也销毁 → 计数归零 → 这才换新。
+      await callAndReply('spider.destroy', <String, Object?>{});
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(host.liveInstanceCount, 0);
+      expect(processes, hasLength(greaterThanOrEqualTo(2)));
+    });
+
+    test('失败的 destroy 不计数', () async {
+      await startReady();
+      await callAndReply('spider.create', <String, Object?>{});
+      // 子进程回错误：这次没有真的毁掉实例，不该攒换新额度。
+      final pending = host.call('spider.destroy');
+      await Future<void>.delayed(Duration.zero);
+      final frame = current().stdinSink.written.last;
+      current().stdoutCtrl.add(
+        errorFrame(extractId(frame), code: -32602, message: '实例不存在'),
+      );
+      await pending;
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(processes, hasLength(1));
+      expect(host.liveInstanceCount, 1, reason: '失败的 destroy 不该动实例计数');
     });
   });
 }

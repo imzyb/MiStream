@@ -106,6 +106,18 @@ defaultProcessLauncher(
   );
 }
 
+/// 一个子进程最多托管多少个源的「建-用-毁」周期，到点就整进程换新。
+///
+/// 为什么必须换：这份 assert 版 `libquickjs.dll` 上 `JS_FreeRuntime` 与
+/// `JS_RunGC` 都会断言 abort，所以子进程只能「释放 context + 弃用 runtime」
+/// （见 `runtimes/spider_js/lib/src/engine/js_runtime.dart` 的 `park`）。而实测
+/// **context 释放并不真把内存还回来**——每个源约留 10MB。进程换新是唯一能把
+/// 这块内存交还 OS 的手段，代价只是下一次 `spider.create` 重付一次 drpy2 加载。
+///
+/// 取 8 是「一屏订阅源试一轮」的量级：换新太频繁会把 drpy2 加载（约 0.4s）
+/// 摊到每次请求上，太少则内存涨得快。
+const int kSourceTearDownsPerProcess = 8;
+
 /// Spider 运行时子进程的宿主侧管理。
 ///
 /// 通过 [start] 启动并握手，[call] 分发请求，[dispose] 优雅退出。进程崩溃或
@@ -117,6 +129,7 @@ class SpiderHost {
   /// [maxRestartAttempts] 控制最大退避重启次数（默认 [kMaxRestartAttempts]）。
   /// [backoffFor] 可传入自定义退避策略，用于测试缩短等待时间。
   /// [handshakeTimeout] 控制握手超时（默认 [kHandshakeTimeout]）。
+  /// [sourceTearDownsPerProcess] 控制换新节奏（默认 [kSourceTearDownsPerProcess]）。
   SpiderHost({
     required this.executable,
     required this.arguments,
@@ -124,6 +137,7 @@ class SpiderHost {
     this.appVersion = 'dev',
     this.maxRestartAttempts = kMaxRestartAttempts,
     this.handshakeTimeout = kHandshakeTimeout,
+    this.sourceTearDownsPerProcess = kSourceTearDownsPerProcess,
     this.hostApi,
     Duration Function(int attempt)? backoffFor,
     ProcessLauncher? launcher,
@@ -150,6 +164,9 @@ class SpiderHost {
   /// 握手超时。
   final Duration handshakeTimeout;
 
+  /// 每托管这么多个源的销毁周期就换新一次子进程，见 [kSourceTearDownsPerProcess]。
+  final int sourceTearDownsPerProcess;
+
   /// 宿主 API 实现，服务子进程发来的 `host.*` 请求。
   ///
   /// 可空是为了让只做 Host → Runtime 单向调用的测试不必造一个；生产装配必须
@@ -173,6 +190,16 @@ class SpiderHost {
   Timer? _restartTimer;
   int _missedHeartbeats = 0;
 
+  /// 本进程已经收掉的源实例数，到 [sourceTearDownsPerProcess] 就换新。
+  int _sourceTearDowns = 0;
+
+  /// 当前活着的实例数（`spider.create` 减 `spider.destroy`）。
+  ///
+  /// 换新会连带杀掉所有活着的实例，所以只在归零时才动手。
+  int _liveInstances = 0;
+
+  bool _recycling = false;
+
   /// 熔断状态：连续失败达到上限后置 true。
   bool _tripped = false;
 
@@ -181,6 +208,9 @@ class SpiderHost {
 
   /// 是否已熔断（不再自动重启）。
   bool get isTripped => _tripped;
+
+  /// 当前活着的 Spider 实例数。
+  int get liveInstanceCount => _liveInstances;
 
   /// 当前能力位。
   List<String> get features => List.unmodifiable(_features);
@@ -254,6 +284,9 @@ class SpiderHost {
       _handshaken = true;
       _restartAttempt = 0;
       _tripped = false;
+      // 新进程，换新计数从头开始。
+      _sourceTearDowns = 0;
+      _liveInstances = 0;
       _startHeartbeat();
       return Ok(result);
     } on Object catch (e, st) {
@@ -285,7 +318,48 @@ class SpiderHost {
       timeout: timeout,
       cancelOn: cancelOn,
     );
+    if (result.isOk) _trackInstanceLifecycle(method);
     return result.mapErr((e) => e);
+  }
+
+  /// 数实例生命周期，并在攒够 [sourceTearDownsPerProcess] 个销毁后换新子进程。
+  ///
+  /// 只在**成功**的 create/destroy 上计数：失败的那次没有真的建/毁实例，算进去
+  /// 会让计数与子进程实际状态脱节，`_liveInstances` 归零判断也就失效了。
+  void _trackInstanceLifecycle(String method) {
+    switch (method) {
+      case 'spider.create':
+        _liveInstances++;
+      case 'spider.destroy':
+        if (_liveInstances > 0) _liveInstances--;
+        _sourceTearDowns++;
+        // 攒够就换新。要求此刻没有活实例：换新等于把子进程整个换掉，带着别人的
+        // 实例一起走会变成难查的「调用凭空失败」。
+        if (_sourceTearDowns >= sourceTearDownsPerProcess &&
+            _liveInstances == 0) {
+          unawaited(_recycleProcess());
+        }
+    }
+  }
+
+  /// 主动换新子进程，把那份留着的 JS 堆交还 OS。
+  ///
+  /// 走的是正常重启通道（[runtime.shutdown] → 进程退出 → [_scheduleRestart]），
+  /// 但先把 `_restartAttempt` 清零：换新是计划内行为，不该消耗退避额度、更不该
+  /// 把进程推向熔断。反过来，如果换新后起不来，退避计数会从 1 重新开始，该熔断
+  /// 还是会熔断。
+  Future<void> _recycleProcess() async {
+    if (_disposed || _recycling) return;
+    _recycling = true;
+    _sourceTearDowns = 0;
+    _restartAttempt = 0;
+    try {
+      await _channel?.notify('runtime.shutdown', params: {'graceMs': 1000});
+      if (_disposed) return;
+      _onProcessExit('按计划换新（每 $sourceTearDownsPerProcess 个源）');
+    } finally {
+      _recycling = false;
+    }
   }
 
   /// 发送通知。
@@ -385,6 +459,9 @@ class SpiderHost {
     final old = _channel;
     _channel = null;
     _heartbeatTimer?.cancel();
+    // 进程没了，它托管的实例也就全没了。不清零的话 `_liveInstances` 会虚高，
+    // 换新永远等不到「归零」那一刻。
+    _liveInstances = 0;
     // 心跳触发的重启里子进程通常还活着，必须先杀掉，否则变成僵尸进程
     // 独占端口/资源；进程自然退出时这里只是无害的二次 kill。
     if (old != null) {

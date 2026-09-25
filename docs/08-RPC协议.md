@@ -63,6 +63,15 @@ body 为 UTF-8 编码的 JSON。不使用换行分隔（JSON 内容可能含换�
 
 `limits`：`{timeoutMs, memoryMB, storageQuotaMB, allowedHosts[]}`。
 
+**`spider.destroy` 的资源语义**：Runtime 侧**不保证**把该实例占的内存交还 OS。
+本仓的 JS 运行时受限于 vendored `libquickjs.dll`（assert 版、`JSObject` 布局非
+mainline），释放 runtime 会断言 abort，只能「释放 context + 弃用 runtime」，而
+实测 context 释放并不真还内存（每个源约 10MB）。因此**宿主负责整进程换新**：
+`SpiderHost` 每收掉若干个源、且当前没有活实例时，发 `runtime.shutdown` 让子进程
+干净退出再重新拉起。细节与实测见
+[runtimes/spider_js/README.md](../runtimes/spider_js/README.md) 的「runtime 的
+GC / 释放路径会断言 abort」。
+
 ### 3.3 Spider 调用
 
 所有方法带 `instanceId`，语义见 [05-Spider引擎](05-Spider引擎.md) §1：
