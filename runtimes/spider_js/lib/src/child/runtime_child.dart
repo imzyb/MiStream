@@ -15,6 +15,7 @@ import 'package:core_domain/core_domain.dart';
 import 'package:spider_js/src/child/drpy_host_functions.dart';
 import 'package:spider_js/src/child/module_loader.dart';
 import 'package:spider_js/src/child/sync_frame_io.dart';
+import 'package:spider_js/src/drpy/type0_script.dart' show type0Script;
 import 'package:spider_js/src/engine/js_runtime.dart';
 
 /// 本子进程实现的协议版本（docs/08 §8）。
@@ -238,11 +239,21 @@ class RuntimeChild {
 
   Map<String, Object?> _create(Map<String, Object?> params) {
     final instanceId = _requireString(params, 'instanceId');
-    final script = params['script'];
-    if (script is! String || script.isEmpty) {
+
+    // `builtin: 'type0'` 表示「用内置通用脚本」，此时宿主不传 script——
+    // type=0 的 `api` 是站点基础地址而非脚本路径，宿主无从加载脚本。
+    // 内置脚本由本运行时持有，所以这个替换只能在子进程侧做。
+    final builtin = params['builtin'] as String?;
+    final rawScript = params['script'];
+    final String script;
+    if (rawScript is String && rawScript.isNotEmpty) {
+      script = rawScript;
+    } else if (builtin == 'type0') {
+      script = type0Script;
+    } else {
       throw const _RpcFailure(
         ErrorCode.scriptLoadFailed,
-        'spider.create 缺少 script',
+        'spider.create 缺少 script（也没给 builtin 兜底）',
       );
     }
 

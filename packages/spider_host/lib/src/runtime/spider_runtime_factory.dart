@@ -427,12 +427,15 @@ class SpiderRuntimeFactory {
 
   /// 根据站点信息创建运行时。
   ///
-  /// [typeCode] 站点类型 (0/1/3)
+  /// [typeCode] 站点类型 (0/1/3/4)
   /// [api] API 地址或脚本路径
   /// [ext] 扩展参数
   /// [sourceUrl] 配置源 URL（用于解析相对路径，如 `./lib/drpy2.min.js`）
   /// [spiderJarUrl] 配置源根级 `spider` 字段（csp_ 站点的 jar URL）
   /// [spiderJarMd5] jar 的 MD5（配置提供时校验）
+  ///
+  /// 分发用 [classifySiteRuntime]——与 [supports] 同一把尺子，避免
+  /// 「UI 说可用、这里抛异常」这类不一致。
   Future<SpiderRuntime> create({
     required int typeCode,
     required String api,
@@ -441,34 +444,66 @@ class SpiderRuntimeFactory {
     String? spiderJarUrl,
     String? spiderJarMd5,
   }) async {
-    switch (typeCode) {
-      case 1:
-        // JSON API → HttpRuntime
+    switch (classifySiteRuntime(typeCode: typeCode, api: api)) {
+      case SiteRuntimeKind.http:
+        // JSON API（type=1/4）→ HttpRuntime，零脚本。
         return HttpRuntimeAdapter(HttpRuntime(api));
 
-      case 3:
-        // csp_ 前缀 → TVBox 蜘蛛 jar（JVM 运行时）
-        if (api.startsWith('csp_')) {
-          return _createJvmRuntime(
-            api: api,
-            ext: ext,
-            spiderJarUrl: spiderJarUrl,
-            spiderJarMd5: spiderJarMd5,
-          );
-        }
-        // 其余 → Spider 脚本 → JS 运行时
-        return _createJsRuntime(api: api, ext: ext, sourceUrl: sourceUrl);
+      case SiteRuntimeKind.js:
+        // type=0 没有脚本文件，用 JS 运行时的**内置通用脚本**（由 ext 驱动）；
+        // type=3 的脚本源才按 api 去加载 .js。
+        return _createJsRuntime(
+          api: api,
+          ext: ext,
+          sourceUrl: sourceUrl,
+          useBuiltinType0: typeCode == 0,
+        );
 
-      default:
+      case SiteRuntimeKind.jvm:
+        // csp_ 前缀 → TVBox 蜘蛛 jar（JVM 运行时）。
+        return _createJvmRuntime(
+          api: api,
+          ext: ext,
+          spiderJarUrl: spiderJarUrl,
+          spiderJarMd5: spiderJarMd5,
+        );
+
+      case SiteRuntimeKind.unsupported:
         throw ArgumentError('不支持的站点类型: $typeCode');
     }
   }
 
+  /// 当前装配下该站点是否具备可用运行时。
+  ///
+  /// 与 [create] 共用 [classifySiteRuntime]，**同步**返回，供 UI 灰显
+  /// （`SourceOption.isUsable`）。不要用「试着 create 一下看抛不抛」来判定——
+  /// 那会真的起子进程、下载脚本。
+  ///
+  /// 注意 `type=3` 要**看 api**：`csp_` 走 JVM，而 JVM 按 ADR-006 是可选组件，
+  /// 没配就是不可用；其余 `type=3` 走 JS，可用。
+  /// 实测某真实配置 105 个站点全是 `csp_`——只看 type 会误判为全部可用。
+  bool supports({required int typeCode, required String api}) {
+    switch (classifySiteRuntime(typeCode: typeCode, api: api)) {
+      case SiteRuntimeKind.http:
+      case SiteRuntimeKind.js:
+        return true;
+      case SiteRuntimeKind.jvm:
+        return jvm != null;
+      case SiteRuntimeKind.unsupported:
+        return false;
+    }
+  }
+
   /// 创建 JS 运行时。
+  ///
+  /// [useBuiltinType0] 为真时不加载任何脚本文件，改用 JS 运行时的内置通用
+  /// 脚本（`type0Script`，由 `ext` 驱动）。`type=0` 的 `api` 是站点基础地址
+  /// 而非脚本路径，若照常 `_loadScript(api)` 会把站点首页当 JS 去解析。
   Future<JsRuntimeAdapter> _createJsRuntime({
     required String api,
     String? ext,
     String? sourceUrl,
+    bool useBuiltinType0 = false,
   }) async {
     final host = await _getJsHost();
     final instanceId = 'spider_${DateTime.now().millisecondsSinceEpoch}';
@@ -476,8 +511,8 @@ class SpiderRuntimeFactory {
     // 解析脚本的完整 URL：相对路径相对于 sourceUrl
     final scriptUrl = resolveApiUrl(api, sourceUrl);
 
-    // 读取脚本内容
-    final script = await _loadScript(scriptUrl);
+    // 读取脚本内容。type=0 没有脚本文件，交给子进程用内置脚本。
+    final script = useBuiltinType0 ? '' : await _loadScript(scriptUrl);
 
     // baseUrl：用于模块解析（assets:// 相对路径基于此）
     final baseUrl = scriptUrl;
@@ -497,6 +532,7 @@ class SpiderRuntimeFactory {
       params: {
         'instanceId': instanceId,
         'script': script,
+        if (useBuiltinType0) 'builtin': 'type0',
         'config': configUrl,
         'baseUrl': baseUrl,
         'configBaseUrl': configBaseUrl,

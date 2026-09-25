@@ -6,6 +6,10 @@ import 'package:spider_js/src/child/runtime_child.dart';
 import 'package:spider_js/src/child/sync_frame_io.dart';
 import 'package:test/test.dart';
 
+/// 内置脚本（[type0Script]）首行注释，用来断言「跑的确实是内置脚本」。
+/// 从导出常量现取，脚本改了这里自动跟着变，不会各自漂移。
+final String _type0Marker = type0Script.trim().split('\n').first;
+
 /// 驱动子进程主循环用的假管道：喂进去一串消息，收回它写出的那串。
 class _Pipe {
   _Pipe(List<Map<String, Object?>> inbound) {
@@ -187,6 +191,83 @@ void main() {
     test('create 缺 script 报 SCRIPT_LOAD_FAILED', () {
       final pipe = _Pipe([
         _req(1, 'spider.create', <String, Object?>{'instanceId': 'site:1'}),
+      ]);
+      RuntimeChild(
+        codec: pipe.codec,
+        createRuntime: (_) => _FakeRuntime(),
+      ).run();
+
+      final error = pipe.written.single['error']! as Map<String, Object?>;
+      expect(error['code'], ErrorCode.scriptLoadFailed.value);
+    });
+
+    test("builtin='type0' 且不传 script 时用内置通用脚本建实例", () {
+      final fake = _FakeRuntime();
+      final pipe = _Pipe([
+        _req(1, 'spider.create', <String, Object?>{
+          'instanceId': 'site:1',
+          'builtin': 'type0',
+        }),
+      ]);
+      RuntimeChild(codec: pipe.codec, createRuntime: (_) => fake).run();
+
+      expect(
+        pipe.written.single.containsKey('error'),
+        isFalse,
+        reason:
+            'type=0 的 api 是站点地址而非脚本路径，宿主无从加载脚本，'
+            '必须由子进程用内置脚本兜底',
+      );
+      expect(
+        fake.evaluated.any((c) => c.contains(_type0Marker)),
+        isTrue,
+        reason: '求值过的代码里应当出现内置脚本正文',
+      );
+    });
+
+    test("builtin='type0' 配空 script 同样走内置", () {
+      final fake = _FakeRuntime();
+      final pipe = _Pipe([
+        _req(1, 'spider.create', <String, Object?>{
+          'instanceId': 'site:1',
+          'builtin': 'type0',
+          'script': '',
+        }),
+      ]);
+      RuntimeChild(codec: pipe.codec, createRuntime: (_) => fake).run();
+
+      expect(pipe.written.single.containsKey('error'), isFalse);
+      expect(fake.evaluated.any((c) => c.contains(_type0Marker)), isTrue);
+    });
+
+    test('script 非空时优先于 builtin（内置只是兜底）', () {
+      final fake = _FakeRuntime();
+      final pipe = _Pipe([
+        _req(1, 'spider.create', <String, Object?>{
+          'instanceId': 'site:1',
+          'builtin': 'type0',
+          'script': 'function home(){ return {list:[]}; }',
+        }),
+      ]);
+      RuntimeChild(codec: pipe.codec, createRuntime: (_) => fake).run();
+
+      expect(
+        fake.evaluated.any((c) => c.contains('function home(){ return')),
+        isTrue,
+      );
+      expect(
+        fake.evaluated.any((c) => c.contains(_type0Marker)),
+        isFalse,
+        reason: '宿主已经给了脚本，就不该再执行内置脚本',
+      );
+    });
+
+    test("builtin 是不认识的值时仍然报 SCRIPT_LOAD_FAILED", () {
+      final pipe = _Pipe([
+        _req(1, 'spider.create', <String, Object?>{
+          'instanceId': 'site:1',
+          'builtin': 'type9',
+        }),
       ]);
       RuntimeChild(
         codec: pipe.codec,
