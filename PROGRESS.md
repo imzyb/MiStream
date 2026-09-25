@@ -524,6 +524,40 @@ JS 子进程**，连带同进程里其它源的调用。
 加载）。实测**无效**（GC 自己就会崩），所以 `park()` 现在不调它。导出保留，作为
 后续排查该 DLL 的手段；Dart 侧是 `supportsRunGc` / `runGc()`。
 
+## 本次会话（2026-09-25 四续）：换新窗口内的重复建宿主（自己引入的回归）
+
+上一轮加了「宿主按源数量整进程换新」，但换新是**先关停、后退避重启**，
+这段窗口内 `isReady` 是 false——而 `SpiderRuntimeFactory._getJsHost` 的判据
+恰恰是 `if (_jsHost != null && _jsHost!.isReady) return _jsHost!;`。
+
+后果：窗口内来一个 `spider.create` 就**新建第二个 `SpiderHost`**，旧的还在后台
+重启。两个子进程、两套实例，互不知情；多出来的那个宿主没人驱动握手，随后以
+`JS 运行时启动失败: 管道已关闭` 炸掉。JVM 路径同构。
+
+**修法**
+
+1. `SpiderHost.waitReady()`（新增）：已就绪立即返回 true；熔断 / 已释放 / 超时
+   （默认 20s）返回 false。唤醒点是 `start()` 成功、熔断、`dispose()`，以及
+   `start()` 抛异常（这条路径不会挂重启定时器、不会自愈，不能让调用方空等）。
+2. `SpiderRuntimeFactory._reuseOrDiscard()`：未就绪且未熔断就**等同一个宿主**；
+   熔断或超时才 `dispose()` 掉重建。`dispose()` 会取消挂着的重启定时器，所以
+   「弃掉」不会留下孤儿进程。
+3. `_getJsHost` / `_getJvmHost` 启动失败时摘掉并 dispose 宿主，不再留一个起不来
+   的实例让下一个调用去撞它的超时。
+4. 新增 `SpiderRuntimeFactory.jsLauncher` 注入点——JS 路径原先只有 `jvmLauncher`，
+   `spider.create` 参数拼装、换新窗口行为**完全没法测**。现在能用假进程覆盖。
+   代价是三个 `implements SpiderRuntimeFactory` 的测试假工厂要补一个 getter。
+
+**证据**
+
+| 验证 | 结果 |
+| --- | --- |
+| `packages/spider_host` 全部 15 个测试文件 | 除 `http_runtime_test` 的 6 例回环用例（`os error 10061`）外全绿 |
+| `test/js_runtime_factory_test.dart`（新增，2 例） | 全绿。**把 `_reuseOrDiscard` 临时退回旧语义 → 用例在「窗口内不能新建宿主」这条断言上变红（进程数 1 → 2）**，改回即绿 |
+| `test/spider_host_test.dart` | 14/14（新增 5 条 `waitReady` 用例：已就绪 / 换新窗口等待 / 熔断唤醒 / 超时 / dispose 唤醒） |
+| 静态检查 | **293 文件 0 error / 0 warning / 0 info** |
+| 提交 | `ac86873`，已推送，远端引用复核一致 |
+
 ## 下一步（按优先级，2026-09-19 续）
 
 1. **P0 仓库健康** ✅ **已定位并交付守卫脚本**；根因属 I: 盘文件系统语义，
@@ -558,8 +592,9 @@ JS 子进程**，连带同进程里其它源的调用。
    **非 assert** 的 libquickjs，之后才能恢复正常的 `JS_FreeRuntime` 与 runtime
    复用。在那之前别放宽 `JsRuntime.park` 的约束，也别去掉宿主换新——去掉换新
    就是每个源 10MB 的线性泄漏。
-   另一件待做：换新目前只有 `SpiderHost` 的假进程测试覆盖，**没有真子进程的
-   端到端验证**（需要真 `spider_js` 子进程 + 真配置源，受本机网络限制）。
+   换新窗口内的宿主复用已修（四续，`ac86873`）；仍待做的是**真子进程端到端
+   验证**（本机 `Process.start` 被管道缺陷挡住，`CreateFile failed 231`，只能等
+   环境恢复）。
 
 > **测试运行方式（重要）**：含夹具或 native 依赖的包，必须 `cd` 进包目录再跑
 > `dart test`。从仓库根跑会因 cwd 不对而误报失败/跳过（`spider_js` 实测：

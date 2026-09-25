@@ -72,6 +72,14 @@ mainline），释放 runtime 会断言 abort，只能「释放 context + 弃用 
 [runtimes/spider_js/README.md](../runtimes/spider_js/README.md) 的「runtime 的
 GC / 释放路径会断言 abort」。
 
+**换新窗口内的调用方语义**：换新是「先关停、后退避重启」，这期间
+`SpiderHost.isReady` 为 false，`call()` 会直接回 `RUNTIME_NOT_READY`。想复用
+同一个宿主**必须**先 `await host.waitReady()`，**不能**把 `isReady == false`
+当成「这个宿主废了」而另建一个——旧的还在后台重启，新建就会并存两个子进程、
+两套实例。`waitReady()` 在就绪 / 熔断 / 已释放 / 超时（默认 20s）四种情况下返回；
+熔断与 `dispose()` 会立刻唤醒等待者，不必等满超时。`SpiderRuntimeFactory` 已按
+此实现（`_reuseOrDiscard`）。
+
 ### 3.3 Spider 调用
 
 所有方法带 `instanceId`，语义见 [05-Spider引擎](05-Spider引擎.md) §1：
