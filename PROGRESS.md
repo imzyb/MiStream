@@ -2,7 +2,7 @@
 
 > 本文件只做一件事：对照 [ROADMAP.md](ROADMAP.md) 的**出口标准**报告真实状态。
 > 每个勾都指向可复现的证据（测试文件/命令/提交）。未验证的一律不勾。
-> 更新：2026-09-19
+> 更新：2026-09-25
 
 ## 总览
 
@@ -45,7 +45,7 @@
 
 ## M4 · JS 运行时 🟢
 
-- [x] 兼容性测试集 ≥100 条全绿 → `runtimes/spider_js/test/compat_runner_test.dart`（断言用例数并全跑）
+- [x] 兼容性测试集 ≥100 条全绿 → `runtimes/spider_js/test/compat_runner_test.dart`（断言用例数并全跑，当前 **178** 条；2026-09-25 新增 JSON 解析组 `test/compat/json_cases.json` 32 条）
 - [x] 死循环 interrupt 且不影响同进程其它源 → `resource_limits_test.dart`
 - [x] OOM 限制在 Context 级，进程存活 → `resource_limits_test.dart`（内存超限/栈溢出用例）
 - [x] 脚本异常带堆栈 SCRIPT_RUNTIME_ERROR → `resource_limits_test.dart` + `runtime_child_test.dart`
@@ -57,7 +57,18 @@
 
 ## M5 · 主线 UI 闭环 🟢
 
-- [ ] 真实配置从零起播 — **阻塞**：等真实配置源
+- [ ] 真实配置从零起播 — **阻塞**：等真实配置源。
+      **2026-09-25 进展**：真实源导入失败的根因已定位并修复——`饭太硬` 等站点
+      按 UA 分流，认 TVBox 客户端的 `okhttp/3.x` 标识，而引导页与安装服务此前
+      各自硬编码桌面 Chrome UA，于是必然被 302 到首页 HTML，再被判成
+      「返回的是网页（HTML），不是 TVBox JSON 配置」。已抽出 `core_config` 的
+      `ConfigFetcher`（默认 okhttp UA，拿不到配置内容才回退浏览器 UA，并带
+      完整重定向链诊断，提交 `b33eb7c`）。
+      证据：`packages/core_config/test/config_fetch_test.dart` 13 用例 +
+      `apps/mistream/test/application/config_install_service_test.dart` 新增
+      「按 UA 分流的订阅源」3 用例 + `tools/mock_source_server` 4 条分流路由。
+      **仍未勾**：我这边网络拿不到该源可用配置，无法端到端复现用户的成功，
+      需用户用新构建实测。
 - [x] 聚合搜索源隔离 → `search_engine/test/search_use_case_test.dart`（超时/崩溃不阻塞）
 - [x] 可读错误码 → `features/player/widgets/player_states.dart`（含嗅探 4 类错误码文案）
 - [x] 关闭重开续播 → `apps/mistream/test/application/resume_policy_test.dart`（15 用例，覆盖不足 5s / 距片尾 30s 两条边界的含等于与不含等于、时长为零、无历史）+ `apps/mistream/test/features/player/player_resume_e2e_test.dart`（5 用例，驱动真实播放页验证 seek 到历史位置、三条不续播边界、进度写回历史）
@@ -288,16 +299,28 @@
 
 1. **P0 仓库健康** ✅ **已定位并交付守卫脚本**；根因属 I: 盘文件系统语义，
    非仓库问题。迁移到本地盘可彻底消除
-2. **P1 门禁** ✅ **实测已全绿**（727 条 info 已收口），可从待办移除
-3. **P2 编码 API 补齐** `gbkDecode` ✅ 已完成（含 JS 包装、compat 回归集、
-   真实 QuickJS 环境验证）。同表其余未实现项待查：
-   `sha256`/`hmac` 已实现，`aes` 已实现，**`rsa` 完全未实现**（连注册都没有），
-   建议逐项对 `docs/05` §2.2 核账
+2. **P1 门禁** ✅ 727 条 info 已收口，代码侧无告警。**但 2026-09-25 起本机
+   跑不了门禁命令**（见第 7 条），须在环境恢复后复跑确认
+3. **P2 编码 API 补齐** ✅ **已完成**：`gbkDecode`、`rsa`、`aes`（含位置参数
+   契约）均落地；2026-09-25 补齐最后的 JSON 解析组
+   `jsonpath`/`pjfh`/`pj`/`pjfa`（提交 `0888440`，compat 用例 130 → **178**）。
+   同表其余项建议继续对 `docs/05` §2.2 核账
 4. **P3 验收** 补齐出口标准中纯本地可验证的条目：M2 迁移回滚测试、
    M9 主题对比度测试、M5 长跑稳定性
 5. **P4 债务** `libs/*.jar` 改 `tools/jvm_dist` 按需拉取、契约/长跑测试、
    播放页/首页之外的页面去 `globalRouterAssembly`（播放页与首页已完成注入化）
 6. **P5 阻塞** 网络方案（代理 / 可访问机器）——所有「真实源」类出口标准都卡在此
+7. **⚠️ 环境：本机命名管道耗尽（2026-09-25 新增，P0 级）**
+   `dart analyze` / `dart test` / `flutter test` **全部无法运行**，报
+   `CreateFile failed 231`（`ERROR_PIPE_BUSY`）。加 `dangerouslyDisableSandbox`
+   现象相同、无残留 dart 进程，故是**机器级缺陷而非沙箱策略**。
+   已确认的替代路径：
+   - 跑测试：`cd <包目录> && dart run test/xxx_test.dart`（进程内，等价）
+   - 格式化门禁：`dart format --output=none --set-exit-if-changed <dirs>`
+   - 静态检查（仅 error/warning）：`.workbuddy-ai/scripts/analyze_inproc.dart`
+   本轮因此**无法验证 lint 门禁**（analyzer 12 的 lint 规则已拆到
+   `package:linter`，pub 上最新 1.30.1 只支持 `analyzer ^5.2.0`，装不上）。
+   环境恢复后须补跑一次完整门禁。
 
 > **测试运行方式（重要）**：含夹具或 native 依赖的包，必须 `cd` 进包目录再跑
 > `dart test`。从仓库根跑会因 cwd 不对而误报失败/跳过（`spider_js` 实测：
