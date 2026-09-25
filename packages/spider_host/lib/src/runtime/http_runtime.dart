@@ -168,7 +168,12 @@ class HttpRuntime {
     Map<String, String> queryParams = const {},
     int timeoutMs = 15000,
   }) async {
-    final uri = Uri.parse(baseUrl).replace(
+    final base = Uri.parse(baseUrl);
+    // 防御：空路径会被某些透明代理误判（sandbox 环境下实测空路径走代理、
+    // 带 '/' 的直达）。规范化成 '/' 不影响语义，RFC 7230 要求 origin-form
+    // 的请求目标至少为 '/'。
+    final uri = base.replace(
+      path: base.path.isEmpty ? '/' : base.path,
       queryParameters: {
         'ac': ac,
         ...queryParams,
