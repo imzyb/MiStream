@@ -106,7 +106,7 @@ void main() {
     });
 
     // 这几条守的是「JSValue 永不以 object 形态跨 FFI 边界」的约定
-    // （见 JsRuntime._wrap 与 native/quickjs_wrapper.c 的 FIXME）。约定一旦
+    // （见 JsRuntime._wrap 与 native/quickjs_wrapper.c 标注的待修复问题）。约定一旦
     // 破掉，object 会被我们持有却无法释放，dispose 时 libquickjs 直接断言
     // `list_empty(&rt->gc_obj_list)` 打崩进程——tearDown 里的 dispose 就是
     // 这几条的真正断言点。

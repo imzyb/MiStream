@@ -397,7 +397,7 @@ class RuntimeChild {
   /// 调脚本里的一个 Spider 方法。
   ///
   /// 结果在 JS 侧 `JSON.stringify` 后跨界——JSValue 只能以字符串跨 FFI，
-  /// 见 `quickjs_wrapper.c` 的 FIXME。
+  /// 见 `quickjs_wrapper.c` 里标注的那处待修复问题。
   Object? _invokeSpider(String name, Map<String, Object?> params) {
     final instanceId = _requireString(params, 'instanceId');
     final instance = _instances[instanceId];
