@@ -1,6 +1,7 @@
 /// 兼容性测试集：`(HTML 快照, 规则, 期望输出)` 三元组运行器。
 ///
-/// 这是 drpy 伪 XPath 解析器（`pdfh`/`pdfa`/`pd`/`pdfl`）的回归测试套件。
+/// 这是 drpy 解析层（伪 XPath 的 `pdfh`/`pdfa`/`pd`/`pdfl`，JSON 的
+/// `jsonpath`/`pjfh`/`pj`/`pjfa`）与编码层的回归测试套件。
 /// 每条用例覆盖一个真实源中出现过的写法，确保改动不破坏已有兼容性。
 ///
 /// docs/05-Spider引擎.md §2.2：「pdfh 的语义只能靠对齐真实源行为来确定。」
@@ -12,6 +13,7 @@ import 'dart:io';
 import 'package:spider_js/src/drpy/crypto.dart';
 import 'package:spider_js/src/drpy/gbk.dart';
 import 'package:spider_js/src/drpy/html_parser.dart';
+import 'package:spider_js/src/drpy/json_parser.dart';
 import 'package:spider_js/src/drpy/rsa.dart';
 
 /// 一条兼容性测试用例。
@@ -104,6 +106,43 @@ class CompatCase {
             return (true, result, null);
           }
           return (false, result, '期望 $exp，实际 $result');
+        case 'jsonpath':
+          // 位置参数：jsonObject, path。**总是返回数组**，命中不到就是空数组。
+          final a = args ?? const <Object?>[];
+          if (a.length < 2) {
+            return (false, null, 'jsonpath 需要 2 个位置参数，实际 ${a.length} 个');
+          }
+          final result = jsonPathQuery(a[0], a[1].toString());
+          final exp = expected as List<Object?>;
+          if (_deepEquals(result, exp)) {
+            return (true, result, null);
+          }
+          return (false, result, '期望 $exp，实际 $result');
+        case 'pjfh':
+          // `pjfh(html, parse)`：取单值，假值被 `|| ''` 吞掉。
+          final result = pjfh(_decodeJsonLike(html), rule);
+          if (_deepEquals(result, expected)) {
+            return (true, result, null);
+          }
+          return (false, result, '期望 $expected，实际 $result');
+        case 'pj':
+          // `pj(html, parse)`：同 pjfh，但恒做 URL 拼接。
+          final result = pj(
+            _decodeJsonLike(html),
+            rule,
+            baseUrl: baseUrl ?? '',
+          );
+          if (_deepEquals(result, expected)) {
+            return (true, result, null);
+          }
+          return (false, result, '期望 $expected，实际 $result');
+        case 'pjfa':
+          // `pjfa(html, parse)`：取数组。
+          final result = pjfa(_decodeJsonLike(html), rule);
+          if (_deepEquals(result, expected)) {
+            return (true, result, null);
+          }
+          return (false, result, '期望 $expected，实际 $result');
         case 'gbkDecode':
           final result = gbkDecode(input ?? html);
           if (result == expected as String) {
@@ -162,6 +201,41 @@ class CompatCase {
       if (a[i] != b[i]) return false;
     }
     return true;
+  }
+
+  /// 结构化比较：JSON 组的方法可能返回字符串、数字、数组或对象。
+  ///
+  /// `expected` 来自 JSON 文件，`result` 来自解析器，两者的数值类型可能不同
+  /// （`3` 与 `3.0`），Dart 的 `==` 对此已经相等，所以只处理容器。
+  static bool _deepEquals(Object? a, Object? b) {
+    if (a is List && b is List) {
+      if (a.length != b.length) return false;
+      for (var i = 0; i < a.length; i++) {
+        if (!_deepEquals(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    if (a is Map && b is Map) {
+      if (a.length != b.length) return false;
+      for (final key in a.keys) {
+        if (!b.containsKey(key) || !_deepEquals(a[key], b[key])) return false;
+      }
+      return true;
+    }
+    return a == b;
+  }
+
+  /// 用例里的 `html` 字段对 JSON 组来说装的是 JSON 文本。
+  ///
+  /// 解析失败就原样返回——`pjfh` 自己也会做同样的处理（拿不到对象就给空串），
+  /// 这样「JSON 文本非法」的用例也能照常覆盖。
+  static Object? _decodeJsonLike(String html) {
+    if (html.isEmpty) return '';
+    try {
+      return jsonDecode(html);
+    } on FormatException {
+      return html;
+    }
   }
 
   /// 从 JSON 文件加载。

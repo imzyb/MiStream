@@ -107,5 +107,27 @@ void main() {
         'https://other.com/x',
       );
     });
+
+    // 期望值来自参考实现 `utils/utils.js` 的 `urljoin` 实测（Node 跑
+    // `new URL(to, new URL(from, 'resolve://'))`）。核心是那个 `resolve://`
+    // 占位 base：空 base 时**不是**「原样返回」，而是补成根相对路径。
+    test('joinUrl 对齐参考实现（含空 base 与协议相对）', () {
+      const cases = <(String, String, String)>[
+        ('', 'a.jpg', '/a.jpg'),
+        ('', '/abs.jpg', '/abs.jpg'),
+        ('', 'http://x.com/c.jpg', 'http://x.com/c.jpg'),
+        ('', '3', '/3'),
+        ('', '', ''),
+        ('http://a.com/x/', 'b.jpg', 'http://a.com/x/b.jpg'),
+        ('http://a.com/x/page.html', 'b.jpg', 'http://a.com/x/b.jpg'),
+        ('http://a.com/x/', '//cdn.com/b.jpg', 'http://cdn.com/b.jpg'),
+        ('http://a.com/x/', 'b.jpg?q=1#f', 'http://a.com/x/b.jpg?q=1#f'),
+        ('https://a.com/x/y', '../z', 'https://a.com/z'),
+        ('a/b/', 'c.jpg', '/a/b/c.jpg'),
+      ];
+      for (final (base, path, want) in cases) {
+        expect(joinUrl(base, path), want, reason: 'joinUrl($base, $path)');
+      }
+    });
   });
 }

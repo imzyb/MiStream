@@ -18,6 +18,8 @@ export 'src/drpy/crypto.dart'
 
 export 'src/drpy/html_parser.dart' show pd, pdfa, pdfh, pdfl;
 
+export 'src/drpy/json_parser.dart' show jsonPathQuery, pj, pjfa, pjfh;
+
 export 'src/drpy/gbk.dart'
     show GbkDecodeReport, GbkDecodeResult, gbkDecode, gbkDecodeWithReport;
 

@@ -317,7 +317,7 @@ class JsRuntime {
 
   /// 把用户代码包一层，保证**跨 FFI 边界的 JSValue 永远是字符串**。
   ///
-  /// 见 `native/quickjs_wrapper.c` 里 `qs_free_value` 的 FIXME：这份
+  /// 见 `native/quickjs_wrapper.c` 里 `qs_free_value` 标注的待修复问题：这份
   /// libquickjs.dll 的 JSObject 布局与 mainline 不同，object 的引用计数位置
   /// 无从得知，既不能安全递减也不能直接调 finalizer。对策是让 object 压根不
   /// 跨界——结果与异常都在 JS 侧 stringify，object 留在 JS 内部由 QuickJS 自己
@@ -394,6 +394,22 @@ class JsRuntime {
   g.pdfa = function (html, rule) { return H('pdfa', [html, rule]); };
   g.pd = function (html, rule, base) { return H('pd', [html, rule, base || '']); };
   g.pdfl = function (html, rule, base) { return H('pdfl', [html, rule, base || '']); };
+
+  // ---- JSON 解析（drpy 的 JSONPath 组）----
+  // jsonpath.query 的参数顺序是「对象在前、路径在后」，与参考实现一致。
+  // 返回的永远是数组（命中不到就是空数组），负下标不命中。
+  g.jsonpath = {
+    query: function (jsonObject, path) { return H('jsonpath', [jsonObject, path]); }
+  };
+  // 取单值。注意假值会被 `|| ''` 吞掉：命中数字 0 得到的是空串。
+  // 规则里可以用 `||` 串多条路径做回退。
+  g.pjfh = function (json, rule, addUrl) {
+    return H('pjfh', [json, rule, addUrl === undefined ? false : addUrl]);
+  };
+  // 同 pjfh，但恒做 URL 拼接。
+  g.pj = function (json, rule) { return H('pj', [json, rule]); };
+  // 取数组。
+  g.pjfa = function (json, rule) { return H('pjfa', [json, rule]); };
 
   g.md5 = function (s) { return H('md5', [s]); };
   g.sha1 = function (s) { return H('sha1', [s]); };

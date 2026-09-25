@@ -231,10 +231,65 @@ String hmac256(String input, String key) {
 }
 
 /// 拼接 URL：把 [path] 基于 [baseUrl] 解析为绝对 URL。
+///
+/// 逐字对齐参考实现 `utils/utils.js` 的 `urljoin`：
+///
+/// ```js
+/// const resolve = (from, to) => {
+///     const resolvedUrl = new URL(to, new URL(from, 'resolve://'));
+///     if (resolvedUrl.protocol === 'resolve:') {
+///         const {pathname, search, hash} = resolvedUrl;
+///         return pathname + search + hash;
+///     }
+///     return resolvedUrl.href;
+/// };
+/// ```
+///
+/// 关键点是那个 `'resolve://'` 占位 base：**base 为空时不是「原样返回」**，
+/// 而是把相对路径补成以 `/` 开头的根相对路径。实测参考实现：
+///
+/// | base | path | 结果 |
+/// | --- | --- | --- |
+/// | `''` | `'a.jpg'` | `'/a.jpg'` |
+/// | `''` | `'/abs.jpg'` | `'/abs.jpg'` |
+/// | `''` | `'http://x.com/c.jpg'` | `'http://x.com/c.jpg'` |
+/// | `'http://a.com/x/'` | `'b.jpg'` | `'http://a.com/x/b.jpg'` |
+/// | `'http://a.com/x/'` | `'//cdn.com/b.jpg'` | `'http://cdn.com/b.jpg'` |
+///
+/// 也就是说 `pj` 在空 base 下拿到相对路径会给 `/a.jpg` 这种**没有 host 的
+/// 伪绝对路径**——这是参考实现的行为，兼容层照搬，不做「修正」。
 String joinUrl(String baseUrl, String path) {
-  if (path.startsWith('http://') || path.startsWith('https://')) {
+  final parsedFrom = Uri.tryParse(baseUrl);
+  final Uri base;
+  if (parsedFrom != null && parsedFrom.hasScheme) {
+    // base 本身是绝对 URL，直接用。
+    base = parsedFrom;
+  } else if (baseUrl.isEmpty) {
+    // 空 base：等价于 `new URL('', 'resolve://')`，得到一个 scheme 为
+    // resolve、host 与 path 皆空的位置，后续相对解析会落在根上。
+    base = Uri.parse('resolve://');
+  } else if (baseUrl.startsWith('//')) {
+    // 协议相对 base（`//host/path`）。
+    base = Uri.parse('resolve:$baseUrl');
+  } else {
+    // 无 scheme 的相对 base，按参考实现落在 resolve:// 的根下。
+    base = Uri.parse(
+      'resolve://${baseUrl.startsWith('/') ? baseUrl : '/$baseUrl'}',
+    );
+  }
+
+  final Uri resolved;
+  try {
+    resolved = base.resolve(path);
+  } on FormatException {
+    // 参考实现在这里会抛 TypeError；宿主函数抛错会变成脚本异常，反而更难查。
+    // 保持宽松：拿不准时原样返回。
     return path;
   }
-  final base = Uri.parse(baseUrl);
-  return base.resolve(path).toString();
+  if (resolved.scheme == 'resolve') {
+    final query = resolved.hasQuery ? '?${resolved.query}' : '';
+    final fragment = resolved.hasFragment ? '#${resolved.fragment}' : '';
+    return '${resolved.path}$query$fragment';
+  }
+  return resolved.toString();
 }

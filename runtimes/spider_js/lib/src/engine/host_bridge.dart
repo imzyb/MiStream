@@ -17,6 +17,7 @@ import 'package:ffi/ffi.dart';
 import 'package:spider_js/src/drpy/crypto.dart' as drpy;
 import 'package:spider_js/src/drpy/gbk.dart' as drpy;
 import 'package:spider_js/src/drpy/html_parser.dart' as drpy;
+import 'package:spider_js/src/drpy/json_parser.dart' as drpy;
 import 'package:spider_js/src/drpy/rsa.dart' as drpy;
 import 'package:spider_js/src/engine/quickjs_bindings.dart' as qjs;
 
@@ -129,6 +130,23 @@ class HostBridge {
     'pdfa': (a) => drpy.pdfa(_str(a, 0), _str(a, 1)),
     'pd': (a) => drpy.pd(_str(a, 0), _str(a, 1), _str(a, 2)),
     'pdfl': (a) => drpy.pdfl(_str(a, 0), _str(a, 1), _str(a, 2)),
+
+    // ---- JSON 解析（drpy 的 JSONPath 组）----
+    // `jsonpath.query(jsonObject, path)` 的参数顺序是**对象在前**，与 drpy
+    // 参考实现 `{ query: (jsonObject, path) => ... }` 一致。
+    // 注意 `jsonPathQuery` 总是返回数组，负下标不命中。
+    'jsonpath': (a) => drpy.jsonPathQuery(
+      a.isEmpty ? null : a[0],
+      _str(a, 1),
+    ),
+    // `pjfh(html, parse, addUrl)`：取单值，假值被 `|| ''` 吞掉，所以命中 `0`
+    // 得到的是空串；规则里可用 `||` 串多条路径做回退。
+    'pjfh': (a) =>
+        drpy.pjfh(a.isEmpty ? null : a[0], _str(a, 1), addUrl: _bool(a, 2)),
+    // `pj(html, parse)`：同 pjfh，但 addUrl 恒为真。
+    'pj': (a) => drpy.pj(a.isEmpty ? null : a[0], _str(a, 1)),
+    // `pjfa(html, parse)`：取数组。
+    'pjfa': (a) => drpy.pjfa(a.isEmpty ? null : a[0], _str(a, 1)),
 
     // ---- 摘要与编码 ----
     'md5': (a) => drpy.md5(_str(a, 0)),
