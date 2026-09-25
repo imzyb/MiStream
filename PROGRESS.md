@@ -558,6 +558,36 @@ JS 子进程**，连带同进程里其它源的调用。
 | 静态检查 | **293 文件 0 error / 0 warning / 0 info** |
 | 提交 | `ac86873`，已推送，远端引用复核一致 |
 
+## 本次会话（2026-09-25 五续）：修正两个错误环境结论 + http_runtime_test 全绿
+
+**一、http_runtime_test 6 例失败 → 不是「沙箱禁回环」，是空路径 URL 被代理截走**
+
+`HttpRuntime.call` 构造 `{baseUrl}?ac=...` 时，若 `baseUrl` 以 host 结尾
+（如 `http://127.0.0.1:8080`），生成的 URI **路径为空** →
+`http://127.0.0.1:8080?ac=videolist`。sandbox 透明代理**只截空路径的 URL**，
+带 `/` 的（`/?ac=...`）和带路径的（`/x`）都直达本地服务器。代理截走后返回
+502 + "upstream connect failed: 10061"——此前被误判为「沙箱禁回环」。
+
+修：`Uri.replace` 时把空路径规范化成 `'/'`（RFC 7230 要求 origin-form 请求
+目标至少为 `/`）。提交 `09dadb0`。
+
+验证：`spider_host` **15 个测试文件全部 All tests passed**（`http_runtime_test`
+6/6，其中 1 例网络错误测试在代理环境下合理 skip）。
+
+**二、命名管道「耗尽」→ 不是数量问题，是 Dart VM 的 `Process.start` 实现特殊**
+
+- 本机只有 423 个命名管道（Windows 支持数万），**不是数量耗尽**。
+- Python `subprocess`（`CreatePipe` 同步匿名管道）**完全正常**；Dart FFI
+  经 `CreateNamedPipeW` + `CreateFileW`（含 `FILE_FLAG_OVERLAPPED`）**也完全正常**。
+- 只有 Dart VM 的 `process_win.cc` 失败；Node/libuv 同样失败（`EBUSY`）。
+- **回环 TCP 可用**（`Socket.connect` 成功收发），可用「`inheritStdio` 起真子进程
+  + 子进程回连 TCP」替代 stdio 管道。
+
+**三、仍待做（更新）**
+
+- 真子进程端到端验证：现在有了可行路径（TCP 回连 launcher），但尚未实现。
+- `dart analyze` / `dart test` / `flutter test`：仍被 Dart VM 管道缺陷挡住。
+
 ## 下一步（按优先级，2026-09-19 续）
 
 1. **P0 仓库健康** ✅ **已定位并交付守卫脚本**；根因属 I: 盘文件系统语义，
@@ -573,10 +603,12 @@ JS 子进程**，连带同进程里其它源的调用。
 5. **P4 债务** `libs/*.jar` 改 `tools/jvm_dist` 按需拉取、契约/长跑测试、
    播放页/首页之外的页面去 `globalRouterAssembly`（播放页与首页已完成注入化）
 6. **P5 阻塞** 网络方案（代理 / 可访问机器）——所有「真实源」类出口标准都卡在此
-7. **⚠️ 环境：本机命名管道耗尽（2026-09-25 新增，P0 级）**
+7. **⚠️ 环境：Dart VM 命名管道创建不兼容（2026-09-25 新增，P0 级）**
    `dart analyze` / `dart test` / `flutter test` **全部无法运行**，报
    `CreateFile failed 231`（`ERROR_PIPE_BUSY`）。加 `dangerouslyDisableSandbox`
-   现象相同、无残留 dart 进程，故是**机器级缺陷而非沙箱策略**。
+   现象相同。但 2026-09-25 五续已修正根因：本机只有 423 个命名管道（不是
+   耗尽），Python `subprocess` 与 Dart FFI 的 `CreateNamedPipeW` + `CreateFileW`
+   **都正常**；问题只在 Dart VM 的 `process_win.cc`（Node/libuv 同样失败）。
    已确认的替代路径（2026-09-25 续 已补齐，见上一节第四、五条）：
    - 跑测试（包内夹具）：`cd <包目录> && dart run test/xxx_test.dart`
    - 跑测试（成员包 native 钩子挡住时）：`dart run .workbuddy-ai/scripts/run_tests_shim.dart`
