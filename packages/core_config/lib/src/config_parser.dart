@@ -75,6 +75,44 @@ class LooseJsonParser {
   }
 }
 
+/// TVBox `spider` 字段里 URL 与 md5 的分隔符。
+///
+/// 生态的写法是**把 md5 拼在 URL 后面**（`<url>;md5;<hash>`），而不是另起一个
+/// 键。实测 `qist/tvbox` 的 `xiaosa/api.json`：
+///
+/// ```jsonc
+/// "spider": "./spider.jar;md5;af187c2a2be1bcbb5e183d77e740b21b"
+/// ```
+///
+/// 只读 `spider_md5` 会让 md5 永远是 `null`，jar 校验形同虚设——
+/// 2026-09-25 用真实源跑通链路时才发现（导入成功但 `spiderMd5: null`）。
+const String kSpiderMd5Separator = ';md5;';
+
+/// 拆开 `spider` 字段，得到 jar URL 与 md5。
+///
+/// [explicitMd5] 是配置里另写的 `spider_md5`（非标准写法，作为兜底）。
+/// 内联的 `;md5;` 优先于它。
+({String? url, String? md5}) parseSpiderField(
+  String? raw, {
+  String? explicitMd5,
+}) {
+  final fallbackMd5 = _trimToNull(explicitMd5);
+  final value = _trimToNull(raw);
+  if (value == null) return (url: null, md5: fallbackMd5);
+
+  final at = value.indexOf(kSpiderMd5Separator);
+  if (at < 0) return (url: value, md5: fallbackMd5);
+
+  final url = _trimToNull(value.substring(0, at));
+  final md5 = _trimToNull(value.substring(at + kSpiderMd5Separator.length));
+  return (url: url, md5: md5 ?? fallbackMd5);
+}
+
+String? _trimToNull(String? value) {
+  final trimmed = value?.trim();
+  return (trimmed == null || trimmed.isEmpty) ? null : trimmed;
+}
+
 /// TVBox 配置解析器。
 class ConfigParser {
   /// 从 JSON 文本解析为 [TvBoxConfig]。
@@ -82,9 +120,14 @@ class ConfigParser {
     final raw = LooseJsonParser.parse(jsonText);
     if (raw == null) return null;
 
+    final spider = parseSpiderField(
+      raw['spider'] as String?,
+      explicitMd5: raw['spider_md5'] as String?,
+    );
+
     return TvBoxConfig(
-      spider: raw['spider'] as String?,
-      spiderMd5: raw['spider_md5'] as String?,
+      spider: spider.url,
+      spiderMd5: spider.md5,
       sites: _parseSites(raw['sites']),
       lives: _parseLives(raw['lives']),
       parses: _parseParses(raw['parses']),

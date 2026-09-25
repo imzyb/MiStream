@@ -16,5 +16,6 @@ export 'src/config_fetch.dart'
 export 'src/config_import_service.dart'
     show ConfigImportResult, ConfigImportService;
 export 'src/config_models.dart';
-export 'src/config_parser.dart' show ConfigParser, LooseJsonParser;
+export 'src/config_parser.dart'
+    show ConfigParser, LooseJsonParser, kSpiderMd5Separator, parseSpiderField;
 export 'src/platform_adapter.dart';
