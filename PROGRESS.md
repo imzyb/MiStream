@@ -446,6 +446,84 @@ PATH   += <MSVC>\bin\Hostx64\x64
 
 MSVC 14.44.35207 / SDK 10.0.26100.0。构建脚本本身不用改（正常环境下没问题）。
 
+## 本次会话（2026-09-25 三续）：真实 drpy2 端到端 + runtime 释放断言缺陷
+
+起点是追 `ext` 到 type=0 内置脚本的链路，结论是**链路本来就是通的**，反而挖出
+一个会打死子进程的缺陷。
+
+**一、type=0 的 `ext` 链路（核对通过，无需改）**
+
+`SiteConfig.ext` → `HomeUseCase`/`DetailUseCase` 传 `ext: site.ext` →
+`SpiderRuntimeFactory._createJsRuntime` 的 `configUrl = resolveExtUrl(ext, …)` →
+`spider.create` 的 `config` → 子进程 `_create` 里 `init(config)`。全程通。
+
+顺带确认：**两份真实配置里一个 type=0 都没有**（`xiaosa/api.json` 53 站 =
+44×type3 + 9×type1；另一份 39 站全 type3），所以 type=0 无法用它们验收。
+
+**二、真实 drpy2 首次跑通**
+
+找到一条可达的真源（`jihulab.com/yydfys/yydf`，即 `xiaosa/api.json` 第一条
+type=3 站点），写出 `tool/probe_real_drpy.dart`：**进程内**驱动真 `RuntimeChild`
++ 真 QuickJS，只在分帧层拦一个点接管全部 HTTP（子进程协议是同步的，宿主回话必须
+发生在 `write` 回调里，没法 await，所以先预取再同步喂回）。
+
+跑通的东西：4 条**远程 URL** import（含中文标识符 `模板`、副作用导入、命名导入）
+全部取到，`create → capabilities=[home, category, detail, search, play]`，
+`home()` 从真实规则解析出 **7 个分类 + 8 组 filters**。这是仓库里第一次用真实
+drpy2 跑通完整子进程链路。
+
+**三、缺陷：runtime 的 GC / 释放路径会断言 abort（P0）**
+
+跑完一次真实 drpy2 之后，`JS_FreeRuntime` / `JS_RunGC` 会以约一半概率触发
+`Assertion failed: i != 0, file quickjs.c, line 3394` 直接 abort 进程。爆炸半径：
+宿主 `_trySites` 每试一个源就 `spider.destroy` 一次 → **每次请求都会打死共享的
+JS 子进程**，连带同进程里其它源的调用。
+
+二分结论（每组 6 次）：
+
+| 操作 | 结果 |
+| --- | --- |
+| `JS_FreeContext` | 6/6 走完，**永远安全** |
+| `JS_RunGC` | 6 次崩 5 次 |
+| `JS_FreeRuntime` | 同样崩（内部走同一套释放路径） |
+| 释放 context 后再往同一 runtime 挂新 context | 崩（`js_rc(p->shape)->ref_count == 1`，shape 是 runtime 级、跨 context 共享） |
+
+崩点是这套 build 的 GC/释放机制本身，不是「有环没回收」——所以「先 GC 再释放」
+没有意义。它还是**堆布局阈值敏感**的：内存上限 32/128/256/512MB 都不触发、默认
+64MB 触发；少装一个限值或少数一步求值也不触发。调参数只是换个落点。
+
+**缓解（已落地）**
+
+1. `JsRuntime.park()`：只做 `JS_FreeContext` + 封存，不 GC、不释放 runtime；
+   `dispose()` 对封存过的实例只丢引用。热路径一次都不碰那两条危险调用。
+2. **不复用 runtime**：释放过 context 的 runtime 已被污染（见上表第四行）。
+3. 代价是内存：实测释放 context **并不真把内存还回来**，每个源约留 10MB。所以
+   由宿主**整进程换新**归还——`SpiderHost` 每收掉 `kSourceTearDownsPerProcess`
+   （默认 8）个源、且当前无活实例时，发 `runtime.shutdown` 让子进程干净退出再
+   重新拉起，由 OS 回收。代价只是下一次 `spider.create` 重付一次 drpy2 加载。
+
+**证据**
+
+| 验证 | 结果 |
+| --- | --- |
+| `tool/probe_real_drpy.dart`（新增，真实 drpy2 全链路 + 连续试源） | **13 项检查 / 0 失败，连跑 10 次无 abort**（修前 6 次崩 3 次） |
+| `tool/probe_real_drpy.dart cycles=10` | 11 个源全过；RSS 每轮约 11MB（换新前的泄漏量，正是换新的依据） |
+| `runtimes/spider_js` 全部 19 个测试文件 | 除 `sync_frame_io_test` 的 2 例管道用例（`CreateFile failed 231`，环境缺陷）外全绿 |
+| `packages/spider_host` 全部 14 个测试文件 | 除 `http_runtime_test` 的 6 例回环用例（沙箱禁回环 `os error 10061`）外全绿；新增 3 条换新用例 |
+| 静态检查 | **292 文件 0 error / 0 warning / 0 info** |
+
+**四、为什么必须靠整进程换新兜底（判断依据）**
+
+`JS_FreeContext` 安全，但它**不归还内存**——这是实测出来的，不是推测：
+`cycles=1` 涨 33MB（含 DLL 加载与首次编译的约 22MB 预热），`cycles=10` 涨 115MB，
+即每个源约 10MB。所以「释放 context 就够了」是错的，必须有进程级回收。
+
+**五、`quickjs_wrapper.c` 新增 `qs_run_gc`（本轮遗留）**
+
+为验证「先 GC 再释放」是否有效而导出了 `qs_run_gc`（对应 `JS_RunGC`，按可选符号
+加载）。实测**无效**（GC 自己就会崩），所以 `park()` 现在不调它。导出保留，作为
+后续排查该 DLL 的手段；Dart 侧是 `supportsRunGc` / `runGc()`。
+
 ## 下一步（按优先级，2026-09-19 续）
 
 1. **P0 仓库健康** ✅ **已定位并交付守卫脚本**；根因属 I: 盘文件系统语义，
@@ -474,6 +552,14 @@ MSVC 14.44.35207 / SDK 10.0.26100.0。构建脚本本身不用改（正常环境
    本轮因此**仍无法验证 lint 门禁**（analyzer 12 的 lint 规则已拆到
    `package:linter`，pub 上最新 1.30.1 只支持 `analyzer ^5.2.0`，装不上）。
    环境恢复后须补跑一次完整门禁。
+8. **P1 债务：根治 runtime 释放（见上一节）**
+   现状是「不释放 + 每 8 个源换一次进程」的缓解。根治只有一条路：拿到与
+   `tools/quickjs_dist/vendor/libquickjs.dll` 匹配的 `quickjs.h`、或自行构建一份
+   **非 assert** 的 libquickjs，之后才能恢复正常的 `JS_FreeRuntime` 与 runtime
+   复用。在那之前别放宽 `JsRuntime.park` 的约束，也别去掉宿主换新——去掉换新
+   就是每个源 10MB 的线性泄漏。
+   另一件待做：换新目前只有 `SpiderHost` 的假进程测试覆盖，**没有真子进程的
+   端到端验证**（需要真 `spider_js` 子进程 + 真配置源，受本机网络限制）。
 
 > **测试运行方式（重要）**：含夹具或 native 依赖的包，必须 `cd` 进包目录再跑
 > `dart test`。从仓库根跑会因 cwd 不对而误报失败/跳过（`spider_js` 实测：
