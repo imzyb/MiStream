@@ -63,6 +63,45 @@ class MockSourceServer {
       _respondJson(request, _config());
       return;
     }
+    // 落地页：被 UA 分流的源会把不认识的客户端踢到这里。
+    if (path == '/landing.html') {
+      _respondText(
+        request,
+        '<!DOCTYPE html><html><body>首页</body></html>',
+        contentType: 'text/html; charset=utf-8',
+      );
+      return;
+    }
+    // 按 UA 分流（饭太硬 等真实订阅站的做法）：认 okhttp 才给配置，
+    // 其它 UA 一律 302 到首页。浏览器 UA 会稳定地拿到 HTML。
+    if (path == '/ua-okhttp.json') {
+      if (_userAgentOf(request).contains('okhttp')) {
+        _respondJson(request, _config());
+      } else {
+        _redirectTo(request, '/landing.html');
+      }
+      return;
+    }
+    // 与上面相反的分流：只认浏览器 UA，对 okhttp 返回网页。
+    // 用来验证抓取层的「换 UA 重试」确实生效。
+    if (path == '/ua-browser.json') {
+      if (_userAgentOf(request).contains('okhttp')) {
+        _respondText(
+          request,
+          '<!DOCTYPE html><html><body>不支持 okhttp</body></html>',
+          contentType: 'text/html; charset=utf-8',
+        );
+      } else {
+        _respondJson(request, _config());
+      }
+      return;
+    }
+    // 对**任何** UA 都 302 到首页。用来验证失败文案里带上了重定向链——
+    // 「地址填对了却被踢到首页」正是靠这条链才能一眼看出来。
+    if (path == '/ua-none.json') {
+      _redirectTo(request, '/landing.html');
+      return;
+    }
     if (path == '/spider.js') {
       _respondText(
         request,
@@ -216,6 +255,22 @@ class MockSourceServer {
       ..headers.contentType = ContentType.parse(contentType)
       ..contentLength = bytes.length
       ..add(bytes);
+    unawaited(response.close());
+  }
+
+  /// 取请求的 `User-Agent`；缺失时给空串。
+  String _userAgentOf(HttpRequest request) =>
+      request.headers.value(HttpHeaders.userAgentHeader) ?? '';
+
+  /// 发一个 302 到 [location]。
+  ///
+  /// `location` 刻意用**相对路径**：真实源站（如 nginx 的 `return 302`）
+  /// 常这么写，而抓取层若直接把它塞给 `getUrl` 就会炸——这里正好当回归探针。
+  void _redirectTo(HttpRequest request, String location) {
+    final response = request.response
+      ..statusCode = HttpStatus.found
+      ..headers.set(HttpHeaders.locationHeader, location)
+      ..contentLength = 0;
     unawaited(response.close());
   }
 }

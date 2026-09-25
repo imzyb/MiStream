@@ -71,7 +71,7 @@ class ConfigDecoder {
     final result = decode(raw, aesKey: aesKey);
     if (result.isOk) return result;
 
-    final kind = _probeNonJson(raw);
+    final kind = probeNonJson(raw);
     if (kind != null) {
       return Err(
         LocalError(
@@ -90,7 +90,11 @@ class ConfigDecoder {
   /// 认不出来返回 `null`，调用方仍用笼统的 `configDecodeFailed`。
   ///
   /// 返回值为内容类别文案（供 message 拼接），或 `null` 表示不明。
-  static String? _probeNonJson(List<int> raw) {
+  ///
+  /// 公开出去是因为 [ConfigFetcher] 也要用同一把尺子判断「这次响应值不值得
+  /// 采信」——配置可能是 Base64/AES，所以判据只能是否定式的：**排除明显是
+  /// HTML/图片的**，其余一律放行。两处各写一套判据迟早会走偏。
+  static String? probeNonJson(List<int> raw) {
     if (raw.isEmpty) return null;
 
     // 图片：JPEG（FFD8）、PNG（89504E47）、GIF（474946）、BMP（424D）。

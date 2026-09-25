@@ -2,6 +2,17 @@
 library;
 
 export 'src/config_decoder.dart' show ConfigDecoder, DecodeResult;
+export 'src/config_fetch.dart'
+    show
+        ConfigBodyVerdict,
+        ConfigFetchDiagnostics,
+        ConfigFetchOutcome,
+        ConfigFetcher,
+        defaultConfigVerdict,
+        isRedirectStatus,
+        kConfigFetchBrowserUserAgent,
+        kConfigFetchUserAgent,
+        resolveRedirectUrl;
 export 'src/config_import_service.dart'
     show ConfigImportResult, ConfigImportService;
 export 'src/config_models.dart';

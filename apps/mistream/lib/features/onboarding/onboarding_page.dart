@@ -50,11 +50,32 @@ class _OnboardingPageState extends State<OnboardingPage> {
       _error = null;
     });
 
+    // TVBox 订阅站常按 UA 分流：认 okhttp 才给配置，浏览器 UA 一律 302 到
+    // 首页。所以先用客户端形态的 UA 试，拿到网页再退到浏览器 UA 试一次——
+    // 两类站点都覆盖到，且不必让用户去猜该用哪个。
+    final first = await _importWithUserAgent(rawUrl, kConfigFetchUserAgent);
+    if (first != _ImportAttempt.notConfig) return;
+    if (!mounted) return;
+    await _importWithUserAgent(rawUrl, kConfigFetchBrowserUserAgent);
+  }
+
+  /// 用指定 [userAgent] 走一次完整的「拉取 → 识别 → 导入」。
+  ///
+  /// 返回值告诉调用方要不要换 UA 再试一次：拿到网页/图片这类**不是配置**
+  /// 的内容时返回 [_ImportAttempt.notConfig]，其余情况（成功或已给出明确
+  /// 错误）都返回 [_ImportAttempt.done]，由本方法负责把错误显示出去。
+  Future<_ImportAttempt> _importWithUserAgent(
+    String rawUrl,
+    String userAgent,
+  ) async {
     try {
       // 处理中文域名 (IDN): 将 Unicode 域名转为 punycode，保留路径原样
       final normalizedUrl = _normalizeUrl(rawUrl);
-      final bytes = await _fetchWithRedirects(normalizedUrl);
-      if (bytes == null) return; // error already shown
+      final bytes = await _fetchWithRedirects(
+        normalizedUrl,
+        userAgent: userAgent,
+      );
+      if (bytes == null) return _ImportAttempt.done; // error already shown
 
       // 检查内容类型：跳过图片等二进制文件
       final contentType = _lastContentType ?? '';
@@ -65,9 +86,9 @@ class _OnboardingPageState extends State<OnboardingPage> {
           _importing = false;
           _error =
               '该地址返回的是${contentType.split('/').first}文件，不是配置。\n'
-              '请使用该网站中的实际配置链接。';
+              '${_diagnosticSuffix()}';
         });
-        return;
+        return _ImportAttempt.notConfig;
       }
 
       // 检查是否为 HTML 页面
@@ -84,15 +105,15 @@ class _OnboardingPageState extends State<OnboardingPage> {
         if (suggestions.isNotEmpty && mounted) {
           setState(() => _importing = false);
           await _showConfigSuggestions(suggestions);
-        } else {
-          setState(() {
-            _importing = false;
-            _error =
-                '该地址返回的是 HTML 页面，不是 JSON 配置。\n'
-                '请使用该页面中的实际配置链接。';
-          });
+          return _ImportAttempt.done;
         }
-        return;
+        setState(() {
+          _importing = false;
+          _error =
+              '该地址返回的是 HTML 页面，不是 JSON 配置。\n'
+              '${_diagnosticSuffix()}';
+        });
+        return _ImportAttempt.notConfig;
       }
 
       // 尝试解析 JSON
@@ -107,32 +128,59 @@ class _OnboardingPageState extends State<OnboardingPage> {
           jsonDecode(decodedText);
           // Base64 解码成功，用解码后的字节
           await _processImport(decoded, sourceUrl: normalizedUrl);
-          return;
+          return _ImportAttempt.done;
         } on Object {
           setState(() {
             _importing = false;
             _error = '该地址返回的内容不是有效的 JSON 格式';
           });
-          return;
+          return _ImportAttempt.done;
         }
       }
 
       await _processImport(bytes, sourceUrl: normalizedUrl);
+      return _ImportAttempt.done;
     } on TimeoutException {
       setState(() {
         _importing = false;
         _error = '下载超时，请检查网络连接';
       });
+      return _ImportAttempt.done;
     } on Object catch (e) {
       setState(() {
         _importing = false;
         _error = '下载失败: $e';
       });
+      return _ImportAttempt.done;
     }
+  }
+
+  /// 把「实际请求链」拼成一行诊断后缀，附在失败文案后面。
+  ///
+  /// 地址填对却被重定向到首页时，这一行是唯一能说明问题的证据——没有它，
+  /// 「返回 HTML」看起来就像地址写错了。
+  String _diagnosticSuffix() {
+    final parts = <String>[
+      if (_lastContentType != null && _lastContentType!.isNotEmpty)
+        _lastContentType!,
+      'UA: $_lastUserAgent',
+    ];
+    if (_redirectChain.length > 1) {
+      parts.add('重定向: ${_redirectChain.join(' → ')}');
+    }
+    return parts.join('；');
   }
 
   HttpClient? _httpClient;
   String? _lastContentType;
+
+  /// 本次实际使用的 UA，失败时拼进诊断信息。
+  String _lastUserAgent = '';
+
+  /// 本次请求走过的完整 URL 链（首个元素是起始地址）。
+  ///
+  /// 「地址填对了却被踢到首页」这种失败，只有把链打出来才看得懂。
+  List<String> _redirectChain = <String>[];
 
   HttpClient get client =>
       _httpClient ??= HttpClient()
@@ -141,19 +189,18 @@ class _OnboardingPageState extends State<OnboardingPage> {
   /// 带重定向和 JS redirect 跟随的 HTTP GET。
   Future<List<int>?> _fetchWithRedirects(
     String startUrl, {
+    required String userAgent,
     int maxRedirects = 3,
   }) async {
     _lastContentType = null;
+    _lastUserAgent = userAgent;
+    _redirectChain = <String>[startUrl];
     var url = startUrl;
     for (var i = 0; i <= maxRedirects; i++) {
       final normalizedUrl = _normalizeUrl(url);
       final uri = Uri.parse(normalizedUrl);
       final request = await client.getUrl(uri);
-      request.headers.set(
-        'User-Agent',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-            '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      );
+      request.headers.set('User-Agent', userAgent);
       final response = await request.close().timeout(
         const Duration(seconds: 30),
       );
@@ -165,7 +212,9 @@ class _OnboardingPageState extends State<OnboardingPage> {
         final location = response.headers.value('location');
         if (location != null) {
           await response.drain<void>();
-          url = location;
+          // Location 可能是相对地址，必须按当前 URL 解析后再用。
+          url = uri.resolve(location).toString();
+          _redirectChain.add(url);
           continue;
         }
       }
@@ -174,7 +223,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
         await response.drain<void>();
         setState(() {
           _importing = false;
-          _error = '下载失败: HTTP ${response.statusCode}';
+          _error = '下载失败: HTTP ${response.statusCode}；${_diagnosticSuffix()}';
         });
         return null;
       }
@@ -198,6 +247,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
         } else {
           url = jsRedirect;
         }
+        _redirectChain.add(url);
         continue;
       }
 
@@ -206,7 +256,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
     setState(() {
       _importing = false;
-      _error = '重定向次数过多';
+      _error = '重定向次数过多；${_diagnosticSuffix()}';
     });
     return null;
   }
@@ -571,4 +621,13 @@ class _OnboardingPageState extends State<OnboardingPage> {
       setState(() => _error = '读取剪贴板失败: $e');
     }
   }
+}
+
+/// 一次导入尝试的结论。
+enum _ImportAttempt {
+  /// 已成功，或已给出明确错误（错误已显示在界面上）。
+  done,
+
+  /// 拿到的是网页/图片这类「不是配置」的内容，值得换个 UA 再试一次。
+  notConfig,
 }

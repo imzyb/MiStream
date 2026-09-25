@@ -5,8 +5,6 @@
 /// （`docs/10` §3.3，由 `tools/arch_check` 强制）。
 library;
 
-import 'dart:io';
-
 import 'package:core_config/core_config.dart';
 import 'package:core_domain/core_domain.dart';
 import 'package:punycoder/punycoder.dart';
@@ -54,9 +52,16 @@ final SettingKey<bool> kOnboardingDoneKey = SettingKey.boolKey(
 /// 配置安装服务。
 class ConfigInstallService {
   /// 以仓储集合构造。
-  ConfigInstallService(this._repositories);
+  ///
+  /// [fetcher] 可注入，便于测试替换传输层；不传时每次拉取临时建一个并在
+  /// 结束时关闭。
+  ConfigInstallService(this._repositories, {ConfigFetcher? fetcher})
+    : _fetcher = fetcher;
 
   final Repositories _repositories;
+
+  /// 注入的拉取器；为 `null` 时按次创建。
+  final ConfigFetcher? _fetcher;
 
   /// 引导是否已完成。
   Future<bool> isOnboardingDone() =>
@@ -115,6 +120,11 @@ class ConfigInstallService {
   }
 
   /// 从 URL 拉取并安装配置，`replace` 为真时先清空旧订阅。
+  ///
+  /// 拉取交给 [ConfigFetcher]：它会先用 TVBox 客户端形态的 UA
+  /// （[kConfigFetchUserAgent]）请求，拿到 HTML/图片这类「明显不是配置」的
+  /// 内容时再用浏览器 UA 重试一次。失败信息里带着状态码、content-type 与
+  /// **整条重定向链**——「地址没错但被 302 踢到首页」这类问题正是靠它定位。
   Future<Result<int, AppError>> installFromUrl(
     String url, {
     bool replace = true,
@@ -133,37 +143,15 @@ class ConfigInstallService {
       );
     }
 
+    final owned = _fetcher == null;
+    final fetcher = _fetcher ?? ConfigFetcher();
     try {
-      final client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 10);
-      final req = await client
-          .getUrl(uri)
-          .timeout(
-            const Duration(seconds: 10),
-          );
-      req.headers.set(
-        HttpHeaders.userAgentHeader,
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/120.0.0.0 Safari/537.36',
-      );
-      req.headers.set(HttpHeaders.acceptHeader, '*/*');
-      final resp = await req.close().timeout(const Duration(seconds: 15));
-      if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        await resp.drain<void>();
-        return Err(
-          RemoteError(
-            code: ErrorCode.configFetchFailed,
-            message: '订阅拉取失败 HTTP ${resp.statusCode}',
-          ),
-        );
-      }
-      final bytes = await resp.fold<List<int>>(
-        <int>[],
-        (a, b) => a..addAll(b),
-      );
-      client.close();
-      final result = ConfigImportService.import(bytes, aesKey: aesKey);
+      // 判据用默认的 defaultConfigVerdict：只排除「明显不是配置」的内容
+      // （网页/图片），因为配置本身可能是 Base64 或 AES 密文，不是可读 JSON。
+      final outcome = await fetcher.fetch(normalizedUrl);
+      if (!outcome.isOk) return Err(outcome.error!);
+
+      final result = ConfigImportService.import(outcome.bytes!, aesKey: aesKey);
       if (result.isErr) return Err(result.errorOrNull!);
       if (replace) {
         // 清理旧订阅与站点（保留收藏/历史）
@@ -178,6 +166,8 @@ class ConfigInstallService {
       return Ok(count);
     } on Object catch (e, st) {
       return Err(AppError.from(e, st));
+    } finally {
+      if (owned) fetcher.close();
     }
   }
 }
