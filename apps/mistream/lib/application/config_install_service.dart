@@ -102,7 +102,12 @@ class ConfigInstallService {
           siteKey: site.key,
           name: site.name,
           typeCode: site.type,
-          runtime: 'http',
+          // 按 type + api 判定，不要写死 'http'：type=3 里 api 以 csp_ 开头的
+          // 需要 JVM 运行时（ADR-006 降级为可选），其余走 JS。
+          runtime: classifySiteRuntime(
+            typeCode: site.type,
+            api: site.api,
+          ).wireName,
           api: site.api,
           ext: Value(site.ext),
           searchable: Value(site.searchable),

@@ -86,12 +86,15 @@ class SourceOption {
   final int typeCode;
 
   /// 是否有对应运行时可用。
+  ///
+  /// 由 [HomeUseCase.listSources] 按站点逐个判定——**不要用全局标志**：
+  /// `type=3` 里 `api` 以 `csp_` 开头的需要 JVM 运行时（ADR-006 降级为可选），
+  /// 其余 `type=3` 走 JS。实测某真实配置 105 个站点全是 `csp_`，
+  /// 用全局标志会把它们全判成可用。
   final bool hasRuntime;
 
   /// 当前实现能否直接取数。
-  ///
-  /// type=1 总是可用；type=3 需要 JS 运行时。
-  bool get isUsable => typeCode == 1 || hasRuntime;
+  bool get isUsable => hasRuntime;
 }
 
 /// 首页编排器。
@@ -129,31 +132,49 @@ class HomeUseCase {
           name: s.name,
           api: s.api,
           typeCode: s.typeCode,
-          hasRuntime: runtimeFactory != null,
+          hasRuntime: _siteHasRuntime(s),
         ),
     ];
+  }
+
+  /// 该站点在当前装配下能否直接取数。
+  ///
+  /// HTTP 类（type=1/4）零脚本，不需要运行时工厂；其余要工厂真有能力。
+  bool _siteHasRuntime(Site s) {
+    final kind = classifySiteRuntime(typeCode: s.typeCode, api: s.api);
+    if (kind == SiteRuntimeKind.http) return true;
+    return runtimeFactory?.supports(typeCode: s.typeCode, api: s.api) ?? false;
   }
 
   Future<List<Site>> _getEnabledSites({int? siteId}) async {
     final enabled = await sites.enabled(searchable: false);
     if (enabled.isEmpty) return [];
     if (siteId != null) {
+      // 用户显式选了某个源就尊重它，哪怕它缺运行时——否则点了没反应，
+      // 比报一个明确的错更难排查。
       return enabled.where((site) => site.id == siteId).toList();
     }
-    // 没有 runtimeFactory 时，只支持 type=1 (HTTP API) 站点
-    if (runtimeFactory == null) {
-      return enabled.where((s) => s.typeCode == 1).toList();
-    }
-    // type=1（JSON API）优先：不需要 JS 运行时，通常最快可用；
-    // type=3 排后作为兜底，避免首页被大量无法解析的 JS 源拖慢。
-    final sorted = [...enabled]
-      ..sort((a, b) {
-        final aIs1 = a.typeCode == 1 ? 0 : 1;
-        final bIs1 = b.typeCode == 1 ? 0 : 1;
-        final byType = aIs1.compareTo(bIs1);
-        return byType != 0 ? byType : b.priority.compareTo(a.priority);
-      });
-    return sorted;
+    // 丢掉缺运行时的源。以前这里只看 type 分不出「type=3 的 csp_ 需要 JVM」，
+    // 于是 105 个 csp_ 站点会被挨个去试、把 30s 探测预算烧光还全失败。
+    // 现在用与分发同一把尺子（classifySiteRuntime）先筛掉。
+    final usable = enabled.where(_siteHasRuntime).toList();
+    // HTTP 类（type=1/4）优先：零脚本，通常最快可用；JS 类排后作兜底，
+    // 避免首页被大量 JS 源拖慢。
+    usable.sort((a, b) {
+      final aHttp =
+          classifySiteRuntime(typeCode: a.typeCode, api: a.api) ==
+              SiteRuntimeKind.http
+          ? 0
+          : 1;
+      final bHttp =
+          classifySiteRuntime(typeCode: b.typeCode, api: b.api) ==
+              SiteRuntimeKind.http
+          ? 0
+          : 1;
+      final byKind = aHttp.compareTo(bHttp);
+      return byKind != 0 ? byKind : b.priority.compareTo(a.priority);
+    });
+    return usable;
   }
 
   /// 单次取数（含建运行时）的总时间预算；超过即停止继续探测。
