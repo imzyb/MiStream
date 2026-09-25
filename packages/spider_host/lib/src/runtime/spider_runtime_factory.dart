@@ -361,6 +361,7 @@ class SpiderRuntimeFactory {
     required this.hostApi,
     this.jvm,
     this.jvmLauncher,
+    this.jsLauncher,
   });
 
   /// JS 运行时可执行文件路径（编译后的 spider_js_runtime.exe）。
@@ -375,12 +376,47 @@ class SpiderRuntimeFactory {
   /// 测试注入：JVM 子进程启动器。默认 [defaultProcessLauncher]。
   final ProcessLauncher? jvmLauncher;
 
+  /// 测试注入：JS 子进程启动器。默认 [defaultProcessLauncher]。
+  ///
+  /// 存在的意义是让 JS 路径能用假进程测——`spider.create` 的参数拼装、
+  /// 宿主换新窗口内不重复起进程这类行为，都发生在真子进程之前。
+  final ProcessLauncher? jsLauncher;
+
+  /// 等待「换新 / 退避重启中」的宿主就绪的上限。
+  ///
+  /// 覆盖最坏情况下前几次退避（1s+2s+4s+8s）加进程启动；再久就认为这个宿主
+  /// 救不回来了，弃掉重建。熔断会立刻唤醒等待者，不必等满这个时间。
+  static const Duration _hostReadyTimeout = Duration(seconds: 20);
+
   SpiderHost? _jsHost;
   SpiderHost? _jvmHost;
 
+  /// 复用 [existing] 或判定它已废。
+  ///
+  /// - 已就绪 → 原样返回；
+  /// - 正在换新 / 退避重启 → **等同一个宿主**就绪后返回；
+  /// - 熔断、已释放、等超时 → `dispose()` 掉再返回 `null`（调用方新建）。
+  ///
+  /// 关键在于第二种情况**不能**新建：`SpiderHost` 换新时会先关进程再退避重启，
+  /// 这段窗口内 [SpiderHost.isReady] 就是 `false`。此时新建等于同时跑两个子进程、
+  /// 两套实例，而旧的还在后台重启。`dispose()` 会取消它挂着的重启定时器，所以
+  /// 第三种的「弃掉」不会留下第二个进程。
+  Future<SpiderHost?> _reuseOrDiscard(SpiderHost? existing) async {
+    if (existing == null) return null;
+    if (existing.isReady) return existing;
+    if (!existing.isTripped &&
+        await existing.waitReady(timeout: _hostReadyTimeout)) {
+      return existing;
+    }
+    await existing.dispose();
+    return null;
+  }
+
   /// 获取或创建 JS 运行时宿主。
   Future<SpiderHost> _getJsHost() async {
-    if (_jsHost != null && _jsHost!.isReady) return _jsHost!;
+    final reused = await _reuseOrDiscard(_jsHost);
+    if (reused != null) return reused;
+    _jsHost = null;
 
     // 优先用独立 exe（编译后），fallback 到 dart run（开发时）。
     // 注意：`.dart` 脚本文件「存在」但不能直接当可执行文件启动，必须走
@@ -388,18 +424,24 @@ class SpiderRuntimeFactory {
     final isDartScript = spiderJsPath.endsWith('.dart');
     final useDirectExe = !isDartScript && await File(spiderJsPath).exists();
 
-    _jsHost = SpiderHost(
+    final host = SpiderHost(
       executable: useDirectExe ? spiderJsPath : Platform.resolvedExecutable,
       arguments: useDirectExe ? <String>[] : ['run', spiderJsPath],
       hostApi: hostApi,
+      launcher: jsLauncher,
     );
+    _jsHost = host;
 
-    final result = await _jsHost!.start();
+    final result = await host.start();
     if (result.isErr) {
+      // 摘掉再抛：留着一个起不来的宿主，下一个调用会拿着它干等，或者更糟——
+      // 走到 `_reuseOrDiscard` 的「弃掉重建」分支，白等一轮超时。
+      _jsHost = null;
+      await host.dispose();
       throw StateError('JS 运行时启动失败: ${result.errorOrNull?.message}');
     }
 
-    return _jsHost!;
+    return host;
   }
 
   /// 获取或创建 JVM 运行时宿主（`java -cp ... io.mistream.jvm.Main`）。
@@ -408,21 +450,26 @@ class SpiderRuntimeFactory {
     if (config == null) {
       throw StateError('JVM 运行时未配置（spider_jvm 未安装）');
     }
-    if (_jvmHost != null && _jvmHost!.isReady) return _jvmHost!;
+    final reused = await _reuseOrDiscard(_jvmHost);
+    if (reused != null) return reused;
+    _jvmHost = null;
 
-    _jvmHost = SpiderHost(
+    final host = SpiderHost(
       executable: config.javaPath,
       arguments: ['-cp', config.classpath, 'io.mistream.jvm.Main'],
       hostApi: hostApi,
       launcher: jvmLauncher,
     );
+    _jvmHost = host;
 
-    final result = await _jvmHost!.start();
+    final result = await host.start();
     if (result.isErr) {
+      _jvmHost = null;
+      await host.dispose();
       throw StateError('JVM 运行时启动失败: ${result.errorOrNull?.message}');
     }
 
-    return _jvmHost!;
+    return host;
   }
 
   /// 根据站点信息创建运行时。

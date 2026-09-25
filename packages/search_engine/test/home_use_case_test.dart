@@ -76,6 +76,9 @@ class _HomeFactory implements SpiderRuntimeFactory {
   @override
   ProcessLauncher? get jvmLauncher => null;
 
+  @override
+  ProcessLauncher? get jsLauncher => null;
+
   // 假工厂手里永远有一个现成的 runtime，所以任何站点都算「有运行时」。
   @override
   bool supports({required int typeCode, required String api}) => true;

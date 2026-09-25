@@ -203,6 +203,9 @@ class SpiderHost {
   /// 熔断状态：连续失败达到上限后置 true。
   bool _tripped = false;
 
+  /// 等就绪的等待者 → 各自的超时定时器。见 [waitReady]。
+  final Map<Completer<bool>, Timer> _readyWaiters = <Completer<bool>, Timer>{};
+
   /// 是否已握手成功。
   bool get isReady => _handshaken && !_disposed;
 
@@ -214,6 +217,43 @@ class SpiderHost {
 
   /// 当前能力位。
   List<String> get features => List.unmodifiable(_features);
+
+  /// 等待就绪。
+  ///
+  /// 已就绪立即返回 `true`；熔断、已释放或超过 [timeout] 返回 `false`。
+  ///
+  /// 存在的理由是「按计划换新」和退避重启都有窗口期：这期间 [isReady] 是
+  /// `false`，但**同一个子进程马上就会回来**。调用方若把 `isReady == false`
+  /// 直接当成「这个宿主废了」而另起一个，就会同时跑两个子进程、两套实例，
+  /// 旧的还在后台重启——谁都不知道对方存在。想复用同一个宿主就先等它。
+  Future<bool> waitReady({Duration timeout = const Duration(seconds: 20)}) {
+    if (isReady) return Future.value(true);
+    if (_tripped || _disposed) return Future.value(false);
+    final completer = Completer<bool>();
+    _readyWaiters[completer] = Timer(
+      timeout,
+      () => _settleReady(completer, false),
+    );
+    return completer.future;
+  }
+
+  /// 唤醒**全部**等待者。
+  void _notifyReady(bool ready) {
+    for (final completer in List<Completer<bool>>.of(_readyWaiters.keys)) {
+      _settleReady(completer, ready);
+    }
+  }
+
+  /// 结算一个等待者：撤掉它的超时定时器并给出结果。
+  ///
+  /// 先从表里摘除再判断，天然幂等——「定时器先到」和「状态先变」只会有一个
+  /// 生效，另一个变成空操作。
+  void _settleReady(Completer<bool> completer, bool ready) {
+    final timer = _readyWaiters.remove(completer);
+    if (timer == null) return;
+    timer.cancel();
+    if (!completer.isCompleted) completer.complete(ready);
+  }
 
   /// 启动子进程并握手。
   Future<Result<HandshakeResult, AppError>> start() async {
@@ -288,8 +328,12 @@ class SpiderHost {
       _sourceTearDowns = 0;
       _liveInstances = 0;
       _startHeartbeat();
+      _notifyReady(true);
       return Ok(result);
     } on Object catch (e, st) {
+      // 走到这里说明启动过程抛了异常，进程没起来、也没挂上重启定时器——
+      // 不会自愈。唤醒等待者，免得它们空等到超时。
+      _notifyReady(false);
       return Err(AppError.from(e, st));
     }
   }
@@ -476,6 +520,8 @@ class SpiderHost {
     _restartAttempt++;
     if (_restartAttempt > maxRestartAttempts) {
       _tripped = true;
+      // 熔断后不会再自动重启，等待者等不到了，立刻放它们走。
+      _notifyReady(false);
       return;
     }
     final delay = _backoffFor(_restartAttempt - 1);
@@ -520,6 +566,7 @@ class SpiderHost {
     _disposed = true;
     _heartbeatTimer?.cancel();
     _restartTimer?.cancel();
+    _notifyReady(false);
     await _hostApiSub?.cancel();
     _hostApiSub = null;
     await _channel?.notify('runtime.shutdown', params: {'graceMs': 3000});

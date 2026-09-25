@@ -385,4 +385,137 @@ void main() {
       expect(host.liveInstanceCount, 1, reason: '失败的 destroy 不该动实例计数');
     });
   });
+
+  group('SpiderHost.waitReady', () {
+    late List<_FakeProcess> processes;
+    late SpiderHost host;
+
+    _FakeProcess current() => processes.last;
+
+    Future<
+      ({
+        IOSink stdin,
+        Stream<List<int>> stdout,
+        Future<int> exitCode,
+        bool Function([ProcessSignal signal]) kill,
+      })
+    >
+    fakeLauncher(String exec, List<String> args) async {
+      final p = _FakeProcess();
+      processes.add(p);
+      return (
+        stdin: p.stdinSink,
+        stdout: p.stdout,
+        exitCode: p.exitCode,
+        kill: p.kill,
+      );
+    }
+
+    /// 启动并完成握手。
+    Future<void> startReady() async {
+      final future = host.start();
+      await Future<void>.delayed(Duration.zero);
+      current().stdoutCtrl.add(
+        handshakeResponse(extractId(current().stdinSink.written.first)),
+      );
+      await future;
+    }
+
+    setUp(() {
+      processes = [];
+      host = SpiderHost(
+        executable: 'fake',
+        arguments: [],
+        // 阈值压到 1，一次销毁就触发换新。
+        sourceTearDownsPerProcess: 1,
+        backoffFor: (_) => Duration.zero,
+        launcher: fakeLauncher,
+      );
+    });
+
+    tearDown(() async {
+      await host.dispose();
+    });
+
+    test('已就绪时立即返回 true', () async {
+      await startReady();
+      expect(await host.waitReady(), isTrue);
+    });
+
+    test('换新窗口内等待，等同一个宿主回来而不是判定它已废', () async {
+      await startReady();
+      final create = host.call('spider.create');
+      await Future<void>.delayed(Duration.zero);
+      current().stdoutCtrl.add(
+        responseFrame(
+          extractId(current().stdinSink.written.last),
+          <String, Object?>{},
+        ),
+      );
+      await create;
+
+      final destroy = host.call('spider.destroy');
+      await Future<void>.delayed(Duration.zero);
+      current().stdoutCtrl.add(
+        responseFrame(
+          extractId(current().stdinSink.written.last),
+          <String, Object?>{},
+        ),
+      );
+      await destroy;
+      // 换新是 `unawaited` 触发的，等它真把老进程关停再断言。
+      for (var i = 0; i < 100 && host.isReady; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(host.isReady, isFalse, reason: '换新应当先关停老进程');
+
+      final ready = host.waitReady();
+      // 等到新进程被拉起（重启延时为 0），补上它的握手。
+      for (var i = 0; i < 100 && processes.length < 2; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(processes, hasLength(2), reason: '换新应当重新拉起一个子进程');
+      current().stdoutCtrl.add(
+        handshakeResponse(extractId(current().stdinSink.written.first)),
+      );
+
+      expect(await ready, isTrue, reason: '等的是同一个宿主，它自己会回来');
+      expect(host.isReady, isTrue);
+      expect(processes, hasLength(2), reason: '等待过程中不该另起第三个进程');
+    });
+
+    test('熔断后立刻返回 false，不必等满超时', () async {
+      host = SpiderHost(
+        executable: 'fake',
+        arguments: [],
+        maxRestartAttempts: 1,
+        handshakeTimeout: const Duration(milliseconds: 10),
+        backoffFor: (_) => Duration.zero,
+        launcher: fakeLauncher,
+      );
+
+      unawaited(host.start());
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(host.isTripped, isTrue);
+
+      // 超时给得很长：能立刻拿到结果说明是熔断唤醒的，不是空等超时。
+      expect(
+        await host.waitReady(timeout: const Duration(seconds: 30)),
+        isFalse,
+      );
+    });
+
+    test('一直不就绪时超时返回 false', () async {
+      expect(
+        await host.waitReady(timeout: const Duration(milliseconds: 30)),
+        isFalse,
+      );
+    });
+
+    test('dispose 会唤醒挂着的等待者', () async {
+      final ready = host.waitReady(timeout: const Duration(seconds: 30));
+      await host.dispose();
+      expect(await ready, isFalse, reason: '宿主没了就别让调用方一直等');
+    });
+  });
 }
