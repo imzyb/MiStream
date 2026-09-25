@@ -188,7 +188,7 @@ melos run generate     # 代码生成 (schema, 等)
 
 ### 中优先级
 - [ ] 更新 12 个过时依赖包（go_router/media_kit_video/drift/build_runner/melos 等）
-- [ ] 源诊断面板进 v1.0（05-Spider引擎 §5.4）
+- [ ] 源诊断面板进 v1.0（05-Spider引擎 §5.5）
 - [ ] 完善主题系统对比度自动化测试（09-UI规范 §2）
 
 ### 已完成的 M5 垂直验证

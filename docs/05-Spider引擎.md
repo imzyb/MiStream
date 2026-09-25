@@ -201,9 +201,71 @@ POST {api}/  { "method": "searchContent", "params": {...} }
 
 这一层探测的动机：现实中不少源的「接口地址」其实指向导航页，或对非 TVBox 客户端 UA 返回占位图（JPEG 伪装 `image/x-ms-bmp`）。让用户在引导页立刻看到「返回的是图片（JPEG），不是接口地址」，而不是困惑于笼统的「解码失败」。`ConfigImportService.import` 已默认走 `decodeWithProbe`。
 
-解析用标准 `jsonDecode` 兜底；现实配置偶有脏 JSON（注释/尾逗号），但当前以「能解析就解析」为准，遇到无法解析的真实源再按需引入宽松解析器。
+**现实配置普遍是 JSONC**：字段后面跟一行免责声明、备用地址或分隔线是常态（实测某源配置含 29 行 `//` 注释）。`ConfigParser` 与 `ConfigDecoder` 都容忍 `//`、`/* */` 注释与尾逗号；注释被替换为**等量换行**而非直接删除，这样解析报错时的行号仍能对上原文。详见 `config_decoder.dart` 的 `normalizeJsonc`。
 
-### 5.2 字段映射
+### 5.2 抓取层（ConfigFetcher）
+
+实现位于 `packages/core_config/lib/src/config_fetch.dart`。
+
+解码链之上还有一层「把字节拿回来」。它独立成类不是洁癖，而是因为**同一个地址对不同 UA 会给出完全不同的响应**——这个差异必须一次性收敛掉，否则引导页与安装服务会各写一份、各修一次 bug（本项目就吃过这个亏，见 §5.2.1）。
+
+#### 5.2.1 UA 策略：首选 okhttp，浏览器 UA 仅作回退
+
+| 常量 | 值 | 用途 |
+| --- | --- | --- |
+| `kConfigFetchUserAgent` | `okhttp/3.15.0` | 默认首选 |
+| `kConfigFetchBrowserUserAgent` | Chrome 120 桌面串 | 拿不到配置内容时回退一次 |
+
+TVBox 客户端跑在 Android 上、走 OkHttp，服务端据此识别「这是 TVBox 客户端」。所以**拉配置要装成 okhttp**。
+
+> ⚠️ 这与媒体请求的取向**正好相反**：媒体/封面请求要装浏览器（见 `docs/04` 的 headers 透传，否则 CDN 拒绝）。两处不要互相「统一」，也不要把 UA 抽成一个全局常量。
+
+实测（2026-09-24）：
+
+| 域名 | `okhttp/3.15.0` | Chrome 桌面 / Dalvik / curl / 空 |
+| --- | --- | --- |
+| `www.饭太硬.cc`（`xn--sss604efuw.cc`） | `200` · 19683 字节 · `image/x-ms-bmp`（蒙面忍者 logo，实为 JPEG） | `302` → `http://www.xn--sss604efuw.cc/` → `200 text/html` 首页 |
+| `www.饭太硬.net`（`xn--sss604efuw.net`） | 占位图（`ETag: "6ab16dd5-4ce3"`，`Server: BlogCDN`） | 同上，与 okhttp 结果**相同** |
+| `饭太硬.top`（`xn--sss604efuw.top`） | JS 跳转页 | JS 跳转页 |
+
+即：`.cc` 是唯一能靠 okhttp UA 拿到东西的入口，且**用浏览器 UA 打它必然拿到 HTML**——随后被 `probeNonJson` 判成「网页（HTML）」。错误文案本身没错，但根因在抓取层，不在解码层。中文域名在代码里应存 punycode 形式（`Uri` 会自行转换）。
+
+#### 5.2.2 `fetch(url)` 流程
+
+```
+userAgent 显式给定 ──> 单次尝试
+未给定 ──> okhttp 试一次 ──成功──> 返回
+              │
+            失败
+              ↓
+        浏览器 UA 试一次 ──成功──> 返回
+              │
+            失败
+              ↓
+        两次结果都写进错误 message 与 diagnostics
+```
+
+**判据可注入**（`ConfigBodyVerdict`）：默认 `defaultConfigVerdict` = 「空响应」+ `ConfigDecoder.probeNonJson`。只排除「明显不是配置」的内容，是因为**能不能解码是解码层的事**——抓取层不该替它下结论，否则将来放宽解析器时会误杀合法内容。
+
+**重定向手动跟随**（`followRedirects = false`）：目的不是拿最终地址，而是**留下整条链**。排障时「302 到哪儿去了」比「最终 200」有用得多。相对 `Location` 按当前 URL `resolve`，`Location` 缺失/成环时终止（`maxRedirects` 默认 5）。
+
+**诊断字段**（`ConfigFetchDiagnostics`）：`requestedUrl` / `userAgent` / `statusCode` / `contentType` / `byteLength` / `redirectChain` / `note`；`describe()` 产出单行摘要，`toDetail()` 产出结构化 map 供 §5.5 源诊断面板使用。示例：
+
+```
+HTTP 200 · text/html · 12486 字节；重定向 http://…/tv → http://…cc/
+```
+
+**失败文案保留原 `ErrorCode`，只追加 note**：
+
+```
+返回的是网页（HTML），不是 TVBox JSON 配置；请确认接口地址（两次 UA 都试过；浏览器 UA 的结果：HTTP 200 · text/html · 12486 字节；重定向 …/tv → …cc/）
+```
+
+`AppError` 是 sealed，`_withNote` 用 `switch` 覆盖全部子类——**将来新增错误类型会编译报错**，强制把 note 逻辑补上，不会静默丢诊断。
+
+**调用方**：引导页（`onboarding_page.dart`）与安装服务（`config_install_service.dart`）都走 `ConfigFetcher`，不再各自持有 HTTP 客户端与 UA 常量。安装服务允许注入 `ConfigFetcher` 以便测试；未注入时自建并在 `finally` 里 `close()`。
+
+### 5.3 字段映射
 
 | TVBox 字段 | MiStream 领域模型 | 说明 |
 | --- | --- | --- |
@@ -218,7 +280,7 @@ POST {api}/  { "method": "searchContent", "params": {...} }
 | `doh[]` | `DohProvider` | 映射到 Dio 的 DNS 层 |
 | `ijk[]` | — | **忽略**（ijkplayer 专有），必要时映射到 mpv 选项 |
 
-### 5.3 site type 映射
+### 5.4 site type 映射
 
 | type | 语义 | MiStream 运行时 |
 | --- | --- | --- |
@@ -230,7 +292,7 @@ POST {api}/  { "method": "searchContent", "params": {...} }
 
 **注意**：type=3 且 `api` 为 `csp_XXX` 的，需要从全局 `spider` jar 中加载类 → 走 JVM 运行时 → 属于降级范围。UI 上要能一眼看出哪些源因运行时缺失而不可用。
 
-### 5.4 源诊断面板
+### 5.5 源诊断面板
 
 一个专门的设置页，对每个源显示：运行时类型、状态（就绪/熔断/不支持）、最近一次调用耗时与错误、`init` 返回的能力位、以及一个「测试」按钮跑 `homeContent + search("测试")`。这是用户和源作者排障的主入口，必须进 v1.0。
 
