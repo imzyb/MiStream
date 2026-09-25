@@ -224,11 +224,22 @@ TVBox 客户端跑在 Android 上、走 OkHttp，服务端据此识别「这是 
 
 | 域名 | `okhttp/3.15.0` | Chrome 桌面 / Dalvik / curl / 空 |
 | --- | --- | --- |
-| `www.饭太硬.cc`（`xn--sss604efuw.cc`） | `200` · 19683 字节 · `image/x-ms-bmp`（蒙面忍者 logo，实为 JPEG） | `302` → `http://www.xn--sss604efuw.cc/` → `200 text/html` 首页 |
-| `www.饭太硬.net`（`xn--sss604efuw.net`） | 占位图（`ETag: "6ab16dd5-4ce3"`，`Server: BlogCDN`） | 同上，与 okhttp 结果**相同** |
-| `饭太硬.top`（`xn--sss604efuw.top`） | JS 跳转页 | JS 跳转页 |
+| `www.饭太硬.cc`（`xn--sss604efuw.cc`） | `200` · 19683 字节 · `image/x-ms-bmp`，首 4 字节 `ff d8 ff e0` = **JPEG 占位图** | `302` → `http://www.xn--sss604efuw.cc/` → `200 text/html` 首页 |
+| `www.饭太硬.net`（`xn--sss604efuw.net`） | 同一张占位图 | **与 okhttp 结果相同**（`ETag: "6ab16dd5-4ce3"`） |
+| `饭太硬.top`（`xn--sss604efuw.top`） | 连不上 | `200 text/html` |
 
-即：`.cc` 是唯一能靠 okhttp UA 拿到东西的入口，且**用浏览器 UA 打它必然拿到 HTML**——随后被 `probeNonJson` 判成「网页（HTML）」。错误文案本身没错，但根因在抓取层，不在解码层。中文域名在代码里应存 punycode 形式（`Uri` 会自行转换）。
+两条可确认的结论：
+
+1. **`.cc` 确实按 UA 分流**：`okhttp` 走一条分支（`200`），其余一律 `302` 到首页。
+   也就是说**用浏览器 UA 打它必然拿到 HTML**——随后被 `probeNonJson` 判成
+   「网页（HTML）」。错误文案本身没错，但根因在抓取层，不在解码层。
+2. **本环境（数据中心出口 IP）拿不到该源的可用配置**：`okhttp` 分支返回的也是
+   占位图而非配置，补试 TVBox 的完整请求头组合（`Accept` /
+   `Accept-Encoding: gzip` / `Connection`）也无改善；`.net` 更是对所有 UA 都
+   给同一张图。这指向**出口 IP 被整体拒绝**——UA 只决定你拿到哪种拒绝形态。
+   故「装了 okhttp UA 就能导入成功」在本环境**无法验证**，只能靠真实用户网络。
+
+中文域名在代码里应存 punycode 形式（`Uri` 会自行转换）。
 
 #### 5.2.2 `fetch(url)` 流程
 

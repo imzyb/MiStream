@@ -67,8 +67,14 @@
       证据：`packages/core_config/test/config_fetch_test.dart` 13 用例 +
       `apps/mistream/test/application/config_install_service_test.dart` 新增
       「按 UA 分流的订阅源」3 用例 + `tools/mock_source_server` 4 条分流路由。
-      **仍未勾**：我这边网络拿不到该源可用配置，无法端到端复现用户的成功，
-      需用户用新构建实测。
+      **仍未勾，且要看清证据强度**：本环境（数据中心出口 IP）对 `.cc`/`.net`/
+      `.top` 逐 UA 试遍，只能拿到占位图 JPEG、302 后的 HTML、或 JS 跳转页——
+      **okhttp 分支给的也是占位图，不是配置**，所以「修复能让饭太硬导入成功」
+      **本地无法证明**。判定依据是**用户侧证据**：同一网络下他的 TVBox
+      （okhttp UA）正常、MiStream（浏览器 UA）报 HTML，差别正在 UA。
+      需用户用新构建实测：报「图片（JPEG）」说明已走到 okhttp 分支但服务端
+      仍拒绝（IP/会话 gating，不是 UA 的事）；报「网页（HTML）」则两个 UA
+      都被踢，看 note 里的重定向链。
 - [x] 聚合搜索源隔离 → `search_engine/test/search_use_case_test.dart`（超时/崩溃不阻塞）
 - [x] 可读错误码 → `features/player/widgets/player_states.dart`（含嗅探 4 类错误码文案）
 - [x] 关闭重开续播 → `apps/mistream/test/application/resume_policy_test.dart`（15 用例，覆盖不足 5s / 距片尾 30s 两条边界的含等于与不含等于、时长为零、无历史）+ `apps/mistream/test/features/player/player_resume_e2e_test.dart`（5 用例，驱动真实播放页验证 seek 到历史位置、三条不续播边界、进度写回历史）
