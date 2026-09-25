@@ -75,6 +75,11 @@
       需用户用新构建实测：报「图片（JPEG）」说明已走到 okhttp 分支但服务端
       仍拒绝（IP/会话 gating，不是 UA 的事）；报「网页（HTML）」则两个 UA
       都被踢，看 note 里的重定向链。
+      **2026-09-25 续：用户反馈仍不行，已换用可用测试源**
+      `qist/tvbox` 的 `xiaosa/api.json`。该源导入链路已跑通（13/13），
+      但它 105 个站点全是 `type=3` + `csp_`（需 JVM，ADR-006 降级为可选），
+      所以「从零起播」仍然勾不上——**卡在缺一个 type=1/3(.js) 的可播源**，
+      不再是导入本身的问题。详见下一节。
 - [x] 聚合搜索源隔离 → `search_engine/test/search_use_case_test.dart`（超时/崩溃不阻塞）
 - [x] 可读错误码 → `features/player/widgets/player_states.dart`（含嗅探 4 类错误码文案）
 - [x] 关闭重开续播 → `apps/mistream/test/application/resume_policy_test.dart`（15 用例，覆盖不足 5s / 距片尾 30s 两条边界的含等于与不含等于、时长为零、无历史）+ `apps/mistream/test/features/player/player_resume_e2e_test.dart`（5 用例，驱动真实播放页验证 seek 到历史位置、三条不续播边界、进度写回历史）
@@ -301,6 +306,77 @@
 全量 analyze 0 issue
 
 
+## 本次会话（2026-09-25 续）：换可用测试源，修站点运行时门控
+
+饭太硬在本环境无法复现成功（见 M5 条），遂换用
+`https://raw.githubusercontent.com/qist/tvbox/refs/heads/master/xiaosa/api.json`
+继续验证真实导入链路。这个源**可用**（200 / 28377 字节 / 合法 JSON），
+也因此把三个此前测不出来的问题全暴露了。
+
+**一、`spider` 字段内联的 `;md5;` 没被解析（真 bug）**
+
+该源写的是 `"spider": "./spider.jar;md5;af187c2a..."`，而 `ConfigParser` 只读
+`raw['spider_md5']` 这个非标准键 → `spiderMd5` 恒为 `null`，jar 完整性校验
+形同虚设。抽出 `parseSpiderField(raw, explicitMd5:)`，内联优先、独立键兜底
+（提交 `aedda97`）。
+
+**二、站点可用性用全局标志判定（架构缺口，影响最大）**
+
+`SourceOption.hasRuntime` 是 `runtimeFactory != null`——与具体站点无关。
+而 `_getEnabledSites` 只按 `typeCode` 排序**不过滤**，于是 105 个站点会被
+挨个去试（8s 建实例超时 × 105），烧光 30s 探测预算后报「所有站点均无法
+连接」，错误信息完全指不到根因。
+
+根因是三处各判一套：工厂 `create()` 只看 `typeCode`、UI 用全局标志、
+`config_install_service` 直接写死 `"http"`。收敛成 `core_domain` 的纯函数
+`classifySiteRuntime({typeCode, api})`（提交 `7c59d67`），三处都调它，
+并新增同步纯判定 `SpiderRuntimeFactory.supports()` 供 UI 灰显
+（刻意不做成「试着 create 看抛不抛」——那会真起子进程、下脚本）。
+
+**三、`type=0` 与 `type=4` 从未接线（真 bug）**
+
+工厂 `create()` 的 switch 只认 1 和 3，type=0/4 掉进 default 抛
+「不支持的站点类型」。现在 type=4 走 HTTP；type=0 走 JS 并用内置通用脚本
+兜底——type=0 的 `api` 是站点基础地址而非脚本路径，宿主无从加载，所以
+内置脚本替换只能在子进程侧做（`runtime_child` 收 `builtin: 'type0'`，
+提交 `5c8e13a`）。
+
+**证据**
+
+| 验证 | 结果 |
+| --- | --- |
+| 真实源端到端（`.workbuddy-ai/scripts/verify_real_source.dart`） | **13/13**（含门控断言） |
+| 同上：105 个 `csp_` 站点、未装 JVM → 可用数 | **0**（修复前 105） |
+| 同上：`getHomeData()` 返回「无可用站点」耗时 | **2ms**（修复前烧满 30s 预算） |
+| `core_domain` 测试 | 55 通过 / 0 失败（新增 `site_runtime_test.dart` 13） |
+| `core_config` 测试 | 62 通过 / 0 失败（新增 `config_parser_test.dart` 12） |
+| `spider_host` 测试 | 新增 `runtime_capability_test.dart` 11 通过；既有仅 6 例回环用例失败（沙箱禁回环，非代码） |
+| `spider_js` 测试 | 新增 builtin type0 4 例；既有仅 2 例管道用例失败（环境缺陷，非代码） |
+| `search_engine` + `apps/mistream` 纯 Dart 测试 | **60 通过 / 0 失败**（经 `.workbuddy-ai/scripts/run_tests_shim.dart`，此前在本环境跑不了） |
+| 静态检查 | 288 文件 0 error / 0 warning / 0 info |
+| 提交 | `7c59d67` `aedda97` `5c8e13a` `8843648` |
+
+**四、门禁替代路径升级：进程内分析器现在会读 `analysis_options.yaml`**
+
+上一轮发现 `analyze_inproc.dart` **不加载**配置文件，导致根配置里已写
+`todo: ignore` 的诊断仍被报成失败。已补上配置链解析（含
+`include:` 递归，`package:` URI 经 `package_config.json` 解析），现在会
+按配置忽略/改判严重级别，并把读到的配置链打出来。用真实源与探针双重验证：
+注入类型错误能被抓到（2 个 error，退出码非零），全仓扫描 0 告警。
+
+**五、新增两个环境逃生口（此前这批测试在本机跑不了）**
+
+- `.workbuddy-ai/scripts/run_tests_shim.dart`：把入口放到 `.workbuddy-ai/scripts/`
+  下，入口包变成仓库根（无 native 依赖）→ **不触发 native-assets 构建钩子**。
+  `search_engine`（依赖 `storage`→sqlite3）与 `apps/mistream` 的纯 Dart 用例
+  由此可跑。
+- `dart format --output=none --set-exit-if-changed` 作格式门禁（不起子进程）。
+
+仍跑不了的：`package:flutter_test` 用例（`dart run` 编不了 Flutter SDK）、
+需回环端口的用例（`spider_host` 6 例、`sync_frame_io` 2 例、
+`config_install_service_test` 的 mock server）、`runtimes/spider_js` 的夹具
+用例（cwd 必须是包目录）。
+
 ## 下一步（按优先级，2026-09-19 续）
 
 1. **P0 仓库健康** ✅ **已定位并交付守卫脚本**；根因属 I: 盘文件系统语义，
@@ -320,11 +396,13 @@
    `dart analyze` / `dart test` / `flutter test` **全部无法运行**，报
    `CreateFile failed 231`（`ERROR_PIPE_BUSY`）。加 `dangerouslyDisableSandbox`
    现象相同、无残留 dart 进程，故是**机器级缺陷而非沙箱策略**。
-   已确认的替代路径：
-   - 跑测试：`cd <包目录> && dart run test/xxx_test.dart`（进程内，等价）
+   已确认的替代路径（2026-09-25 续 已补齐，见上一节第四、五条）：
+   - 跑测试（包内夹具）：`cd <包目录> && dart run test/xxx_test.dart`
+   - 跑测试（成员包 native 钩子挡住时）：`dart run .workbuddy-ai/scripts/run_tests_shim.dart`
    - 格式化门禁：`dart format --output=none --set-exit-if-changed <dirs>`
-   - 静态检查（仅 error/warning）：`.workbuddy-ai/scripts/analyze_inproc.dart`
-   本轮因此**无法验证 lint 门禁**（analyzer 12 的 lint 规则已拆到
+   - 静态检查（error/warning/info，**会读 analysis_options.yaml 配置链**）：
+     `dart run .workbuddy-ai/scripts/analyze_inproc.dart`
+   本轮因此**仍无法验证 lint 门禁**（analyzer 12 的 lint 规则已拆到
    `package:linter`，pub 上最新 1.30.1 只支持 `analyzer ^5.2.0`，装不上）。
    环境恢复后须补跑一次完整门禁。
 

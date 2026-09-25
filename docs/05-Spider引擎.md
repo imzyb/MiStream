@@ -280,7 +280,7 @@ HTTP 200 · text/html · 12486 字节；重定向 http://…/tv → http://…cc
 
 | TVBox 字段 | MiStream 领域模型 | 说明 |
 | --- | --- | --- |
-| `spider` | `SpiderBundle{url, md5}` | 全局 jar 地址，带 md5 校验；jar 不可用时不阻塞其它源 |
+| `spider` | `SpiderBundle{url, md5}` | 全局 jar 地址，带 md5 校验；jar 不可用时不阻塞其它源。**md5 是拼在 URL 后面的**（`<url>;md5;<hash>`），不是另起一个键；拆分见 `parseSpiderField`。非标准的 `spider_md5` 键作为兜底 |
 | `sites[]` | `SourceSite` | 见下方 type 映射 |
 | `sites[].ext` | `SourceSite.extend` | 可能是内联 JSON、URL 或 base64，需二次解析 |
 | `lives[]` | `LiveGroup` / `LiveChannel` | 支持 m3u 与 txt 两种订阅格式 |
@@ -293,15 +293,32 @@ HTTP 200 · text/html · 12486 字节；重定向 http://…/tv → http://…cc
 
 ### 5.4 site type 映射
 
-| type | 语义 | MiStream 运行时 |
-| --- | --- | --- |
-| `0` | XPath / CSP 网页解析 | JS（用内置通用解析脚本） |
-| `1` | JSON API（苹果 CMS 风格） | HTTP（内置 API 适配器，零脚本） |
-| `3` | Spider（`api` 以 `csp_` 开头 → jar 类名；以 `.js` 结尾 → JS 脚本） | JS 或 JVM |
-| `4` | JSON API 变体 | HTTP |
-| 其它 | 未知 | 标记为不支持，UI 灰显并说明原因 |
+判定只有一处实现：`core_domain` 的纯函数
+`classifySiteRuntime({typeCode, api})`（`packages/core_domain/lib/src/site/site_runtime.dart`）。
+分发（`spider_host` 的 `SpiderRuntimeFactory.create`）、UI 灰显
+（`search_engine` 的 `SourceOption.hasRuntime`）、落库
+（`apps/mistream` 的 `ConfigInstallService`）三处**都必须调它**，
+不要各写一份 switch——实测就是因为三把尺子不一致，105 个站点被误判为全部可用。
 
-**注意**：type=3 且 `api` 为 `csp_XXX` 的，需要从全局 `spider` jar 中加载类 → 走 JVM 运行时 → 属于降级范围。UI 上要能一眼看出哪些源因运行时缺失而不可用。
+| type | 语义 | `SiteRuntimeKind` | 实际运行时 |
+| --- | --- | --- | --- |
+| `0` | XPath / CSP 网页解析 | `js` | JS，**用内置通用脚本**（`type0Script`）。`api` 是站点基础地址而非脚本路径，宿主无从加载，故由子进程用 `builtin: 'type0'` 兜底 |
+| `1` | JSON API（苹果 CMS 风格） | `http` | HTTP（内置 API 适配器，零脚本） |
+| `3` | Spider，**要看 `api`** | `api` 以 `csp_` 开头 → `jvm`；否则 → `js` | JVM（jar 类名）或 JS 脚本 |
+| `4` | JSON API 变体 | `http` | HTTP |
+| 其它 | 未知 | `unsupported` | 不创建，UI 灰显并说明原因 |
+
+**注意**：`type=3` 且 `api` 为 `csp_XXX` 的，需要从全局 `spider` jar 中加载类 → 走 JVM 运行时 → 属于降级范围（ADR-006，JVM 是可选组件）。**只看 `typeCode` 分不出这一类**，所以 `api` 必须一起看。UI 上要能一眼看出哪些源因运行时缺失而不可用。
+
+**实测（2026-09-25，`qist/tvbox` 的 `xiaosa/api.json`）**：105 个站点全部是
+`type=3` + `csp_`，未装配 JVM 时 `listSources()` 判为可用 **0** 个，
+`getHomeData()` **2ms** 返回「无可用站点」。修复前它会挨个去建运行时
+（8s 超时 × 105），烧光 30s 探测预算后报「所有站点均无法连接」——
+错误信息完全指不到根因。
+
+落库的 `sites.runtime` 列是上面这张表的**冗余缓存**（写 `SiteRuntimeKind.wireName`），
+不是输入。运行时实际按 `typeCode` + `api` 现算，所以这一列与代码不一致时以代码为准。
+
 
 ### 5.5 源诊断面板
 
