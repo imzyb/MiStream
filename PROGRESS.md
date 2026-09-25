@@ -585,8 +585,46 @@ JS 子进程**，连带同进程里其它源的调用。
 
 **三、仍待做（更新）**
 
-- 真子进程端到端验证：现在有了可行路径（TCP 回连 launcher），但尚未实现。
+- ~~真子进程端到端验证~~ → **已打通**（见下「六续」）。
 - `dart analyze` / `dart test` / `flutter test`：仍被 Dart VM 管道缺陷挡住。
+
+## 本次会话（2026-09-25 六续）：真子进程端到端打通 + 修掉一个只有真进程能暴露的 bug
+
+**一、真子进程端到端：TCP 回连 launcher**
+
+本机 `Process.start` 建不了 stdio 管道，但 `inheritStdio`（不建管道）与回环
+TCP 都可用，于是把传输层换成 TCP：
+
+- `test/support/tcp_process_launcher.dart`：宿主先 `ServerSocket.bind(
+  loopbackIPv4, 0)`，把端口作为 `--port=<n>` 追加到子进程参数，用
+  `Process.start(mode: inheritStdio)` 起真进程，子进程主动回连。
+  `SpiderHost.launcher` 本就可注入，**生产代码零改动**。
+- `test/support/rpc_child.dart`：子进程桩（只用 dart:io/convert），说 LSP 分帧
+  JSON-RPC，响应 handshake/ping/create/destroy，收到 `runtime.shutdown` 就退出。
+- `test/real_process_host_test.dart`：4 例（握手 / 调用 / 换新 / 窗口复用）。
+
+**二、bug：`_onProcessExit` 被调两次 → 换新后多起一个进程**
+
+换新是「先主动关进程（`_recycleProcess` 调 `_onProcessExit`）、老进程随后真正
+退出（`exitCode` 回调再调一次）」两步。假进程测试里两次几乎同时发生，被
+`_restartTimer != null` 挡住；**真进程退出有延迟，第二次落在第一次重启之后，
+于是又拉起一个进程**。
+
+修：加 `_exitHandled` 幂等标记，`start()` 起新进程时重置。崩溃重启不受影响。
+回归用例：「换新窗口内再调用」断言全程只有 2 个真进程（修前 3 个）。
+
+**三、语义澄清**
+
+`SpiderHost.call()` 在未就绪时**不排队**，直接回 `runtimeNotReady`；想复用
+同一个宿主必须先 `waitReady()`。测试用例按此语义写。
+
+**证据**
+
+| 验证 | 结果 |
+| --- | --- |
+| `packages/spider_host` 全部 **16** 个测试文件 | 全部 All tests passed（新增 `real_process_host_test` 4 例） |
+| 静态检查 | **297 文件 0 error / 0 warning / 0 info** |
+| 提交 | `b05663e`，已推送，远端引用复核一致 |
 
 ## 下一步（按优先级，2026-09-19 续）
 
