@@ -377,6 +377,75 @@
 `config_install_service_test` 的 mock server）、`runtimes/spider_js` 的夹具
 用例（cwd 必须是包目录）。
 
+## 本次会话（2026-09-25 再续）：JS 微任务泵 + type=0 内置脚本真正跑通
+
+起点是核对 `docs/05` §2.2 的宿主 API 清单，结果挖出两个**静默失败**级的问题。
+
+**一、JS 运行时不泵微任务 → 所有 `async` 入口的源静默返回空数据**
+
+`qs_eval` 是裸 `JS_Eval`，没有 `JS_ExecutePendingJob`。Promise 回调是挂在
+runtime 队列上的 *job*，没人泵它就永远不执行：`p.then(cb)` 不调 `cb`，
+`async function f(){ return 1 }` 的返回值永不落地，`JSON.stringify(f())` 得到
+`"{}"`。探针实测（`JSON.stringify` / `.then` / `typeof setTimeout` 三组）钉死了
+这一点。**不报错**是最麻烦的地方——源能加载、能调用、返回空对象。
+
+修复分三层：C 层导出 `qs_drain_jobs`（循环 `JS_ExecutePendingJob`，带迭代上限，
+符号按「可选」模式加载，缺失返回 `-2` 让 Dart 如实报错）；`JsRuntime` 每次求值后
+都泵一次；`_wrap` 识别 thenable 后把结果暂存到 `__qs_*` 全局，泵完再读回。
+排空后仍 pending 的源**报错**，不返回空值。
+
+**二、`type=0` 内置脚本从未真正跑通过**
+
+`type0_script_test.dart` 只做字符串包含检查（`expect(script, contains('vodId'))`），
+脚本写得再错也照样绿——给了虚假的绿灯。实际把它喂给真实运行时后，四处都对不上：
+
+| 问题 | 表现 |
+| --- | --- |
+| 入口函数名是 `homeContent`/`categoryContent`/…（drpy 内部名），宿主取的是 `home`/`category`/… | 能力位探测为空，所有调用返回 `null` |
+| 输出字段是 `vodId`/`vodName`/`classes`，宿主解析 `vod_id`/`vod_name`/`class` | 首页永远空白 |
+| `init`/`homeContent` 全是 `async` | 叠加问题一，`init` 返回的配置被丢成 `{}` |
+| `req` 返回 `{content,…}` 被当字符串喂给 `pdfh`；`ids` 按字符串传却写 `ids[0]`；相对地址没补全 | 页面一条都抽不出来 / 详情页请求打到错误主机 |
+
+重写脚本：入口对齐 TVBox 约定、字段全改 snake_case、`req` 取 `.content`、
+链接用 `joinUrl` 补成绝对地址、`ids` 兼容字符串与数组、`category` 按
+`nextPageRule` 报 `pagecount`、播放地址抽成一条线路。并补上
+`type0_end_to_end_test.dart`——**真起 RuntimeChild + 真 QuickJS**，只把 `req`
+换成桩（因此不需要回环端口），断言宿主解析器真能读懂返回的字段。
+
+顺带修正 `docs/05` §2.2 的三处推测值（对着 `dr_py` 的 `libs/drpy.js` 与
+`libs/drpy2.min.js` 实测）：`print`/`log` 由 drpy2 自定义、`setTimeout`/`getUA`/
+`getAppVersion` 在两个参考实现里出现 **0 次**、`getProxy` 可选（`getProxyUrl()`
+有 9987 端口兜底）。也纠正了上一轮我自己写错的判断：**drpy2 本体是同步的**，
+`async`/`await`/`Promise` 出现次数均为 0，当初「drpy2 全是 async」的结论有误
+（真正的受害者是本仓自带的 `type0Script` 与存量 async 源）。
+
+**证据**
+
+| 验证 | 结果 |
+| --- | --- |
+| `async_jobs_test.dart`（新增） | **11 通过 / 0 失败** |
+| `type0_end_to_end_test.dart`（新增，真运行时） | **5 通过 / 0 失败** |
+| `type0_script_test.dart`（由字符串包含改为契约守卫） | **6 通过 / 0 失败** |
+| `runtimes/spider_js` 全部 17 个测试文件 | 除 `sync_frame_io_test` 的 1 例管道用例（`CreateFile failed 231`，环境缺陷）外全绿 |
+| `packages/spider_host` 全部 14 个测试文件 | 除 `http_runtime_test` 的 6 例回环用例（沙箱禁回环）外全绿 |
+| `.workbuddy-ai/scripts/verify_site_runtime_gating.dart` | **27 项 / 0 失败**（回归） |
+| 静态检查 | 290 文件 0 error / 0 warning / 0 info |
+| 格式门禁 | 295 文件 0 changed |
+
+**三、本环境构建 wrapper DLL 的新坑（值得记住）**
+
+`native/build.bat` 走 `vcvars64.bat`，而后者会 shell 出去调 `reg.exe`，
+**本沙箱把 `reg.exe` 列入程序黑名单** → `vcvars` 失败 → `INCLUDE` 没设上 →
+`fatal error C1083: 无法打开包括文件: "windows.h"`。绕法是自己拼环境变量：
+
+```
+INCLUDE = <MSVC>\include; <SDK>\Include\<ver>\{ucrt,shared,um,winrt}
+LIB     = <MSVC>\lib\x64;  <SDK>\Lib\<ver>\{ucrt,um}\x64
+PATH   += <MSVC>\bin\Hostx64\x64
+```
+
+MSVC 14.44.35207 / SDK 10.0.26100.0。构建脚本本身不用改（正常环境下没问题）。
+
 ## 下一步（按优先级，2026-09-19 续）
 
 1. **P0 仓库健康** ✅ **已定位并交付守卫脚本**；根因属 I: 盘文件系统语义，

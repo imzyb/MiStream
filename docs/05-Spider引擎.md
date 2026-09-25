@@ -95,18 +95,56 @@ POST {api}/  { "method": "searchContent", "params": {...} }
 - 资源限制：单次调用超时（默认 15s）、内存上限（默认 256MB）、JS 栈深度限制。
 - 超时靠 QuickJS 的 interrupt handler 中断，而不是靠杀进程——避免影响同进程其它源。
 
-**必须实现的宿主 API**（drpy 兼容层，兼容性的成败在此）：
+**宿主 API 实现现状**（drpy 兼容层，兼容性的成败在此）：
 
-| 类别 | API |
-| --- | --- |
-| 网络 | `req(url, options)` — method/headers/body/timeout/redirect/withHeaders/buffer/postType |
-| HTML 解析 | `pdfh(html, rule)`、`pdfa(html, rule)`、`pd(html, rule, baseUrl)`、`pdfl(...)` |
-| JSON 解析 | `jsonpath` 风格取值 |
-| 存储 | `local.get/set/delete`（按源隔离命名空间，落 SQLite） |
-| 编码 | `base64Encode/Decode`、`gbkDecode`、`urlencode`、`md5`、`sha1`、`sha256` |
-| 加密 | `aes(mode, encrypt, input, key, iv, ...)`、`rsa(...)`、`hmac` |
-| 工具 | `console.log/warn/error`（转发到 RPC 日志通道）、`joinUrl`、`setTimeout`（受控） |
-| 环境 | `getProxy()`、`getAppVersion()`、`getUA()` |
+| 类别 | API | 状态 |
+| --- | --- | --- |
+| 网络 | `req(url, options)` — method/headers/body/timeout/redirect/withHeaders/buffer/postType | 已实现（过宿主 RPC） |
+| HTML 解析 | `pdfh(html, rule)`、`pdfa(html, rule)`、`pd(html, rule, baseUrl)`、`pdfl(...)` | 已实现 |
+| JSON 解析 | `jsonpath.query(jsonObject, path)`、`pjfh`/`pj`/`pjfa` | 已实现 |
+| 存储 | `local.get/set/delete`（按源隔离命名空间，落 SQLite） | 已实现（过宿主 RPC） |
+| 编码 | `base64Encode/Decode`、`gbkDecode`、`urlencode`、`md5`、`sha1`、`sha256` | 已实现 |
+| 加密 | `aes(mode, encrypt, input, inBase64, key, iv, outBase64)`、`rsaX(mode, pub, encrypt, input, inBase64, key, outBase64)`、`hmac256` | 已实现，签名按位置参数对齐 |
+| 工具 | `console.log/warn/error`（转发到 RPC 日志通道）、`joinUrl` | 已实现 |
+| 环境 | `getProxy()` | **未实现**，见下 |
+
+关于上表的三个更正（2026-09-25 对着 `hjdhnx/dr_py` 的 `libs/drpy.js` 与
+`libs/drpy2.min.js` 实测得出，此前文档写的是推测值）：
+
+- **`print` / `log` 不需要壳子提供**。drpy2 自己定义（内部走 `console.log`），
+  宿主只需给 `console`。
+- **`setTimeout` / `getUA` / `getAppVersion` 在两个参考实现里出现 0 次**，不属于
+  「必须实现的宿主 API」。真实源若用到它们会报 `not defined`，届时再按需补。
+- **`getProxy` 是可选的**。全仓唯一调用点是 `getProxyUrl()`，且带
+  `typeof getProxy==="function"` 守卫，取不到时回落
+  `http://127.0.0.1:9978/proxy?do=js`（TVBox 本地代理端口）。不实现只是拿不到
+  本应用的代理地址，不会让源崩掉。真要做时注意它收一个布尔参数。
+
+**微任务必须被泵**（这一条不是「锦上添花」，缺了会静默丢数据）：
+
+`JS_Eval` 只执行脚本的同步部分。Promise 回调是挂在 runtime 队列上的 *job*，
+C API 不会自己跑它——没有 `JS_ExecutePendingJob` 时，`p.then(cb)` 永远不调 `cb`，
+`async function f(){ return 1 }` 的返回值永远不落地，`JSON.stringify(f())` 得到
+`"{}"`。表现是**源能加载、能调用、返回空数据、全程不报错**，属于最难查的一类。
+
+对策分三层，缺一不可：
+
+1. `native/quickjs_wrapper.c` 导出 `qs_drain_jobs(rt, ctx, max_jobs)`，内部循环
+   `JS_ExecutePendingJob` 直到队列空（`libquickjs.dll` 导出该符号；缺失时返回
+   `-2`，由 Dart 如实报错而不是假装成功）。
+2. `JsRuntime._evalWithTimeout` **每次求值后都泵一次**。空闲时只多一次
+   `JS_IsJobPending` 判断，代价可忽略。
+3. `JsRuntime._wrap` 发现返回值是 thenable 时，挂上 `then/catch` 把结果暂存到
+   `__qs_*` 全局并回一个待定标记；泵完之后用 `_asyncReadback` 取回。
+   排空后仍是 pending 的源（在等一个永不到来的事件）**报错**，不返回空值。
+
+`runtime_child` 生成的所有调用表达式因此一律写成 `await` 形式
+（`(async function () { ... return JSON.stringify(await home(...)); })()`），
+并且 `home()` / `homeVod()` 的返回值**字符串与对象都接受**——drpy 约定返回 JSON
+字符串，但直接返回对象的源也不少。
+
+> 注意：这条依赖 `qs_drain_jobs`，wrapper DLL 是本地构建产物、不入库。
+> 旧的 DLL 会让所有源都报「Promise 无法读取」，重跑 `native/build.bat` 即可。
 
 `pdfh` 的选择器语法是简化伪 XPath（形如 `body&&.list&&a&&href`、`.title&&Text`、`img&&src`），**不是标准 XPath 也不是标准 CSS**。这是整个项目里最容易出错、最需要靠回归测试保证的部分。
 
@@ -315,6 +353,58 @@ HTTP 200 · text/html · 12486 字节；重定向 http://…/tv → http://…cc
 `getHomeData()` **2ms** 返回「无可用站点」。修复前它会挨个去建运行时
 （8s 超时 × 105），烧光 30s 探测预算后报「所有站点均无法连接」——
 错误信息完全指不到根因。
+
+**type=0 内置脚本的 `ext` 约定**（`runtimes/spider_js/lib/src/drpy/type0_script.dart`）：
+
+`type=0` 的 `api` 是站点基础地址，不是脚本路径，所以子进程用内置的
+`type0Script` 兜底，规则全部由源配置的 `ext` 字段驱动：
+
+```json
+{
+  "homeUrl": "https://example.com",
+  "homeRule": "body&&.list&&a&&href",
+  "listTitleRule": ".list&&span&&Text",
+  "listPicRule": ".list&&img&&src",
+  "listRemarksRule": ".list&&em&&Text",
+  "classes": [{"type_id": "1", "type_name": "电影"}],
+  "categoryUrl": "https://example.com/list/{tid}-{pg}.html",
+  "categoryRule": "body&&.list&&a&&href",
+  "nextPageRule": "a.next&&href",
+  "detailRule": {
+    "vodName": "h1&&Text",
+    "vodPic": "img&&src",
+    "vodContent": ".desc&&Text",
+    "vodPlayFrom": ".playlist&&h3&&Text",
+    "vodPlayUrl": ".playlist&&a&&href",
+    "vodPlayUrlName": ".playlist&&a&&Text"
+  },
+  "searchUrl": "https://example.com/search?wd={wd}",
+  "searchRule": "body&&.list&&a&&href"
+}
+```
+
+`classes` 也接受 drpy 的字符串写法 `名称$值#名称$值`。`categoryUrl` / `searchUrl`
+里的 `{tid}`/`{pg}`/`{wd}` 是占位符，另外接受 `{id}`/`{cateId}`/`{page}`/`{catePg}`/
+`{key}` 等别名。
+
+约定与坑（**每一条都是实测踩过的**，改动前先看 `type0_end_to_end_test.dart`）：
+
+- **入口函数名必须是 `home`/`category`/`detail`/`search`/`play`**。脚本一度只有
+  `homeContent`/`categoryContent`/…（drpy 内部名），而宿主取的是 `home`，两边都
+  不报错，结果是源能加载、能调用、首页永远空白。
+- **输出字段必须是 snake_case**：`vod_id`/`vod_name`/`vod_pic`/`vod_remarks`/
+  `vod_content`/`vod_play_from`/`vod_play_url`/`type_id`/`type_name`。解析方在
+  `search_engine` 的 `home_use_case.dart` 与 `apps/mistream` 的 `detail_use_case.dart`。
+- **`req` 返回 `{content, headers, code, url}`，不是裸字符串**。把整个对象喂给
+  `pdfh`，跨到宿主那边会被 `toString()` 成 Dart Map 的 `{content: …}`，一条都抽不出来。
+- **列表里的链接与封面要补成绝对地址**（`joinUrl(页面地址, 相对地址)`），
+  否则 `vod_id` 是相对路径，详情页请求会打到错误的主机。
+- **`ids` 是按字符串传的**（TVBox 约定，多 id 逗号分隔），不是数组。写 `ids[0]`
+  拿到的是首字符。
+- **刻意不定义 `homeVod()`**：宿主的 `spider.home` 把 `home()` 与 `homeVod()` 的
+  结果合并、后者覆盖前者，两个都定义会让首页抓两次且列表被后一次覆盖。
+- **播放地址只抽一条线路**。通用 XPath 规则分不出「哪些链接属于哪条线路」，
+  多线路源需要源专属脚本。
 
 落库的 `sites.runtime` 列是上面这张表的**冗余缓存**（写 `SiteRuntimeKind.wireName`），
 不是输入。运行时实际按 `typeCode` + `api` 现算，所以这一列与代码不一致时以代码为准。
