@@ -92,6 +92,9 @@ class JsRuntime {
   bool _memoryLimited = false;
   bool _stackLimited = false;
 
+  /// 见 [isSealed]。一旦 [park] 过就置位，且不再清除。
+  bool _sealed = false;
+
   /// drpy 宿主 API 桥。暴露出来是为了让上层读 `consoleOutput`（源诊断面板）
   /// 或在测试里追加自定义宿主函数。
   final HostBridge bridge = HostBridge();
@@ -130,8 +133,13 @@ class JsRuntime {
   /// [dllPath] 是 libquickjs 本体的完整路径（仅 Windows 需要）。不传则由
   /// [qjs.defaultQuickJSLibraryPath] 自行解析。
   /// 返回 true 表示成功，false 表示不可用，原因见 [lastError]。
+  ///
+  /// 已经 [park] 过的实例再调本方法时只补一个新 context——runtime 还在，不必
+  /// 重建（这正是停放池能复用的原因）。
   bool init([String? dllPath]) {
-    if (_rt != null) return true;
+    if (_rt != null) {
+      return _ctx != null || _attachContext();
+    }
 
     if (!qjs.isQuickJSAvailable) {
       return _fail('QuickJS wrapper 库未找到');
@@ -158,18 +166,40 @@ class JsRuntime {
     // 上限要在建 context 之前设：JS_SetMemoryLimit 作用于 runtime，
     // 而 context 的分配本身就要走这套配额。
     _applyLimits(rt);
+    _rt = rt;
+
+    if (!_attachContext()) {
+      qjs.freeRuntime(rt);
+      _rt = null;
+      return false;
+    }
+    return true;
+  }
+
+  /// 在当前 runtime 上建一个新 context 并装好宿主桥。
+  ///
+  /// 与 [init] 分开是因为它同时服务两条路径：首次初始化，以及 [park] 之后的
+  /// 复用。抽出来的另一个好处是 `_rt` 的赋值时机变得明确——[init] 里必须在
+  /// 建 context **之前**赋值，否则建失败时的回滚会漏掉 runtime。
+  ///
+  /// 新 context 是干净的，所以挂在旧 context 上的全局（`__qs_base_url`、宿主
+  /// 函数）都要重铺：宿主函数由 [_installHostBridge] 负责，base URL 由调用方在
+  /// [init] 之后调 [setBaseUrl] 补上（`spider.create` 里就是这么排的）。
+  bool _attachContext() {
+    final rt = _rt;
+    if (rt == null) return _fail('runtime 未创建');
 
     final ctx = qjs.newContext(rt);
     if (ctx == null) {
-      qjs.freeRuntime(rt);
       return _fail('JS_NewContext 返回空');
     }
 
-    _rt = rt;
     _ctx = ctx;
     _status = JsRuntimeStatus.available;
     _initError = null;
     _lastFailure = null;
+    // 复用路径下 limit 本来就还在 runtime 上，重设一次只为让两个标志位如实。
+    _applyLimits(rt);
     _installHostBridge(ctx);
     return true;
   }
@@ -307,12 +337,21 @@ class JsRuntime {
   ///
   /// 在 `spider.create` 时由宿主传入，`assets://` 协议相对路径都基于此解析。
   /// 设完后自动注入 JS 全局 `__qs_base_url`。
+  ///
+  /// 传 null / 空串表示**清空**，会把全局一并删掉。这条必须成立：停放池复用
+  /// runtime 时，上一个源的 base URL 若留在新 context 里，新源解析 `assets://`
+  /// 就会指到别人的目录，而且不报错。
   void setBaseUrl(String? url) {
-    _baseUrl = url;
-    if (url != null && isAvailable) {
-      final ctx = _ctx!;
-      qjs.eval(ctx, 'globalThis.__qs_base_url = ${jsonEncode(url)};');
-    }
+    _baseUrl = (url == null || url.isEmpty) ? null : url;
+    if (!isAvailable) return;
+    final ctx = _ctx!;
+    final target = _baseUrl;
+    qjs.eval(
+      ctx,
+      target == null
+          ? 'delete globalThis.__qs_base_url;'
+          : 'globalThis.__qs_base_url = ${jsonEncode(target)};',
+    );
   }
 
   /// 获取当前 base URL。
@@ -433,6 +472,9 @@ class JsRuntime {
   }
 
   /// 释放资源。
+  ///
+  /// 已经被 [park] 过的实例（[isSealed]）**只丢引用，不释放 runtime 壳**——见
+  /// [park] 里那份判定证据：这个 build 的 GC/释放路径本身会断言 abort。
   void dispose() {
     final ctx = _ctx;
     if (ctx != null) {
@@ -441,8 +483,8 @@ class JsRuntime {
     }
     final rt = _rt;
     if (rt != null) {
-      qjs.freeRuntime(rt);
       _rt = null;
+      if (!_sealed) qjs.freeRuntime(rt);
     }
     bridge.dispose();
     _hostBridge = false;
@@ -450,6 +492,60 @@ class JsRuntime {
     _stackLimited = false;
     _status = JsRuntimeStatus.unavailable;
   }
+
+  /// runtime 壳是否已「封存」：不会再被回收，也不会被释放。
+  ///
+  /// 一旦 [park] 过就是 true，且不可逆。封存的 runtime 只有进程退出才能回收内存。
+  bool get isSealed => _sealed;
+
+  /// 结束这个实例，但**不释放 runtime**——留着给下一个源复用，直到进程退出。
+  ///
+  /// 为什么不直接 [dispose]：手头这份 vendored `libquickjs.dll` 是 assert 版
+  /// 定制构建，`JSObject` 布局非 mainline（见 `runtimes/spider_js/README.md`）。
+  /// 实测跑完一次真实 drpy2（4 条远程 import + 660KB 依赖 + init + home）之后，
+  /// 这个 build 的 GC/释放路径会断言 abort：
+  /// `Assertion failed: i != 0, file quickjs.c, line 3394`。
+  /// 复现与二分见 `tool/repro_dispose.dart` 与 `tool/probe_real_drpy.dart`。
+  ///
+  /// 判定要点（都实测过，每组 6 次）：
+  /// - **`JS_FreeContext` 永远安全**（6/6 走完）。所以释放 context 照做，
+  ///   JS 堆对象不会滞留。
+  /// - **崩点是 GC 本身，不是「没回收干净」**：`JS_RunGC` 6 次崩 5 次，
+  ///   `JS_FreeRuntime` 同样（它内部也走这套释放路径）。两者是同一个崩点，
+  ///   所以「先 GC 再释放」这种组合没有意义。
+  /// - 它是**堆布局阈值敏感**的：内存上限 32/128/256/512MB 都不触发，默认的
+  ///   64MB 触发；少装一个限值、少求值一步也不触发。也就是说调参数只是换个
+  ///   落点，不是修复——所以这里不调参，只把这一步从热路径上摘掉。
+  ///
+  /// 影响面正是它必须被摘掉的原因：宿主 `_trySites` 每试一个站点就
+  /// `runtime.dispose()` 一次，也就是**每次请求都会打死共享的 JS 子进程**，
+  /// 顺带把同一进程里其它源的调用一起带走。
+  ///
+  /// 代价（明确记账）：runtime 壳（atom 表、shape、`gc_obj_list` 残项）封存到
+  /// 进程退出，[isSealed] 之后不可回收。context 已释放，JS 堆对象不滞留，剩下
+  /// 的很小；`RuntimeChild` 用有上限的停放池兜住它，避免随访问过的源数增长。
+  ///
+  /// 根治办法见 README「边界约定」：拿到与该 DLL 匹配的 `quickjs.h`、或换一份
+  /// 非 assert 构建的 libquickjs，就能恢复正常释放。
+  void park() {
+    // 幂等：已封存过、或本来就没有 runtime 可留，都直接返回。
+    if (_rt == null || _sealed) return;
+    final ctx = _ctx;
+    if (ctx != null) {
+      qjs.freeContext(ctx);
+      _ctx = null;
+    }
+    // 这里**不做** runGc、也不释放 runtime：见上面那份二分结论。
+    _sealed = true;
+    bridge.dispose();
+    _hostBridge = false;
+    _memoryLimited = false;
+    _stackLimited = false;
+    _status = JsRuntimeStatus.unavailable;
+  }
+
+  /// 是否已经 [park] 过（context 没了，但 runtime 还留着）。
+  bool get isParked => _rt != null && _ctx == null;
 
   /// 注入 JS 前导：在唯一的 native 入口 `__qs_host` 之上铺出 drpy 的函数面。
   ///

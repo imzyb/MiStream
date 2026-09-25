@@ -169,6 +169,12 @@ typedef QsDrainJobsC =
 typedef QsDrainJobsDart =
     int Function(Pointer<Void> rt, Pointer<Void> ctx, int maxJobs);
 
+/// `qs_run_gc(rt) -> int` 的 C 签名。
+typedef QsRunGcC = Int32 Function(Pointer<Void> rt);
+
+/// [QsRunGcC] 的 Dart 签名。
+typedef QsRunGcDart = int Function(Pointer<Void> rt);
+
 /// `qs_set_memory_limit(rt, bytes) -> int` / `qs_set_max_stack_size` 的 C 签名。
 typedef QsSetLimitC = Int32 Function(Pointer<Void> rt, Uint64 bytes);
 
@@ -389,6 +395,21 @@ const int drainJobsUnavailable = -2;
 /// 为 false 时 Promise 永远不会 settle，`async` 入口的源会拿到空结果——
 /// 调用方必须据此如实报错，不能把空对象当成功交出去。
 bool get supportsJobPump => _qsDrainJobs != null;
+
+final QsRunGcDart? _qsRunGc = _lookupOptional(
+  () => _wrapperLib?.lookupFunction<QsRunGcC, QsRunGcDart>('qs_run_gc'),
+);
+
+/// 是否支持主动触发一次全量回收。
+bool get supportsRunGc => _qsRunGc != null;
+
+/// 触发一次全量回收，返回是否真的执行了。
+///
+/// 与 [freeRuntime] 的区别：这个**不拆任何东西**，任何时刻都能调。用途是把
+/// 已结束实例的内存还回去，同时避开 `JS_FreeRuntime`——那份 vendored
+/// libquickjs 是 assert 版定制构建，跑完真实 drpy2 后它约有一半概率断言
+/// abort，而 `JS_FreeContext` 从来不出问题。见 `JsRuntime.park`。
+bool runGc(Pointer<Void> rt) => _qsRunGc?.call(rt) == 1;
 
 /// 排空 microtask 队列，返回实际执行的任务数。
 ///

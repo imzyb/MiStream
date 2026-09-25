@@ -74,6 +74,15 @@ class _FakeRuntime implements JsRuntime {
   int cancelCount = 0;
   bool disposed = false;
 
+  /// 被 [park] 过（context 释放、runtime 壳留给下一个源复用）。
+  bool parked = false;
+
+  /// [init] 被调了几次。用来区分「复用了实例」和「新建了实例」。
+  int initCount = 0;
+
+  @override
+  final JsRuntimeLimits limits = const JsRuntimeLimits();
+
   /// 真的给一个桥：这样 `installDrpyHostFunctions` 的默认路径也被这些用例走到，
   /// 而不是被一个 no-op 替身绕过去。
   @override
@@ -95,7 +104,22 @@ class _FakeRuntime implements JsRuntime {
   void dispose() => disposed = true;
 
   @override
-  bool init([String? dllPath]) => true;
+  bool init([String? dllPath]) {
+    initCount++;
+    parked = false;
+    return true;
+  }
+
+  @override
+  void park() => parked = true;
+
+  @override
+  bool get isParked => parked && !disposed;
+
+  /// `_create` 每次都会调它（含 baseUrl 为空时），所以替身必须实现，
+  /// 否则会掉进 `noSuchMethod` 直接抛。
+  @override
+  void setBaseUrl(String? url) {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -308,7 +332,7 @@ void main() {
       expect(error['code'], ErrorCode.invalidState.value);
     });
 
-    test('destroy 释放实例', () {
+    test('destroy 封存实例而不是真释放', () {
       final fake = _FakeRuntime();
       final pipe = _Pipe([
         _req(1, 'spider.create', <String, Object?>{
@@ -319,8 +343,92 @@ void main() {
       ]);
       RuntimeChild(codec: pipe.codec, createRuntime: (_) => fake).run();
 
-      expect(fake.disposed, isTrue);
+      expect(
+        fake.parked,
+        isTrue,
+        reason:
+            'destroy 走 JS_FreeRuntime / JS_RunGC 在本仓这份 assert 版 libquickjs 上 '
+            '会断言 abort，而宿主每试一个源就 destroy 一次——热路径必须避开它',
+      );
+      expect(
+        fake.disposed,
+        isFalse,
+        reason: '封存就是「放 context、留壳」，不能再往上调 freeRuntime',
+      );
       expect(pipe.written, hasLength(2));
+    });
+
+    test('destroy 后的下一个 create 建新 runtime，不复用旧的', () {
+      final fakes = <_FakeRuntime>[];
+      final pipe = _Pipe([
+        _req(1, 'spider.create', <String, Object?>{
+          'instanceId': 'site:1',
+          'script': 'var a=1',
+        }),
+        _req(2, 'spider.destroy', <String, Object?>{'instanceId': 'site:1'}),
+        _req(3, 'spider.create', <String, Object?>{
+          'instanceId': 'site:2',
+          'script': 'var b=2',
+        }),
+      ]);
+      RuntimeChild(
+        codec: pipe.codec,
+        createRuntime: (_) {
+          final fake = _FakeRuntime();
+          fakes.add(fake);
+          return fake;
+        },
+      ).run();
+
+      expect(
+        fakes,
+        hasLength(2),
+        reason:
+            '释放过 context 的 runtime 已被污染：再挂新 context 加载 drpy2 依赖会撞 '
+            'js_rc(p->shape)->ref_count == 1（shape 是 runtime 级、跨 context 共享）',
+      );
+      expect(fakes.every((f) => f.initCount == 1), isTrue);
+    });
+
+    test('收尾时活着的实例也先封存，不走 freeRuntime', () {
+      final fake = _FakeRuntime();
+      final pipe = _Pipe([
+        _req(1, 'spider.create', <String, Object?>{
+          'instanceId': 'site:1',
+          'script': 'var a=1',
+        }),
+      ]);
+      final child = RuntimeChild(codec: pipe.codec, createRuntime: (_) => fake);
+      child.run();
+
+      child.dispose();
+      expect(fake.parked, isTrue, reason: '子进程收尾这一次也一样要避开 freeRuntime');
+      expect(fake.disposed, isTrue);
+    });
+
+    test('同一个 instanceId 重建时旧的被封存', () {
+      final fakes = <_FakeRuntime>[];
+      final pipe = _Pipe([
+        _req(1, 'spider.create', <String, Object?>{
+          'instanceId': 'site:1',
+          'script': 'var a=1',
+        }),
+        _req(2, 'spider.create', <String, Object?>{
+          'instanceId': 'site:1',
+          'script': 'var b=2',
+        }),
+      ]);
+      RuntimeChild(
+        codec: pipe.codec,
+        createRuntime: (_) {
+          final fake = _FakeRuntime();
+          fakes.add(fake);
+          return fake;
+        },
+      ).run();
+
+      expect(fakes, hasLength(2));
+      expect(fakes.first.parked, isTrue, reason: '被顶掉的那个实例要封存，不能直接释放');
     });
 
     test('limits 从 RPC 参数映射到 JsRuntimeLimits', () {

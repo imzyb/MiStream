@@ -51,6 +51,9 @@ typedef JSValue (*PFN_JS_NewCFunction2)(
  * empty, 1 when it ran a job, -1 when that job raised. */
 typedef int (*PFN_JS_ExecutePendingJob)(JSRuntime*, JSContext**);
 
+/* Full collection. */
+typedef void (*PFN_JS_RunGC)(JSRuntime*);
+
 /* Resource limits. JSInterruptHandler returns non-zero to abort execution. */
 typedef int (*PFN_JSInterruptHandler)(JSRuntime*, void*);
 typedef void (*PFN_JS_SetInterruptHandler)(
@@ -74,6 +77,7 @@ static PFN_JS_SetPropertyStr pJS_SetPropertyStr = NULL;
 static PFN_JS_NewStringLen pJS_NewStringLen = NULL;
 static PFN_JS_NewCFunction2 pJS_NewCFunction2 = NULL;
 static PFN_JS_ExecutePendingJob pJS_ExecutePendingJob = NULL;
+static PFN_JS_RunGC pJS_RunGC = NULL;
 static PFN_JS_SetInterruptHandler pJS_SetInterruptHandler = NULL;
 static PFN_JS_SetMemoryLimit pJS_SetMemoryLimit = NULL;
 static PFN_JS_SetMaxStackSize pJS_SetMaxStackSize = NULL;
@@ -121,6 +125,9 @@ __declspec(dllexport) int qs_init(const char* dll_path) {
     pJS_ExecutePendingJob =
         (PFN_JS_ExecutePendingJob)GetProcAddress(hQuickJS, "JS_ExecutePendingJob");
 
+    /* Optional: full collection before teardown. See qs_free_runtime. */
+    pJS_RunGC = (PFN_JS_RunGC)GetProcAddress(hQuickJS, "JS_RunGC");
+
     /* Optional: resource limits. A build without them still runs scripts, it
      * just cannot bound them -- qs_set_* report failure so Dart can say so
      * instead of silently pretending a runaway script will be stopped. */
@@ -152,7 +159,33 @@ __declspec(dllexport) void qs_free_runtime(void* rt) {
     /* Drop the limit entry first, for the same reason qs_free_context drops the
      * host entry: the allocator will hand this address back out. */
     qs_limit_forget((JSRuntime*)rt);
+
+    /* Collect before tearing down. Measured: this does NOT prevent the
+     * JS_FreeRuntime assertion described in qs_run_gc -- it is here because it
+     * is the right order anyway (let QuickJS release what it can while it still
+     * knows its own layout) and it is cheap at teardown. */
+    if (pJS_RunGC) pJS_RunGC((JSRuntime*)rt);
+
     if (pJS_FreeRuntime) pJS_FreeRuntime((JSRuntime*)rt);
+}
+
+/**
+ * Run a full collection. Safe at any point; unlike qs_free_runtime it does not
+ * tear anything down.
+ *
+ * Exists so a caller can release a finished instance's memory **without**
+ * calling JS_FreeRuntime, which on the vendored libquickjs aborts the process
+ * roughly half the time after a real drpy2 session (assert-enabled custom
+ * build; see runtimes/spider_js/README.md). Freeing the context is reliable --
+ * only the runtime teardown is not -- so the child frees the context, collects
+ * here, and parks the runtime until the process exits.
+ *
+ * Returns 1 when a collection actually ran.
+ */
+__declspec(dllexport) int qs_run_gc(void* rt) {
+    if (!rt || !pJS_RunGC) return 0;
+    pJS_RunGC((JSRuntime*)rt);
+    return 1;
 }
 
 __declspec(dllexport) void* qs_new_context(void* rt) {

@@ -257,11 +257,12 @@ class RuntimeChild {
       );
     }
 
-    _instances.remove(instanceId)?.runtime.dispose();
+    _recycle(_instances.remove(instanceId)?.runtime);
 
-    final runtime = _createRuntime(_limitsFrom(params['limits']));
+    final limits = _limitsFrom(params['limits']);
+    final runtime = _createRuntime(limits);
     if (!runtime.init()) {
-      runtime.dispose();
+      _recycle(runtime);
       throw _RpcFailure(
         ErrorCode.scriptLoadFailed,
         'JS 引擎不可用: ${runtime.lastError}',
@@ -271,15 +272,14 @@ class RuntimeChild {
     // 宿主函数要在脚本求值**之前**装好：drpy 源常在顶层就调 md5 之类。
     _installHostFunctions(runtime, instanceId);
 
-    // 设置 base URL（用于 assets:// 协议解析）。
-    final baseUrl = params['baseUrl'] as String?;
-    if (baseUrl != null && baseUrl.isNotEmpty) {
-      runtime.setBaseUrl(baseUrl);
-    }
+    // 设置 base URL（用于 assets:// 协议解析）。**无条件**调用：复用停放实例时
+    // 必须显式覆盖或清空，否则会沿用上一个源的 base URL。
+    runtime.setBaseUrl(params['baseUrl'] as String?);
 
     // --- 模块加载：解析 import → 预取依赖 → 注入全局 → 清理脚本 ---
     final (deps, rawCleaned) = parseImports(script);
     final cleanedScript = stripExports(rawCleaned);
+    final baseUrl = params['baseUrl'] as String?;
 
     if (deps.isNotEmpty) {
       // 预取所有依赖，注入到 globalThis。任一依赖失败都要**明确报错**：
@@ -318,7 +318,7 @@ class RuntimeChild {
             throw StateError(runtime.lastFailure.toString());
           }
         } on Object catch (e) {
-          runtime.dispose();
+          _recycle(runtime);
           throw _RpcFailure(
             ErrorCode.scriptLoadFailed,
             '依赖 ${dep.specifier} 加载失败: $e',
@@ -329,7 +329,7 @@ class RuntimeChild {
       // 用清理后的脚本（import/export 已移除）
       if (runtime.eval(cleanedScript) == null && runtime.lastFailure != null) {
         final failure = runtime.lastFailure!;
-        runtime.dispose();
+        _recycle(runtime);
         throw _RpcFailure(failure.code, failure.message, <String, Object?>{
           'stack': failure.stack,
         });
@@ -338,7 +338,7 @@ class RuntimeChild {
       // 无 import 语句，直接执行清理后的脚本（stripExports 已剥掉 export ...）。
       if (runtime.eval(cleanedScript) == null && runtime.lastFailure != null) {
         final failure = runtime.lastFailure!;
-        runtime.dispose();
+        _recycle(runtime);
         throw _RpcFailure(failure.code, failure.message, <String, Object?>{
           'stack': failure.stack,
         });
@@ -366,8 +366,25 @@ class RuntimeChild {
   }
 
   Map<String, Object?> _destroy(Map<String, Object?> params) {
-    _instances.remove(_requireString(params, 'instanceId'))?.runtime.dispose();
+    _recycle(_instances.remove(_requireString(params, 'instanceId'))?.runtime);
     return <String, Object?>{};
+  }
+
+  /// 收一个用完的 runtime：封存（释放 context）后弃用。
+  ///
+  /// 这是「`spider.destroy` 不再打死子进程」的落点——见 [JsRuntime.park] 里那份
+  /// 判定证据。
+  ///
+  /// **不复用**：实测发现释放过 context 的 runtime 已被污染——再往上挂一个新
+  /// context、加载 drpy2 依赖时会撞 `Assertion failed: js_rc(p->shape)->ref_count
+  /// == 1, file quickjs.c, line 9235`（shape 是 runtime 级对象，跨 context 共享，
+  /// 而这份 build 的引用计数本就不可靠，见 README「边界约定」）。所以每个源一个
+  /// 全新 runtime，用完只放 context、把壳弃掉。
+  void _recycle(JsRuntime? runtime) {
+    if (runtime == null) return;
+    runtime.park();
+    // 没 init 成功过的实例没有 context 可放，直接丢掉引用即可。
+    if (!runtime.isParked) runtime.dispose();
   }
 
   /// 调用实例的 init() 函数。
@@ -570,8 +587,14 @@ class RuntimeChild {
   }
 
   /// 释放全部实例。
+  ///
+  /// 先 [JsRuntime.park] 再 [JsRuntime.dispose]：**不能直接 dispose**。还活着的
+  /// 实例没被 park 过，直接 dispose 会走 `JS_FreeRuntime`——正是那个会 abort 的
+  /// 调用（见 [JsRuntime.park]）。park 把 context 放掉并封存壳，dispose 就只丢
+  /// 引用。子进程收尾这一次也一样要避开。
   void dispose() {
     for (final instance in _instances.values) {
+      instance.runtime.park();
       instance.runtime.dispose();
     }
     _instances.clear();

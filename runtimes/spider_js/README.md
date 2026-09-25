@@ -15,7 +15,8 @@ QuickJS 运行时 + drpy 宿主 API 兼容层。**项目关键路径。**
 | QuickJS 引擎（`JsRuntime` / FFI 绑定） | 可执行 JS，有正向回归用例 |
 | drpy 兼容层（`pdfh`/`pdfa`/`crypto`） | 纯 Dart 实现，**已注册进 JS 上下文** |
 | 宿主 API 桥（JS 里可调 `pdfh`/`md5`/`console`） | 同步函数已通 |
-| `req`（网络）与 `local.*`（落库） | **未接**，见下「同步性缺口」 |
+| `req`（网络）与 `local.*`（落库） | **已通**，走 `host.fetch` / `host.storage.*` 过宿主 RPC |
+| 真实 drpy2 端到端 | 已跑通（4 条远程 import + 规则解析），见 `tool/probe_real_drpy.dart` |
 | 兼容性测试集 | 10 条，出口标准要求 ≥100 |
 
 ## 宿主 API 桥
@@ -44,12 +45,21 @@ isolate 调用——一个全局槽位会在第二个 runtime 注册时被覆盖
 就会打进另一个 isolate 的回调里，进程直接 access violation。`dart test` 并行跑
 suite 时立刻能复现；生产上「一个源一个 context」是同一回事。
 
-### 同步性缺口：req 与 local.*
+### 同步性是怎么解决的
 
-只登记**同步**函数。`req`（网络）与 `local.*`（落库）在 Dart 侧都是异步的，而
-drpy 脚本按同步语义调它们，两者对不上。要接得先有 ADR-001 的子进程/隔离区加上
-阻塞原语（或把 `local.*` 的 KV 在 init 时预载进内存、写回异步化）。在那之前脚本
-里调这两个会报未定义，而不是拿到假数据。
+drpy 脚本按**同步**语义调 `req`（网络）和 `local.*`（落库），而 Dart 侧是异步的，
+两者对不上。解法不是把宿主函数做成异步，而是**把整个脚本执行搬进独立子进程**
+（ADR-001）：
+
+- 子进程主循环刻意**全同步**——脚本调 `req` 时 C 栈停在 `JS_Eval` 里回调 Dart，
+  Dart 事件循环不转，异步 I/O 的响应永远送不到。所以宿主往返必须是阻塞的。
+- 阻塞在子进程里完全无害：它整个存在的意义就是跑完这一次调用。
+- 于是 `req` → `host.fetch`、`local.*` → `host.storage.*`，都由宿主在
+  `write` 回调里同步应答，脚本拿到的就是同步返回值。
+
+代价是**重入**：`callHost` 写出请求后要继续读，而这期间宿主可能发来别的消息。
+分流规则见 `RuntimeChild._awaitResponse`（匹配 id 的响应返回、`$/cancelRequest`
+立即处理、其余入队）。
 
 
 ## native 依赖
@@ -117,3 +127,55 @@ undefined 覆盖掉」这两步就等于让 QuickJS 拿自己知道的布局去 
 
 **根治办法**：拿到与该 DLL 匹配的 `quickjs.h`（或从已知源码自行构建
 libquickjs），直接用真正的 `JS_FreeValue`。在那之前不要放宽这条约定。
+
+## 缺陷：runtime 的 GC / 释放路径会断言 abort
+
+**症状**：跑完一次真实 drpy2（4 条远程 import + 660KB 依赖 + `init` + `home`）
+之后，调 `JS_FreeRuntime` 或 `JS_RunGC` 会以约一半概率触发
+`Assertion failed: i != 0, file quickjs.c, line 3394` 直接 abort 整个进程
+（换 reuse 之后还会撞 `js_rc(p->shape)->ref_count == 1, line 9235`）。
+进程 abort 会**丢掉管道里缓冲的 stdout**，所以排查时得靠落盘追踪。
+
+**爆炸半径**：宿主 `_trySites` 每试一个订阅源就 `spider.destroy` 一次，也就是
+每次请求都会打死共享的 JS 子进程，顺带带走同进程里其它源的调用。
+
+**二分结论**（每组 6 次，脚本见下）：
+
+| 操作 | 结果 |
+| --- | --- |
+| `JS_FreeContext` | 6/6 走完，**永远安全** |
+| `JS_RunGC` | 6 次崩 5 次 |
+| `JS_FreeRuntime` | 同样会崩（它内部也走这套释放路径） |
+| 释放 context 后再往同一 runtime 挂新 context | 崩（shape 是 runtime 级对象、跨 context 共享） |
+
+也就是说崩点是**这套 build 的 GC/释放机制本身**，不是「有环没回收」——所以
+「先 GC 再释放」的组合没有意义。它还是**堆布局阈值敏感**的：内存上限
+32/128/256/512MB 都不触发、默认 64MB 触发；少装一个限值或少数一步求值也不
+触发。调参数只是换个落点，不是修复。
+
+**缓解（当前实现）**：
+
+1. `JsRuntime.park()`：只做 `JS_FreeContext` + 封存，**不 GC、不释放 runtime**；
+   `dispose()` 对封存过的实例只丢引用。于是热路径上一次都不碰那两条危险调用。
+2. **不复用 runtime**：释放过 context 的 runtime 已被污染，再挂新 context 会撞
+   shape 断言。每个源一个全新 runtime。
+3. 代价是**内存**：实测释放 context 并不真把内存还回来，每个源约留 10MB。
+   所以由宿主**整进程换新**来归还——`SpiderHost` 每收掉
+   `kSourceTearDownsPerProcess`（默认 8）个源、且当前没有活实例时，发
+   `runtime.shutdown` 让子进程干净退出，再重新拉起。进程退出由 OS 回收内存，
+   代价只是下一次 `spider.create` 重付一次 drpy2 加载。
+
+**复现与验收脚本**（`runtimes/spider_js` 目录下）：
+
+```bash
+dart run tool/probe_real_drpy.dart              # 真实 drpy2 全链路 + 连续试源
+dart run tool/probe_real_drpy.dart cycles=10    # 连续 11 个源，顺带报 RSS
+dart run tool/repro_dispose.dart full 5         # 最小复现（旧行为：会崩）
+dart run tool/repro_dispose.dart full 5 lim=none  # 对照：换限值就不崩
+```
+
+`probe_real_drpy.dart` 是**进程内**驱动真 `RuntimeChild` + 真 QuickJS，只在分帧层
+拦一个点接管全部 HTTP（子进程协议是同步的，宿主回话必须发生在 `write` 回调里）。
+当前 13 项检查全过，连跑 10 次无 abort。
+
+**根治办法**同上一节：换一份非 assert 构建、或拿到匹配的 `quickjs.h` 自行构建。

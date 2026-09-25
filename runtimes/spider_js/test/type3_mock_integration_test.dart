@@ -457,6 +457,9 @@ class _RecordingFakeRuntime implements JsRuntime {
   bool init([String? dllPath]) => true;
 
   @override
+  void setBaseUrl(String? url) {}
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
