@@ -47,6 +47,10 @@ typedef JSValue (*PFN_JSCFunction)(JSContext*, JSValue, int, JSValue*);
 typedef JSValue (*PFN_JS_NewCFunction2)(
     JSContext*, PFN_JSCFunction, const char*, int, int, int);
 
+/* Microtask queue pump. JS_ExecutePendingJob returns 0 when the queue is
+ * empty, 1 when it ran a job, -1 when that job raised. */
+typedef int (*PFN_JS_ExecutePendingJob)(JSRuntime*, JSContext**);
+
 /* Resource limits. JSInterruptHandler returns non-zero to abort execution. */
 typedef int (*PFN_JSInterruptHandler)(JSRuntime*, void*);
 typedef void (*PFN_JS_SetInterruptHandler)(
@@ -69,6 +73,7 @@ static PFN_JS_GetGlobalObject pJS_GetGlobalObject = NULL;
 static PFN_JS_SetPropertyStr pJS_SetPropertyStr = NULL;
 static PFN_JS_NewStringLen pJS_NewStringLen = NULL;
 static PFN_JS_NewCFunction2 pJS_NewCFunction2 = NULL;
+static PFN_JS_ExecutePendingJob pJS_ExecutePendingJob = NULL;
 static PFN_JS_SetInterruptHandler pJS_SetInterruptHandler = NULL;
 static PFN_JS_SetMemoryLimit pJS_SetMemoryLimit = NULL;
 static PFN_JS_SetMaxStackSize pJS_SetMaxStackSize = NULL;
@@ -107,6 +112,14 @@ __declspec(dllexport) int qs_init(const char* dll_path) {
     pJS_SetPropertyStr = (PFN_JS_SetPropertyStr)GetProcAddress(hQuickJS, "JS_SetPropertyStr");
     pJS_NewStringLen = (PFN_JS_NewStringLen)GetProcAddress(hQuickJS, "JS_NewStringLen");
     pJS_NewCFunction2 = (PFN_JS_NewCFunction2)GetProcAddress(hQuickJS, "JS_NewCFunction2");
+
+    /* Optional: microtask pump. Without it a Promise never settles, so any
+     * script whose entry points are `async` returns an unresolved Promise and
+     * the caller sees an empty object. A build lacking it still evaluates
+     * synchronous scripts, so this stays out of the mandatory check; Dart asks
+     * qs_drain_jobs and reports the limitation instead of pretending. */
+    pJS_ExecutePendingJob =
+        (PFN_JS_ExecutePendingJob)GetProcAddress(hQuickJS, "JS_ExecutePendingJob");
 
     /* Optional: resource limits. A build without them still runs scripts, it
      * just cannot bound them -- qs_set_* report failure so Dart can say so
@@ -185,6 +198,50 @@ __declspec(dllexport) int qs_eval(
     /* JS_TAG_EXCEPTION = 6 */
     if (result.tag == 6) return -1;
     return 0;
+}
+
+/* qs_drain_jobs return codes. A non-negative value is the number of jobs run. */
+#define QS_DRAIN_FAILED (-1)      /* a job raised; exception left on ctx */
+#define QS_DRAIN_UNAVAILABLE (-2) /* this libquickjs exports no job API */
+
+/* Backstop only. A script can enqueue jobs forever (Promise.resolve().then(f)
+ * where f re-enqueues), and the real guard for that is the wall-clock deadline
+ * armed via qs_arm_deadline -- JS_ExecutePendingJob runs bytecode, so the
+ * interrupt handler fires inside a runaway job and turns it into a normal
+ * exception. The cap exists so a build without JS_SetInterruptHandler still
+ * terminates instead of spinning forever. */
+#define QS_DRAIN_MAX_JOBS 100000
+
+/**
+ * Run queued microtasks until the queue is empty.
+ *
+ * JS_Eval only runs the synchronous part of a script: a Promise callback is a
+ * *job* that sits on the runtime's queue until something pumps it, and nothing
+ * in the plain C API does that on its own. Without this pump `p.then(cb)`
+ * never calls cb and `async function f(){ return 1 }` never resolves, so
+ * `JSON.stringify(f())` yields "{}" and the caller silently sees no data.
+ *
+ * Returns the number of jobs executed, QS_DRAIN_FAILED when a job raised (the
+ * exception is left on ctx for the caller to claim, exactly like qs_eval), or
+ * QS_DRAIN_UNAVAILABLE when this libquickjs has no JS_ExecutePendingJob.
+ */
+__declspec(dllexport) int qs_drain_jobs(void* rt, void* ctx, int max_jobs) {
+    if (!rt || !ctx) return QS_DRAIN_UNAVAILABLE;
+    if (!pJS_ExecutePendingJob) return QS_DRAIN_UNAVAILABLE;
+    if (max_jobs <= 0) max_jobs = QS_DRAIN_MAX_JOBS;
+
+    JSRuntime* r = (JSRuntime*)rt;
+    int ran = 0;
+
+    while (ran < max_jobs) {
+        JSContext* job_ctx = NULL;
+        int rc = pJS_ExecutePendingJob(r, &job_ctx);
+        if (rc == 0) break;        /* queue drained */
+        if (rc < 0) return QS_DRAIN_FAILED;
+        ran++;
+    }
+
+    return ran;
 }
 
 /**

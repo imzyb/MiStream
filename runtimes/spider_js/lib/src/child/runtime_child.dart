@@ -350,8 +350,15 @@ class RuntimeChild {
     // 有 init 就调一次，没有也不算错——不是每个源都实现它。
     final config = params['config'];
     if (config != null) {
+      // 结果丢弃，但**必须走 async 包装**：`init` 里通常要按 ext 建规则、
+      // 发一次探测请求，写成 `async function init` 很常见，顶层 `await`
+      // 在脚本 eval 里是语法错误。
       runtime.eval(
-        'typeof init === "function" ? init(${jsonEncode(config)}) : null',
+        '(async function () { '
+        'if (typeof init !== "function") return null; '
+        'await init(${jsonEncode(config)}); '
+        'return null; '
+        '})()',
       );
     }
 
@@ -373,7 +380,10 @@ class RuntimeChild {
     final config = params['config'];
     final configArg = config != null ? jsonEncode(config) : 'null';
     final raw = instance.runtime.eval(
-      'typeof init === "function" ? JSON.stringify(init($configArg)) : null',
+      '(async function () { '
+      'if (typeof init !== "function") return null; '
+      'return JSON.stringify(await init($configArg) ?? null); '
+      '})()',
     );
     if (raw == null && instance.runtime.lastFailure != null) {
       final f = instance.runtime.lastFailure!;
@@ -448,18 +458,35 @@ class RuntimeChild {
   /// drpy 系脚本把首页拆成 `home()`（分类）和 `homeVod()`（推荐列表）两个
   /// 函数；宿主约定 `spider.home` 一次调用返回 `{class, list}`，所以这里把
   /// 两者合并。非 drpy 脚本（无 `homeVod`）退化为只调 `home()`。
+  ///
+  /// 两条纪律，都是为了「源看起来能用、其实返回空数据」这种最难查的故障：
+  ///
+  /// - **一律 `await`**。`async function home(){...}` 在源里很常见（本仓内置的
+  ///   `type0Script` 就是），不 await 拿到的是 Promise，`JSON.stringify` 会把它
+  ///   变成 `"{}"`——调用成功、结果为空、全程不报错。
+  /// - **字符串与对象都接受**。drpy 约定方法返回 JSON 字符串，但也有源直接返回
+  ///   对象。以前对 `home` 硬编码 `JSON.parse`、对其余硬编码 `JSON.stringify`，
+  ///   换个形态就当场抛 SyntaxError。
   static String _spiderCallExpr(String name, String args) {
     if (name == 'home') {
-      return 'typeof home === "function" '
-          '? JSON.stringify((typeof homeVod === "function" '
-          '  ? Object.assign({}, JSON.parse(home($args) || "{}"), '
-          '                    JSON.parse(homeVod($args) || "{}")) '
-          '  : JSON.parse(home($args) || "{}"))) '
-          ': null';
+      return '(async function () { '
+          'if (typeof home !== "function") return null; '
+          'var __o = {}; '
+          'var __h = await home($args); '
+          'if (__h) __o = Object.assign(__o, '
+          '  typeof __h === "string" ? JSON.parse(__h) : __h); '
+          'if (typeof homeVod === "function") { '
+          'var __v = await homeVod($args); '
+          'if (__v) __o = Object.assign(__o, '
+          '  typeof __v === "string" ? JSON.parse(__v) : __v); '
+          '} '
+          'return JSON.stringify(__o); '
+          '})()';
     }
-    return 'typeof $name === "function" '
-        '? JSON.stringify($name($args)) '
-        ': null';
+    return '(async function () { '
+        'if (typeof $name !== "function") return null; '
+        'return JSON.stringify(await $name($args)); '
+        '})()';
   }
 
   /// 探测脚本实现了哪些 Spider 方法，供宿主按能力位派发。

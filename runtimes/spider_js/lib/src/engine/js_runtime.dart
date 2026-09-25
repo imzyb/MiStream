@@ -218,9 +218,34 @@ class JsRuntime {
     final armed = timeoutMs > 0 && qjs.armDeadline(rt, timeoutMs);
 
     final qjs.EvalOutcome outcome;
+    // 异步结果没读回来时填原因，供下面 k=="a" 分支如实报错。
+    var asyncNote = '';
     try {
       final evalFn = flags == qjs.jsEvalTypeModule ? qjs.evalModule : qjs.eval;
-      outcome = evalFn(ctx, _wrap(code));
+      var step = evalFn(ctx, _wrap(code));
+
+      if (step.error == null) {
+        // JS_Eval 只跑脚本的同步部分。Promise 回调是挂在 runtime 队列上的
+        // microtask job，没有东西泵它就永远不执行——`p.then(cb)` 不调 cb，
+        // `async function f(){...}` 的返回值永远不落地。不泵的后果不是报错而是
+        // **静默拿到空值**，最难查，所以这一步是每次求值都要做的常规动作。
+        final drained = qjs.drainJobs(rt, ctx);
+        if (drained == qjs.drainJobsFailed) {
+          step = (
+            value: null,
+            error: qjs.takeException(ctx) ?? '微任务异常（无文本）',
+          );
+        } else if (step.value == asyncMarker) {
+          if (drained == qjs.drainJobsUnavailable) {
+            asyncNote = '本机 libquickjs 未导出 JS_ExecutePendingJob';
+          } else {
+            // 队列已排空，把暂存区里的结果读回来。仍是 pending 的话读回的
+            // 还是待定标记，由下面的 k=="a" 分支报错。
+            step = qjs.eval(ctx, _asyncReadback);
+          }
+        }
+      }
+      outcome = step;
     } finally {
       // 无论成败都要撤时限，否则下一次求值会带着一个已经过期的 deadline 起跑，
       // 第一条字节码就被掐掉。tripped 标记不受 disarm 影响，下面还要读。
@@ -250,6 +275,17 @@ class JsRuntime {
     }
 
     switch (decoded['k']) {
+      case 'a':
+        // Promise 排空微任务后仍未落定：要么本机缺 job 泵，要么脚本真的挂着
+        // （在等一个永远不会到来的事件）。如实报错——把空结果当成功交出去，
+        // 表现是源「能打开但没数据」，面板上什么都查不到。
+        _lastFailure = JsEvalError(
+          code: ErrorCode.scriptRuntimeError,
+          message: asyncNote.isEmpty
+              ? '脚本返回的 Promise 未落定（微任务排空后仍是 pending）'
+              : '脚本返回的 Promise 无法读取：$asyncNote',
+        );
+        return null;
       case 'e':
         _lastFailure = _classify(
           rt,
@@ -325,15 +361,55 @@ class JsRuntime {
   ///
   /// 内层用**间接 eval**（`(0,eval)`）而不是直接 eval，以保住全局作用域语义：
   /// 函数声明与 var 仍落在 globalThis 上，跨多次 [eval] 调用可见。
+  ///
+  /// 返回值是 thenable 时不能直接 `String()`：那样只会得到 `[object Promise]`。
+  /// 这种情况挂上 then/catch 把结果暂存到 `__qs_*` 全局，先回 [asyncMarker]；
+  /// 调用方排空 microtask 队列后再用 [_asyncReadback] 取回（见
+  /// [_evalWithTimeout]）。async 入口的源全靠这条路径，缺了它只会静默拿到空值。
   static String _wrap(String code) =>
       '(function(){ '
+      'var __g=globalThis; '
       'try{ '
       'var __v=(0,eval)(${jsonEncode(code)}); '
+      'if(__v!==null&&typeof __v==="object"&&typeof __v.then==="function"){ '
+      '__g.__qs_a=0;__g.__qs_u=false;__g.__qs_d=undefined;__g.__qs_s=""; '
+      '__v.then('
+      'function(__r){ '
+      'try{__g.__qs_a=1;__g.__qs_u=(__r===undefined);'
+      '__g.__qs_d=__g.__qs_u?undefined:String(__r);}'
+      'catch(__x){__g.__qs_a=2;__g.__qs_d=String(__x);__g.__qs_s="";}},'
+      'function(__e){__g.__qs_a=2;__g.__qs_d=String(__e);'
+      '__g.__qs_s=(__e&&__e.stack)?String(__e.stack):"";}); '
+      'return ${jsonEncode(asyncMarker)}; '
+      '} '
       'return JSON.stringify(__v===undefined?{k:"u"}:{k:"v",d:String(__v)}); '
       '}catch(e){ '
       'return JSON.stringify( '
       '{k:"e",d:String(e),s:(e&&e.stack)?String(e.stack):""}); '
       '} })()';
+
+  /// [_wrap] 用来表示「结果是 thenable，得先排空 microtask」的标记。
+  static const String asyncMarker = '{"k":"a"}';
+
+  /// 读回 [_wrap] 暂存的异步结果，并把暂存区复位。
+  ///
+  /// 只在 [_wrap] 回了 [asyncMarker] 时使用。**每个分支都必须返回字符串**：
+  /// 这段代码是裸 `qjs.eval`，不经过 [_wrap] 的 stringify，返回对象会被
+  /// `String()` 成 `"[object Object]"` 这种废值悄悄漏出去。
+  static const String _asyncReadback =
+      '(function(){ '
+      'var __g=globalThis; '
+      'var __a=__g.__qs_a; '
+      '__g.__qs_a=undefined; '
+      'if(__a===1){ '
+      'return JSON.stringify(__g.__qs_u?{k:"u"}:{k:"v",d:String(__g.__qs_d)}); '
+      '} '
+      'if(__a===2){ '
+      'return JSON.stringify({k:"e",d:String(__g.__qs_d),'
+      's:__g.__qs_s?String(__g.__qs_s):""}); '
+      '} '
+      'return JSON.stringify({k:"a"}); '
+      '})()';
 
   /// 记录初始化失败原因并归位状态，恒返回 false 以便 `return _fail(...)`。
   bool _fail(String message) {

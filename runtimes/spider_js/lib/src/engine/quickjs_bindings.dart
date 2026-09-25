@@ -161,6 +161,14 @@ typedef QsRegisterHostDart =
       Pointer<NativeFunction<HostReleaseC>> release,
     );
 
+/// `qs_drain_jobs(rt, ctx, max_jobs) -> int` 的 C 签名。
+typedef QsDrainJobsC =
+    Int32 Function(Pointer<Void> rt, Pointer<Void> ctx, Int32 maxJobs);
+
+/// [QsDrainJobsC] 的 Dart 签名。
+typedef QsDrainJobsDart =
+    int Function(Pointer<Void> rt, Pointer<Void> ctx, int maxJobs);
+
 /// `qs_set_memory_limit(rt, bytes) -> int` / `qs_set_max_stack_size` 的 C 签名。
 typedef QsSetLimitC = Int32 Function(Pointer<Void> rt, Uint64 bytes);
 
@@ -364,6 +372,33 @@ final QsDeadlineTrippedDart? _qsDeadlineTripped = _lookupOptional(
   ),
 );
 
+final QsDrainJobsDart? _qsDrainJobs = _lookupOptional(
+  () => _wrapperLib?.lookupFunction<QsDrainJobsC, QsDrainJobsDart>(
+    'qs_drain_jobs',
+  ),
+);
+
+/// [drainJobs] 的返回值：某个微任务抛了异常，异常挂在 ctx 上等人 claim。
+const int drainJobsFailed = -1;
+
+/// [drainJobs] 的返回值：这份 libquickjs 没导出 `JS_ExecutePendingJob`。
+const int drainJobsUnavailable = -2;
+
+/// wrapper 与 libquickjs 是否都支持排空微任务队列。
+///
+/// 为 false 时 Promise 永远不会 settle，`async` 入口的源会拿到空结果——
+/// 调用方必须据此如实报错，不能把空对象当成功交出去。
+bool get supportsJobPump => _qsDrainJobs != null;
+
+/// 排空 microtask 队列，返回实际执行的任务数。
+///
+/// `JS_Eval` 只跑脚本的同步部分：Promise 回调是挂在 runtime 队列上的 *job*，
+/// 没有东西泵它就永远不执行——`p.then(cb)` 不调 cb，`async function f(){...}`
+/// 的返回值永远不落地。返回 [drainJobsFailed] 时异常留在 ctx 上，用
+/// [takeException] 取；返回 [drainJobsUnavailable] 表示缺 `JS_ExecutePendingJob`。
+int drainJobs(Pointer<Void> rt, Pointer<Void> ctx, {int maxJobs = 0}) =>
+    _qsDrainJobs?.call(rt, ctx, maxJobs) ?? drainJobsUnavailable;
+
 /// wrapper 是否导出了时限相关符号。
 ///
 /// **测试必须先问这个再跑死循环**：旧的 wrapper DLL 没有 `qs_arm_deadline`，
@@ -500,7 +535,7 @@ EvalOutcome _evalWithFlags(Pointer<Void> ctx, String code, int flags) {
       // 先放掉 JS_EXCEPTION 哨兵本身——它不携带任何信息，真正的 Error 对象
       // 挂在 ctx 上，要单独 claim 回来。
       freeValue(ctx, resultTag.value, resultU.value);
-      return (value: null, error: _takeException(ctx) ?? 'JS 异常（无文本）');
+      return (value: null, error: takeException(ctx) ?? 'JS 异常（无文本）');
     }
 
     final text = _valueToString(ctx, resultTag.value, resultU.value);
@@ -532,7 +567,10 @@ String? _valueToString(Pointer<Void> ctx, int tag, int u) {
 }
 
 /// 取回并释放挂在 [ctx] 上的待处理异常，尽量拼上 `Error.stack`。
-String? _takeException(Pointer<Void> ctx) {
+///
+/// 公开出来是因为 [drainJobs] 也会留下异常：某个微任务抛错时它返回
+/// [drainJobsFailed]，异常同样只能从这里 claim。
+String? takeException(Pointer<Void> ctx) {
   final getExc = _qsGetException;
   final freeValue = _qsFreeValue;
   if (getExc == null || freeValue == null) return null;

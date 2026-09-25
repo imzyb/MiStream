@@ -411,9 +411,9 @@ void main() {
       RuntimeChild(codec: pipe.codec, createRuntime: (_) => fake).run();
 
       // 宿主约定：home 一次调用返回 {class, list}（drpy 把两者拆在
-      // home() 和 homeVod() 里）。
+      // home() 和 homeVod() 里，两个都要 await——源里 async 很常见）。
       expect(
-        fake.evaluated.any((c) => c.contains('JSON.parse(homeVod')),
+        fake.evaluated.any((c) => c.contains('await homeVod(')),
         isTrue,
       );
       final result = pipe.written.last['result']! as Map<String, Object?>;
@@ -424,7 +424,7 @@ void main() {
     test('spider.detail 带两个参数路由到 category, 一个参数路由到 detail', () {
       final fake = _FakeRuntime(
         evalHook: (code) {
-          if (code.contains('JSON.stringify(category')) {
+          if (code.contains('await category(')) {
             return '{"list":[]}';
           }
           return 'null';
@@ -464,8 +464,8 @@ void main() {
   group('宿主回调的重入与取消', () {
     /// 装一个会调 callHost 的宿主函数，模拟脚本里的 req。
     ///
-    /// 匹配条件要精确到 `JSON.stringify(search(`：`spider.create` 的能力探测
-    /// 表达式里也有 `typeof search`，按它匹配的话建实例时就会触发宿主调用。
+    /// 匹配条件要精确到 `await search(`：`spider.create` 的能力探测表达式里
+    /// 也有 `typeof search`，按它匹配的话建实例时就会触发宿主调用。
     RuntimeChild childCallingHost(
       _Pipe pipe,
       _FakeRuntime fake, {
@@ -473,7 +473,7 @@ void main() {
     }) {
       final child = RuntimeChild(codec: pipe.codec, createRuntime: (_) => fake);
       fake.evalHook = (code) {
-        if (code.contains('JSON.stringify(search(')) {
+        if (code.contains('await search(')) {
           onOutcome(
             child.callHost('host.fetch', <String, Object?>{'url': 'x'}),
           );
