@@ -6,10 +6,12 @@ import 'dart:async' show unawaited;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mistream/app/router.dart' show globalRouterAssembly;
+import 'package:mistream/app/theme_controller.dart';
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
 import 'package:mistream/features/settings/widgets/settings_section.dart';
 import 'package:mistream/features/settings/widgets/settings_tile.dart';
 import 'package:storage/storage.dart'; // ignore: layering -- 临时直连存储，M10后迁至 Application 层
+import 'package:theme_engine/theme_engine.dart';
 
 /// 全局装配实例，供设置页使用。
 AppAssembly? _globalAssembly;
@@ -21,13 +23,6 @@ AppAssembly? get globalAssembly => _globalAssembly;
 void setGlobalAssembly(AppAssembly? assembly) {
   _globalAssembly = assembly;
 }
-
-/// 主题模式设置项：存储 ThemeMode.index (0=system, 1=light, 2=dark)。
-final _themeModeKey = SettingKey<int>(
-  'theme_mode',
-  (json) => (json! as num).toInt(),
-  (value) => value,
-);
 
 /// 设置页面。
 class SettingsPage extends StatefulWidget {
@@ -44,13 +39,11 @@ class _SettingsPageState extends State<SettingsPage> {
   int _cacheSize = 0;
   int _historyCount = 0;
   int _favoriteCount = 0;
-  ThemeMode _themeMode = ThemeMode.system;
 
   @override
   void initState() {
     super.initState();
     unawaited(_loadData());
-    unawaited(_loadThemeMode());
   }
 
   Future<void> _loadData() async {
@@ -88,18 +81,6 @@ class _SettingsPageState extends State<SettingsPage> {
         setState(() => _loading = false);
         _showError('加载失败: $e');
       }
-    }
-  }
-
-  Future<void> _loadThemeMode() async {
-    final assembly = globalAssembly ?? globalRouterAssembly;
-    if (assembly == null) return;
-    final themeIndex = await assembly.repositories.settings.read(
-      _themeModeKey,
-      0,
-    );
-    if (mounted) {
-      setState(() => _themeMode = ThemeMode.values[themeIndex.clamp(0, 2)]);
     }
   }
 
@@ -289,47 +270,47 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _showThemeDialog() {
+    final controller = ThemeScope.of(context);
     showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('主题模式'),
-        content: RadioGroup<ThemeMode>(
-          groupValue: _themeMode,
-          onChanged: (v) => _setThemeMode(v!),
-          child: const Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              RadioListTile<ThemeMode>(
-                title: Text('跟随系统'),
-                value: ThemeMode.system,
-              ),
-              RadioListTile<ThemeMode>(
-                title: Text('亮色'),
-                value: ThemeMode.light,
-              ),
-              RadioListTile<ThemeMode>(
-                title: Text('深色'),
-                value: ThemeMode.dark,
-              ),
-            ],
+      builder: (dialogContext) => ValueListenableBuilder<AppThemeChoice>(
+        valueListenable: controller,
+        builder: (dialogContext, current, _) => AlertDialog(
+          title: const Text('外观'),
+          contentPadding: const EdgeInsets.fromLTRB(0, 12, 0, 0),
+          content: RadioGroup<AppThemeChoice>(
+            groupValue: current,
+            onChanged: (v) => unawaited(_setTheme(v!)),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final choice in AppThemeChoice.values)
+                  RadioListTile<AppThemeChoice>(
+                    title: Text(choice.label),
+                    subtitle: Text(choice.description),
+                    value: choice,
+                  ),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('关闭'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('关闭'),
-          ),
-        ],
       ),
     );
   }
 
-  Future<void> _setThemeMode(ThemeMode mode) async {
-    final assembly = globalAssembly ?? globalRouterAssembly;
-    if (assembly == null) return;
-    await assembly.repositories.settings.write(_themeModeKey, mode.index);
-    setState(() => _themeMode = mode);
-    if (mounted) Navigator.pop(context);
+  /// 切换外观。
+  ///
+  /// 只写控制器：它落库 + 通知树根重建主题。这里不再自己 setState，也不再
+  /// 关对话框——对话框里的单选项跟着控制器重建，用户能连点几下对比效果，
+  /// 看完自己关掉。
+  Future<void> _setTheme(AppThemeChoice choice) async {
+    await ThemeScope.of(context).set(choice);
   }
 
   @override
@@ -481,12 +462,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: '外观',
                   children: [
                     SettingsTile(
-                      title: '主题模式',
-                      subtitle: _themeMode == ThemeMode.system
-                          ? '跟随系统'
-                          : _themeMode == ThemeMode.light
-                          ? '亮色'
-                          : '深色',
+                      title: '外观',
+                      subtitle: ThemeScope.of(context).value.label,
                       leading: const Icon(Icons.palette_outlined),
                       onTap: _showThemeDialog,
                     ),

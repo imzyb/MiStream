@@ -626,6 +626,85 @@ TCP 都可用，于是把传输层换成 TCP：
 | 静态检查 | **297 文件 0 error / 0 warning / 0 info** |
 | 提交 | `b05663e`，已推送，远端引用复核一致 |
 
+## 本次会话（2026-09-26）：M9 主题引擎落地并接线到 UI
+
+用户指令「先做UI/UX」。UI/UX 批次 1–5 早在 2026-08-18 做完，本次挑的是
+**M9 出口标准里唯一能在当前环境完整自动验证**的那条，以及接线路上暴露的真
+缺陷。
+
+**一、令牌集补齐（对比度条目）**
+
+诊断发现两个问题：① 现有对比度测试只覆盖 3 对前景/背景，而出口标准要求
+「每对组合」；② 唯一接近边界的 `outline` 在四套主题上都是 1.18~1.72，远低于
+WCAG 1.4.11 要求的 3:1。
+
+处理：拆成两个职责单一的令牌——`outline`（装饰性分隔，注释里明确写出不受
+1.4.11 约束）、`outlineStrong`（输入框/按钮轮廓/选中态描边，须达 3:1）。同时
+按 `docs/09-UI规范.md` §2.1 把令牌集从 7 个补到 **10 个**，补上规范明确要求的
+`onPrimary` / `primaryText` / `surfaceVariant` / `onSurfaceMuted`。
+
+规范 §31 的「主色拆两个令牌」是关键：单一中亮度主色无法同时满足「白字压在它
+上面」和「它压在深色背景上」，强行用一个值必然有一边不达标。深色主题里这个
+窗口只剩 0.165~0.183 的亮度区间（几乎无解），改用 M3 深色主题的常规做法
+**亮填充 + 深墨**（indigo-400 配 slate-900 墨），两个约束都宽松到 5.98 / 4.90。
+
+断言矩阵集中到 `contrastRules()` 一处，内置主题测试与主题包校验共用——规范
+§257 要求主题包跑的是「与内置主题同一套断言」，各写一份必然在某次加令牌后
+悄悄分叉。
+
+**二、主题包加载（规范 §9 健壮性）**
+
+`ThemePackage.fromJson` → `applyTo` → `checkContrast` → 不达标回退。
+未知 `color.*` 键告警、非颜色键静默忽略、非法值告警、形状不对只告警不抛；
+不达标时回退内置主题并**说出具体是哪个令牌对**（用户要改主题包得先知道改哪）。
+
+**三、接线 + 修掉「切换主题要重启」（规范 §9 明文禁止）**
+
+原实现 `themeMode` 是 `main.dart` 一次性传给 `MiStreamApp` 的构造参数，设置页
+改主题只写库 + 自己的 `setState` → **必须重启才生效**，直接违反规范第 239 条。
+同时 `theme_engine` 这个包建了但**根本没接线**，四套主题（含 OLED）是死代码。
+
+处理：
+- `ThemeController extends ValueNotifier<AppThemeChoice>` + `ThemeScope`
+  （`InheritedNotifier`），`main.dart` 读库建控制器，树根 `ValueListenableBuilder`
+  监听 → 切换即时生效
+- 新增 `AppThemeChoice`（system/light/dark/oled）与 `resolveTheme`，纯 Dart
+  可测；**枚举前三位顺序即旧 `ThemeMode.index`，是兼容性契约，OLED 只能追加**
+- 新增 OLED 纯黑主题选项（规范 §237 要求内置，此前不可达）
+- 默认外观改为**深色**（规范 §237「深色（默认）」，原实现默认 system）
+- 设置项标题「主题模式」→「外观」，四项各带说明副标题；对话框不再选完即关，
+  用户可连点几下对比
+- `ColorScheme` 映射：`outline` 槽位放 `outlineStrong`（M3 拿它画输入框与按钮
+  轮廓，属于「识别组件所必需的视觉信息」），装饰性淡线退到 `outlineVariant`；
+  `primaryText` 没有对应槽位，挂在 `AppColors` ThemeExtension 上
+
+**四、顺带修掉 `main.dart` 的 9 个损坏字符**
+
+`git log` 定位到损坏由 `131b2a4`（应用壳提交）引入，`ef bf bd`（U+FFFD）替换
+掉了 桌/析/装 等字。注释已按 `1c7f1c2c` 的原文补回。
+（另：`runtimes/spider_js/lib/src/drpy/gbk_table.dart` 里 2149 个 U+FFFD 是
+**生成表里有意为之**的未映射码位占位，不是损坏，不要「修」。）
+
+**证据**
+
+| 验证 | 结果 |
+| --- | --- |
+| `packages/theme_engine` 3 个测试文件 | 全部 All tests passed（**29 例**，新增 21 例） |
+| 反向验证 | 把 dark 的 outlineStrong 退回 0xFF334155 → 断言如期变红 |
+| 静态检查（进程内分析器） | **302 文件 0 error / 0 warning / 0 info** |
+| `dart format --set-exit-if-changed` | 0 changed |
+| `flutter build windows` | **不可用**：flutter 工具自身撞管道缺陷（`git.exe`/`where.exe` 起不来），且本机未装 Visual Studio |
+
+**仍未做（M9 剩余）**
+
+- `mistream theme lint` 工具未实现（规范 §257 提到，主题作者本地自查用）
+- 令牌集只覆盖颜色：`spacing` / `radius` / `elevation` / `font` 与
+  `color.success/warning/error/overlay` 尚未建模
+- 主题包的**安装/启用**链路未接（当前只有解析与校验，没有从插件目录加载）
+- 生命周期状态机测试全覆盖、沙箱逃逸测试：仍缺
+- app 侧 `buildThemeData` 的令牌→角色映射**无法自动验证**（widget 测试不可用），
+  仅由分析器保证类型正确
+
 ## 下一步（按优先级，2026-09-19 续）
 
 1. **P0 仓库健康** ✅ **已定位并交付守卫脚本**；根因属 I: 盘文件系统语义，
@@ -637,7 +716,8 @@ TCP 都可用，于是把传输层换成 TCP：
    `jsonpath`/`pjfh`/`pj`/`pjfa`（提交 `0888440`，compat 用例 130 → **178**）。
    同表其余项建议继续对 `docs/05` §2.2 核账
 4. **P3 验收** 补齐出口标准中纯本地可验证的条目：M2 迁移回滚测试、
-   M9 主题对比度测试、M5 长跑稳定性
+   ~~M9 主题对比度测试~~ ✅ **已完成**（2026-09-26，四套主题 × 16 对组合
+   全量断言，主题包共用同一份矩阵）、M5 长跑稳定性
 5. **P4 债务** `libs/*.jar` 改 `tools/jvm_dist` 按需拉取、契约/长跑测试、
    播放页/首页之外的页面去 `globalRouterAssembly`（播放页与首页已完成注入化）
 6. **P5 阻塞** 网络方案（代理 / 可访问机器）——所有「真实源」类出口标准都卡在此

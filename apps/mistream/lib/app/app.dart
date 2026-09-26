@@ -3,40 +3,10 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:mistream/app/router.dart';
+import 'package:mistream/app/theme.dart';
+import 'package:mistream/app/theme_controller.dart';
 import 'package:mistream/application/app_assembly.dart';
-
-/// 品牌种子色。
-const _seedColor = Color(0xFF4F46E5);
-
-/// 应用主题。
-///
-/// 明暗两套都从同一 [seedColor] 派生，保证组件色（卡片、导航、芯片）成套；
-/// 只覆盖需要与默认 M3 拉开差异的地方，其余交给 `ColorScheme.fromSeed`
-/// 的派生色。
-ThemeData _buildTheme(Brightness brightness) {
-  final scheme = ColorScheme.fromSeed(
-    seedColor: _seedColor,
-    brightness: brightness,
-  );
-  return ThemeData(useMaterial3: true, colorScheme: scheme).copyWith(
-    scaffoldBackgroundColor: scheme.surface,
-    appBarTheme: AppBarTheme(
-      backgroundColor: scheme.surface,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      scrolledUnderElevation: 0.5,
-      centerTitle: false,
-    ),
-    cardTheme: CardThemeData(
-      elevation: 0,
-      color: scheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-    ),
-    navigationRailTheme: NavigationRailThemeData(
-      backgroundColor: scheme.surfaceContainerLow,
-    ),
-  );
-}
+import 'package:theme_engine/theme_engine.dart';
 
 /// 组合根下发给整个 widget 树。
 ///
@@ -73,11 +43,12 @@ class MiStreamApp extends StatefulWidget {
   /// 以已装配好的 [assembly] 构造。
   ///
   /// [onboardingDone] 决定首次落在引导页还是首页，由 `main.dart` 在建库后读出。
-  /// [themeMode] 决定应用主题模式（system/light/dark）。
+  /// [themeController] 持有当前外观；改它会立刻重建整棵树的主题，所以它在
+  /// `main` 里建好一路传进来，而不是让某个页面自己持有一份。
   const MiStreamApp({
     required this.assembly,
     required this.onboardingDone,
-    required this.themeMode,
+    required this.themeController,
     super.key,
   });
 
@@ -87,8 +58,8 @@ class MiStreamApp extends StatefulWidget {
   /// 是否已完成首次引导。
   final bool onboardingDone;
 
-  /// 主题模式。
-  final ThemeMode themeMode;
+  /// 外观选择。
+  final ThemeController themeController;
 
   @override
   State<MiStreamApp> createState() => _MiStreamAppState();
@@ -116,15 +87,29 @@ class _MiStreamAppState extends State<MiStreamApp> {
   Widget build(BuildContext context) {
     return AppScope(
       assembly: widget.assembly,
-      child: OnboardingScope(
-        done: _onboardingDone,
-        child: MaterialApp.router(
-          title: 'MiStream',
-          debugShowCheckedModeBanner: false,
-          themeMode: widget.themeMode,
-          theme: _buildTheme(Brightness.light),
-          darkTheme: _buildTheme(Brightness.dark),
-          routerConfig: _router.router,
+      child: ThemeScope(
+        notifier: widget.themeController,
+        child: OnboardingScope(
+          done: _onboardingDone,
+          // 外观一变就重建 MaterialApp：这就是「切换即时生效，无需重启」。
+          // 监听放在树根而不是让设置页自己 setState——主题属于整棵树。
+          child: ValueListenableBuilder<AppThemeChoice>(
+            valueListenable: widget.themeController,
+            builder: (context, choice, _) => MaterialApp.router(
+              title: 'MiStream',
+              debugShowCheckedModeBanner: false,
+              themeMode: toThemeMode(choice),
+              // 明暗各解析一次：选 light 时两套都是浅色，选 oled 时两套都是
+              // OLED，MaterialApp 那边不必再 branch。
+              theme: buildThemeData(
+                resolveTheme(choice, platformIsDark: false),
+              ),
+              darkTheme: buildThemeData(
+                resolveTheme(choice, platformIsDark: true),
+              ),
+              routerConfig: _router.router,
+            ),
+          ),
         ),
       ),
     );

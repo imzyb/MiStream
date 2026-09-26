@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mistream/app/app.dart';
+import 'package:mistream/app/theme_controller.dart';
 import 'package:mistream/application/app_assembly.dart';
 import 'package:mistream/features/common/common.dart';
 import 'package:storage/storage.dart';
@@ -14,6 +15,10 @@ AppAssembly _testAssembly() {
   return AppAssembly(db, Repositories(db));
 }
 
+/// 外观控制器：从空库读，拿到规范默认值。
+Future<ThemeController> _testThemeController(AppAssembly assembly) =>
+    ThemeController.load(assembly.repositories.settings);
+
 void main() {
   testWidgets('引导已完成时启动显示首页', (tester) async {
     final assembly = _testAssembly();
@@ -23,7 +28,7 @@ void main() {
       MiStreamApp(
         assembly: assembly,
         onboardingDone: true,
-        themeMode: ThemeMode.system,
+        themeController: await _testThemeController(assembly),
       ),
     );
     await tester.pump();
@@ -50,7 +55,7 @@ void main() {
       MiStreamApp(
         assembly: assembly,
         onboardingDone: true,
-        themeMode: ThemeMode.system,
+        themeController: await _testThemeController(assembly),
       ),
     );
     await tester.pump();
@@ -90,7 +95,7 @@ void main() {
       MiStreamApp(
         assembly: assembly,
         onboardingDone: false,
-        themeMode: ThemeMode.system,
+        themeController: await _testThemeController(assembly),
       ),
     );
     await tester.pumpAndSettle();

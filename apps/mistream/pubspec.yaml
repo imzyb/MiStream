@@ -48,6 +48,9 @@ dependencies:
     path: ../../packages/spider_host
   storage:
     path: ../../packages/storage
+  # 设计令牌、外观选择解析、主题包加载与对比度兜底（纯 Dart，见 docs/09-UI规范.md）。
+  theme_engine:
+    path: ../../packages/theme_engine
 
 dev_dependencies:
   flutter_test:
