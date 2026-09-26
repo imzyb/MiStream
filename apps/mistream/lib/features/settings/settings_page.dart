@@ -270,7 +270,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _showThemeDialog() {
-    final controller = ThemeScope.of(context);
+    final controller = ThemeScope.read(context);
     showDialog<void>(
       context: context,
       builder: (dialogContext) => ValueListenableBuilder<AppThemeChoice>(
@@ -310,7 +310,7 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 关对话框——对话框里的单选项跟着控制器重建，用户能连点几下对比效果，
   /// 看完自己关掉。
   Future<void> _setTheme(AppThemeChoice choice) async {
-    await ThemeScope.of(context).set(choice);
+    await ThemeScope.read(context).set(choice);
   }
 
   @override

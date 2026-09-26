@@ -49,12 +49,23 @@ class ThemeController extends ValueNotifier<AppThemeChoice> {
 class ThemeScope extends InheritedNotifier<ThemeController> {
   const ThemeScope({required super.notifier, required super.child, super.key});
 
-  /// 取最近的 [ThemeController]，并注册依赖。
+  /// 取最近的 [ThemeController]，并注册依赖。**只在 `build` 里用**。
   ///
   /// 这里用 `dependOn...` 而不是 `getInheritedWidgetOfExactType`：设置页要
-  /// 跟着外观变化重建（选中项要跟着变），不像装配那样取到就不变了。
+  /// 跟着外观变化重建（副标题上的当前外观要跟着变），不像 [AppScope] 那样
+  /// 取到就不变了。
   static ThemeController of(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<ThemeScope>();
+    assert(scope?.notifier != null, '找不到 ThemeScope，检查 MiStreamApp 是否在树上');
+    return scope!.notifier!;
+  }
+
+  /// 取 [ThemeController] 但**不**注册依赖。**事件回调里用这个**。
+  ///
+  /// 回调不会因为依赖变化重跑，注册依赖没有意义；而且 build 之外注册会被
+  /// 框架警告。切换外观时顺手取一下控制器，用 [read] 即可。
+  static ThemeController read(BuildContext context) {
+    final scope = context.getInheritedWidgetOfExactType<ThemeScope>();
     assert(scope?.notifier != null, '找不到 ThemeScope，检查 MiStreamApp 是否在树上');
     return scope!.notifier!;
   }
