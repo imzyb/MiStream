@@ -173,4 +173,105 @@ void main() {
       expect(result.warnings.join(), contains('onPrimary/primary'));
     });
   });
+
+  group('尺度与字体令牌（规范 §2.2 / §2.3）', () {
+    test('解析 spacing / radius / elevation / font', () {
+      final pkg = ThemePackage.fromJson(
+        _pkg({
+          'spacing.unit': 8,
+          'radius.md': 12,
+          'radius.lg': 20,
+          'elevation.card': 2,
+          'font.scale': 1.25,
+          'font.family': 'Inter',
+        }),
+      );
+      expect(pkg.numbers['unit'], 8);
+      expect(pkg.numbers['radiusMd'], 12);
+      expect(pkg.numbers['radiusLg'], 20);
+      expect(pkg.numbers['elevationCard'], 2);
+      expect(pkg.numbers['scale'], 1.25);
+      expect(pkg.strings['family'], 'Inter');
+    });
+
+    /// 06-插件系统.md §9 的示例里写的是 `radius.card`，规范 §2.2 里没这个名字。
+    /// 示例是主题作者最先照抄的东西，必须认。
+    test('radius.card 映射到 radius.md', () {
+      final merged = ThemePackage.fromJson(
+        _pkg({'radius.card': 12}),
+      ).applyTo(AppTheme.dark);
+      expect(merged.scale.radiusMd, 12);
+    });
+
+    test('数值可以写成字符串', () {
+      final pkg = ThemePackage.fromJson(_pkg({'spacing.unit': '6'}));
+      expect(pkg.numbers['unit'], 6);
+    });
+
+    test('非法数值告警并忽略', () {
+      final warns = <String>[];
+      final pkg = ThemePackage.fromJson(
+        _pkg({'radius.md': 'round', 'font.scale': true}),
+        onWarn: warns.add,
+      );
+      expect(pkg.numbers, isEmpty);
+      expect(warns.any((w) => w.contains('radius.md')), isTrue);
+      expect(warns.any((w) => w.contains('font.scale')), isTrue);
+    });
+
+    test('font.family 非字符串或空串告警', () {
+      final warns = <String>[];
+      final pkg = ThemePackage.fromJson(
+        _pkg({'font.family': '   '}),
+        onWarn: warns.add,
+      );
+      expect(pkg.strings, isEmpty);
+      expect(warns.single, contains('font.family'));
+    });
+
+    test('未覆盖的尺度令牌取基准值', () {
+      final merged = ThemePackage.fromJson(
+        _pkg({'spacing.unit': 8}),
+      ).applyTo(AppTheme.dark);
+      expect(merged.scale.unit, 8);
+      expect(merged.scale.radiusLg, AppTheme.dark.scale.radiusLg);
+      expect(merged.typography.scale, AppTheme.dark.typography.scale);
+    });
+
+    /// 尺度/字体错了不会让界面不可读，所以夹住/按基准用即可，**不该整包回退**
+    /// ——用户明明只想改一个圆角。
+    test('尺度问题只告警，不触发回退', () {
+      final result = loadThemePackage(
+        _pkg({'radius.md': 40, 'radius.lg': 8}, brightness: 'dark'),
+        base: AppTheme.dark,
+      );
+      expect(result.fellBack, isFalse);
+      expect(result.warnings.join(), contains('圆角必须单调递增'));
+    });
+
+    test('font.scale 越界会被告警，生效值被夹住', () {
+      final result = loadThemePackage(
+        _pkg({'font.scale': 3}, brightness: 'dark'),
+        base: AppTheme.dark,
+      );
+      expect(result.fellBack, isFalse);
+      expect(result.theme.typography.effectiveScale, DesignTypography.maxScale);
+      expect(result.warnings.join(), contains('超出规范区间'));
+    });
+
+    test('未落地名字空间（动效）静默忽略，不刷告警', () {
+      final warns = <String>[];
+      final pkg = ThemePackage.fromJson(
+        _pkg({
+          'motion.hover': '120ms',
+          'motion.page': 240,
+          'assets.background': 'bg.jpg',
+        }),
+        onWarn: warns.add,
+      );
+      expect(pkg.tokens, isEmpty);
+      expect(pkg.numbers, isEmpty);
+      expect(warns, isEmpty, reason: '未落地的名字空间不该逐个告警');
+    });
+  });
 }

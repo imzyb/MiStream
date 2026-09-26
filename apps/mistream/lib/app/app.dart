@@ -107,6 +107,7 @@ class _MiStreamAppState extends State<MiStreamApp> {
               darkTheme: buildThemeData(
                 resolveTheme(choice, platformIsDark: true),
               ),
+              builder: _applyFontScale,
               routerConfig: _router.router,
             ),
           ),
@@ -114,4 +115,30 @@ class _MiStreamAppState extends State<MiStreamApp> {
       ),
     );
   }
+}
+
+/// 把主题的 `font.scale` 叠在系统字号缩放之上。
+///
+/// 内置主题的 `font.scale` 都是 1.0，此时**原样返回、不碰 MediaQuery**——系统
+/// 字号缩放是用户自己设的无障碍选项，没理由为了一次恒等变换就把它替换掉。
+/// 只有主题包真的调过字号才介入。
+///
+/// 已知代价：`TextScaler.linear` 会丢掉**非线性**的系统缩放曲线（Android 14+
+/// 按字号分段的那个）。桌面端用的是线性缩放，不受影响。
+Widget _applyFontScale(BuildContext context, Widget? child) {
+  final ourScale = AppTokens.of(context).typography.effectiveScale;
+  if (child == null || ourScale == 1) {
+    return child ?? const SizedBox.shrink();
+  }
+
+  final system = MediaQuery.textScalerOf(context);
+  // 拿正文档做探针：非线性缩放曲线本来就是围绕正文字号定义的。
+  final probe = DesignTypography.standard.body.size;
+  final systemFactor = system.scale(probe) / probe;
+  return MediaQuery(
+    data: MediaQuery.of(context).copyWith(
+      textScaler: TextScaler.linear(systemFactor * ourScale),
+    ),
+    child: child,
+  );
 }

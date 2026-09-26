@@ -705,6 +705,61 @@ WCAG 1.4.11 要求的 3:1。
 - app 侧 `buildThemeData` 的令牌→角色映射**无法自动验证**（widget 测试不可用），
   仅由分析器保证类型正确
 
+## 本次会话（2026-09-26 续）：尺度与字体令牌落地
+
+接着上一节，把规范 §2.2 / §2.3 从「只有一张表」变成有实现、有校验、能被主题包
+覆盖的令牌。
+
+**一、`theme_engine` 新增 `scale.dart`**
+
+- `DesignScale`：`spacing.unit`(4)、`radius.sm/md/lg/full`(4/8/16/9999)、
+  `elevation.card/dialog/overlay`(1/8/16)，附 `spacing(steps)` 换算
+- `DesignTypography`：字号阶梯 display 28/600 → caption 12/400、字体族回退链、
+  `font.scale`
+- `validateScale` / `validateTypography` / `validateTheme`：圆角与投影必须单调
+  递增、字号阶梯必须逐级递减、字重须是 100~900 的百位整数
+- `font.scale` 按规范 §231 夹进 0.8×–1.5×（`effectiveScale`），越界告警但不
+  算致命
+
+**二、主题包能覆盖它们**
+
+`spacing.unit` / `radius.*` / `elevation.*` / `font.family` / `font.scale` 全部
+可覆盖，数值接受数字或字符串。另外认了 **`radius.card`** —— 这个名字只出现在
+`06-插件系统.md` §9 的示例里，规范 §2.2 并没有它，但示例是主题作者最先照抄的
+东西，映射到 `radius.md`。
+
+**尺度/字体的问题不触发回退**，只告警后按基准值用。理由：圆角顺序反了不会让
+界面不可读，而整包回退会把用户真正想改的那个圆角也丢掉——用户明明只想改一个
+圆角，却被告知「主题包不可用」，那是更差的结果。
+
+**三、接进 app**
+
+- `AppColors` 扩成 `AppTokens`（颜色 + 尺度 + 字体），`AppScale`/`AppType`
+  合并进来，少一层扩展
+- `ThemeData` 的 `fontFamilyFallback` 按规范回退链填上——Flutter 默认字体在
+  Windows 上不含中文字形
+- 字号阶梯落到 M3 槽位：display→`headlineMedium`、title→`titleLarge`、
+  subtitle→`titleMedium`、body→`bodyMedium`、caption→`bodySmall`
+- 卡片圆角改用 `radius.md`（8，此前硬编码 12）、对话框用 `radius.lg`；
+  关掉 M3 的高度着色，它在卡片底色上再叠一层主色，会改掉断言过的对比度
+- `font.scale` 通过 `MaterialApp.builder` 叠在系统字号缩放之上。**内置主题
+  都是 1.0，此时不碰 MediaQuery** —— 系统字号缩放是用户设的无障碍选项，
+  没理由为一次恒等变换把它替换掉
+
+**证据**
+
+| 验证 | 结果 |
+| --- | --- |
+| `packages/theme_engine` 4 个测试文件 | 全部 All tests passed（**54 例**，本轮新增 25 例） |
+| 静态检查（进程内分析器） | **304 文件 0 error / 0 warning / 0 info** |
+| `dart format --set-exit-if-changed` | 0 changed |
+
+**偏差（已知且写进规范了）**
+
+- 字体**没有**校验是否真的存在——Flutter 不提供字体枚举，做不了。现在的做法
+  是优先级回退链，缺字时由系统挑下一个
+- §2.4 动效令牌尚未落地，主题包里的 `motion.*` 被静默忽略
+
 ## 下一步（按优先级，2026-09-19 续）
 
 1. **P0 仓库健康** ✅ **已定位并交付守卫脚本**；根因属 I: 盘文件系统语义，

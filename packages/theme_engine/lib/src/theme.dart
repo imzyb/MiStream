@@ -4,6 +4,7 @@ library;
 import 'package:meta/meta.dart';
 
 import 'contrast.dart';
+import 'scale.dart';
 
 @immutable
 class AppTheme {
@@ -12,12 +13,20 @@ class AppTheme {
     required this.name,
     required this.isDark,
     required this.tokens,
+    this.scale = DesignScale.standard,
+    this.typography = DesignTypography.standard,
   });
 
   final String id;
   final String name;
   final bool isDark;
   final DesignTokens tokens;
+
+  /// 间距、圆角、投影。
+  final DesignScale scale;
+
+  /// 字体族、字号阶梯、字号缩放。
+  final DesignTypography typography;
 
   /// 浅色。
   ///
@@ -275,3 +284,13 @@ List<String> checkContrast(DesignTokens t) {
   }
   return fails;
 }
+
+/// 主题的尺度与字体令牌校验，返回问题清单（空 = 通过）。
+///
+/// 颜色走 [checkContrast]（不达标就整个拒掉主题包），尺度/字体走这里——
+/// 它们的问题（圆角顺序反了、字号阶梯乱了）**不致命**，夹住/回退即可，
+/// 所以只告警不拒绝。
+List<String> validateTheme(AppTheme theme) => [
+  ...validateScale(theme.scale),
+  ...validateTypography(theme.typography),
+];
