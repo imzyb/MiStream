@@ -18,67 +18,31 @@ void main() {
   });
 
   group('AppTheme builtIns', () {
-    /// 四套主题 × 全部文本前景/背景组合，逐一断言 4.5:1。
-    ///
-    /// 交叉对（onBackground 落在 surface 上、onSurface 落在 background 上）
-    /// 不是凑数：卡片嵌在页面里、页面文字也常被搬到卡片上，实际都会出现。
-    test('每对文本前景/背景组合达 WCAG AA 4.5:1', () {
+    /// 四套内置主题跑同一份 [checkContrast]——主题包加载用的也是它，所以
+    /// 这里过了，主题包的兜底逻辑就不必再单独验一遍矩阵本身。
+    test('对比度全部达标（正文 4.5 / UI 组件 3.0）', () {
       for (final theme in AppTheme.builtIns) {
-        final t = theme.tokens;
-        final fails = ContrastChecker.checkPairs([
-          ('onBackground/background', t.onBackground, t.background),
-          ('onSurface/surface', t.onSurface, t.surface),
-          ('onBackground/surface', t.onBackground, t.surface),
-          ('onSurface/background', t.onSurface, t.background),
-          ('primary/background', t.primary, t.background),
-          ('primary/surface', t.primary, t.surface),
-        ]);
         expect(
-          fails,
+          checkContrast(theme.tokens),
           isEmpty,
-          reason: '${theme.id} 有文本组合未达 AA 4.5:1: $fails',
+          reason: '${theme.id} 有组合不达标',
         );
       }
     });
 
-    /// WCAG 1.4.11：识别组件所必需的视觉信息（输入框轮廓、按钮边框、
-    /// 选中态描边）需 3:1。outlineStrong 就是为此存在的令牌。
-    test('outlineStrong 达 WCAG 1.4.11 非文本 3:1', () {
+    /// 防止「加了新前景令牌却没进断言矩阵」的假绿：只要 DesignTokens 里多出
+    /// 一个没被任何规则用到的色值，这里就红。
+    test('每个颜色令牌都进了断言矩阵', () {
       for (final theme in AppTheme.builtIns) {
-        final t = theme.tokens;
-        final fails = ContrastChecker.checkPairs(
-          [
-            ('outlineStrong/background', t.outlineStrong, t.background),
-            ('outlineStrong/surface', t.outlineStrong, t.surface),
-          ],
-          largeText: true,
-        );
-        expect(
-          fails,
-          isEmpty,
-          reason: '${theme.id} 的 outlineStrong 未达 3:1: $fails',
-        );
-      }
-    });
-
-    /// 这条是给上面两条「兜底」的：如果有人往 DesignTokens 加了新前景色
-    /// 却忘了在测试里登记，上面两条仍然全绿。这里把令牌表盘一遍，确保
-    /// toMap 里出现的每个前景都进了断言。
-    test('前景令牌全部被对比度测试覆盖', () {
-      const covered = {
-        'onBackground',
-        'onSurface',
-        'primary',
-        'outlineStrong',
-      };
-      const all = {'onBackground', 'onSurface', 'primary', 'outlineStrong'};
-      expect(covered, all);
-      for (final theme in AppTheme.builtIns) {
-        for (final fg in covered) {
+        final used = <int>{
+          for (final r in contrastRules(theme.tokens)) ...[r.fg, r.bg],
+        };
+        for (final entry in theme.tokens.toMap().entries) {
+          if (entry.key == 'outline') continue; // 装饰性，刻意不设下限
           expect(
-            theme.tokens.toMap(),
-            contains(fg),
-            reason: '${theme.id} 缺少令牌 $fg',
+            used,
+            contains(entry.value),
+            reason: '${theme.id} 的 ${entry.key} 没进对比度矩阵',
           );
         }
       }
@@ -94,20 +58,39 @@ void main() {
     });
 
     test('toMap 序列化全部令牌', () {
-      final m = AppTheme.light.tokens.toMap();
       expect(
-        m.keys,
+        AppTheme.light.tokens.toMap().keys,
         unorderedEquals(<String>{
           'primary',
+          'onPrimary',
+          'primaryText',
           'background',
           'surface',
-          'onBackground',
+          'surfaceVariant',
           'onSurface',
+          'onSurfaceMuted',
           'outline',
           'outlineStrong',
         }),
       );
-      expect(m['outlineStrong'], isNot(m['outline']));
+    });
+
+    test('明度阶梯方向一致：页面 → 卡片 → 次级面板', () {
+      // 三个底的亮度必须单调，否则「卡片浮在页面上」这件事实会被破坏。
+      // OLED 三级差极小（0 → 0.003 → 0.007），方向仍然一致。
+      for (final theme in AppTheme.builtIns) {
+        final t = theme.tokens;
+        final bg = ContrastChecker.luminance(t.background);
+        final sf = ContrastChecker.luminance(t.surface);
+        final sv = ContrastChecker.luminance(t.surfaceVariant);
+        if (theme.isDark) {
+          expect(bg, lessThan(sf), reason: '${theme.id} 页面应比卡片暗');
+          expect(sf, lessThan(sv), reason: '${theme.id} 卡片应比次级面板暗');
+        } else {
+          expect(sf, greaterThan(bg), reason: '${theme.id} 卡片应比页面亮');
+          expect(sv, lessThan(sf), reason: '${theme.id} 次级面板应比卡片暗');
+        }
+      }
     });
   });
 }
