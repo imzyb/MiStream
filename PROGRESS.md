@@ -85,7 +85,15 @@
 - [x] 关闭重开续播 → `apps/mistream/test/application/resume_policy_test.dart`（15 用例，覆盖不足 5s / 距片尾 30s 两条边界的含等于与不含等于、时长为零、无历史）+ `apps/mistream/test/features/player/player_resume_e2e_test.dart`（5 用例，驱动真实播放页验证 seek 到历史位置、三条不续播边界、进度写回历史）
       实现：`application/resume_policy.dart`（纯决策，可在 dart test 下跑）+ `router.dart` 播放页注入装配与引擎
 - [x] 四态齐全 → `features/common/widgets/state_views.dart`
-- [ ] 无 P0 崩溃 / 源崩溃不影响主进程 — 进程隔离已就位（type=3 走子进程、嗅探走 isolate），缺长跑
+- [ ] 无 P0 崩溃 / 源崩溃不影响主进程 — 进程隔离已就位（type=3 走子进程、嗅探走 isolate）。
+      **2026-09-28：长跑工装已落地** —— `packages/spider_host/test/host_soak_test.dart`
+      用**真子进程**反复 SIGKILL，断言「每轮崩溃恰好换一个新进程、被换掉的老进程真的
+      退出、主进程存活、宿主 RSS 不无界增长」，并覆盖「持续崩溃 → 退避重启 → 熔断 →
+      `reset` 恢复」。规模可放大：`MISTREAM_SOAK_CYCLES=N` 定轮数、
+      `MISTREAM_SOAK_SECONDS=N` 定时长（2 小时长跑 =
+      `MISTREAM_SOAK_SECONDS=7200 dart run test/host_soak_test.dart`，须 `cd` 进包目录）。
+      **仍未勾**：本机只跑到 7 分钟级（420s / **463 轮**，RSS 增长 10.1MB 且曲线
+      **收敛**、非按轮线性），ROADMAP 要求的 2 小时真机长跑未做
 - [x] 集成测试（mock 源）端到端 → `runtimes/spider_js/test/type3_mock_integration_test.dart`（init→home→detail→play 全链路）+ `apps/mistream/test/m5_mock_e2e_test.dart`（配置导入→落库→搜索→详情→播放地址）
 
 ## M6/M7/M8/M9 · 包已建，验收未做 🟡
@@ -954,6 +962,68 @@ P1 的修法是把环境值显式收参（`resolveJavaPath({javaHome, pathValue}
 （`PluginManager` 只有 install/enable/disable/uninstall/disposeAll）。因此
 「生命周期状态机测试全覆盖」只算**覆盖了现有 4 态的全部迁移**，升级/回滚补齐前
 不能勾。
+
+## 本次会话（2026-09-28 续）：M5 长跑工装
+
+做 M5 出口标准最后一条「无 P0 崩溃；源崩溃 100% 不影响主进程」。已有测试各自差
+一截：`spider_host_test.dart` 用**假进程**（状态机能验，验不到真进程生命周期），
+`real_process_host_test.dart` 用真进程但只走正常路径。补的是中间的空白。
+
+### 一、工装 `packages/spider_host/test/host_soak_test.dart`
+
+用真子进程（`support/tcp_process_launcher.dart` 的 TCP 回连）反复 SIGKILL：
+
+- 每轮崩溃**恰好**换一个新进程（多了 = 重复建宿主，少了 = 崩溃没被发现）
+- 被换下的子进程真的退出了（每轮就地回收，不留孤儿）
+- 主进程存活（测试能跑完本身就是证据）
+- 宿主 RSS 不无界增长
+- 持续崩溃 → 退避重启 → 熔断 → `call` 返回 `runtimeNotReady`（不抛不挂）
+  → `reset` 恢复；`dispose` 后不留孤儿
+
+规模用环境变量放大（默认 8 轮约 14 秒）：`MISTREAM_SOAK_CYCLES=N` 定轮数、
+`MISTREAM_SOAK_SECONDS=N` 定时长。**2 小时长跑**：
+
+```bash
+cd packages/spider_host
+MISTREAM_SOAK_SECONDS=7200 dart run test/host_soak_test.dart
+```
+
+新增桩 `test/support/rpc_child_crash.dart`：**回连成功后再崩**。必须是「连上再崩」
+而不是「起不来」—— `SpiderHost.start()` 的 catch 分支不挂 `_scheduleRestart`
+（源码注释写明「不会自愈」），起不来的桩驱动不了退避重启与熔断那条链。
+
+### 二、踩到的两个坑（都已修，都写进 SKILL.md）
+
+**① `package:test` 默认单测只给 30 秒。** 第一次跑 150 秒配置直接失败，报
+`TimeoutException after 0:00:30`，**看起来像宿主挂了，实际是测试没放宽超时**。
+8 轮的短跑约 14 秒刚好躲过默认值，所以这个坑要跑到几十轮才暴露。已按配置算超时
+预算（`soakTimeout`，留 120s 余量）。
+
+**② RSS 测量被测试自己污染。** 第一版把每个 `LaunchedChild` 都留在列表里，而
+`ProcessInfo.currentRss` 量的是**本测试进程** —— 686 轮测出增长 48.4MB，且三点
+采样近似线性，差点据此判定「宿主每轮泄漏约 70KB、2 小时会 OOM」。改成每轮就地
+回收并摘掉引用后重测，增长曲线是**收敛**的：
+
+| 轮数 | 100 | 150 | 200 | 250 | 300 | 350 | 400 | 450 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| RSS | 273.4 | 280.3 | 281.1 | 281.7 | 281.7 | 281.5 | 281.9 | 282.5 |
+
+前 150 轮爬升到 281MB 后平台化，之后 300 轮只动 2.2MB 且上下抖动（GC 锯齿）。
+**结论：宿主没有按崩溃轮数泄漏。** 判据写进 SKILL.md —— 增长随轮数线性 = 真泄漏；
+收敛或抖动 = GC 滞后；单次绝对值不作数。
+
+### 三、验证
+
+| 项 | 结果 |
+| --- | --- |
+| 长跑实跑 | 223 轮 / 150s、463 轮 / 420s 全绿；主进程始终存活 |
+| 反向验证 | 摘掉重启调度 → 2 例红；熔断阈值差一 → 1 例红；dispose 不杀进程 → 1 例红 |
+| `analyze_inproc` | 315 文件 0 error / 0 warning / 0 info |
+| `dart format` | 0 changed |
+| `arch_check` | 分层纪律检查通过 |
+
+**仍未勾**：ROADMAP 要求的 **2 小时真机长跑**未做（本机只跑到 7 分钟级 / 463 轮）。
+工装与命令已就位，真机一条命令即可。
 
 ## 下一步（按优先级，2026-09-19 续）
 
