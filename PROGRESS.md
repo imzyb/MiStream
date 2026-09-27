@@ -850,7 +850,7 @@ M0 门禁顶红过一次，而那与产品代码的健康度无关。把 `.workb
 审查（只读），完整报告见 **`docs/CODE_AUDIT_2026-09-27.md`**。四段的降级链都是
 真实现，不是注释里的愿景；问题集中在**资源回收 / 环境探测 / 同一件事实现两遍**。
 
-### 已修（9 项，均已反向验证或补了单测）
+### 已修（10 项，均已反向验证或补了单测）
 
 | 缺陷 | 位置 | 验证 |
 | --- | --- | --- |
@@ -863,6 +863,7 @@ M0 门禁顶红过一次，而那与产品代码的健康度无关。把 `.workb
 | **P2** 剧集序号在**生成端**与**消费端**各写一份且互不一致（详情端用「非空剧集计数」、播放端用 `split('#')` 下标），源里出现空段（`第1集$u1##第4集$u4`）就整体错位 | `apps/mistream/lib/application/detail_use_case.dart` + `packages/search_engine/lib/src/play_use_case.dart` | 摘掉真实下标 → 详情用例**变红** |
 | **P2** 剧集越界**静默回退第 1 集**：多线路集数不等是常态，用户点第 5 集可能从另一条线路播出第 1 集，且进度记到错位置 | 同上 | 摘掉「跳过该线路」→ **2 例变红** |
 | **P2** 历史/收藏的「继续播放」push 了 `detail` 而 extra 用的是播放路由的键名 → extra 被整个丢弃，实际只是打开详情页；`history.flag`（线路名）被当集号传；`episodeIndex` 从未落库 | `apps/mistream/lib/features/library/library_page.dart` + `apps/mistream/lib/app/router.dart` | 入口改走 `player` 并传 `episodeIndex`；UI 层无自动化测试，人工核对控制流 |
+| **P3** 搜索结果网格全量重建：`_items..clear()..addAll()` 每次事件整列重建，卡片**无 key**，结果随源陆续返回而重排 → 同一格被当成「换了一部片」，封面重新加载淡入 | `packages/search_engine/lib/src/{models,search_use_case}.dart` + `apps/mistream/lib/features/common/widgets/responsive.dart` + `features/search/search_page.dart` | 身份键改回原始标题 / 去掉 sources 排序 → **各 1 例变红**；UI 层无自动化测试 |
 
 P0 的修法是把「取详情 + 回收」收进 `_detailAndDispose`，成功 / 业务失败 / 抛异常
 三条路径都 dispose，与 `DetailUseCase.load`、`HomeUseCase._trySites` 同一套纪律。
@@ -880,6 +881,15 @@ P1 的修法是把环境值显式收参（`resolveJavaPath({javaHome, pathValue}
 新增 14 例值对象单测 + 7 例播放端用例 + 3 例详情端用例；垫片 **78 → 87**，
 `core_domain` 独立跑 **14 例**。三处修复各做了一次反向验证，均按预期变红。
 
+搜索结果网格的修法分两层：引擎侧给 `SearchItem` 补 `identityKey`（就是合并去重用的
+`normalizeTitle` 键，因此天然唯一），UI 侧给卡片带 `ValueKey(identityKey)` 并让网格
+支持 `findChildIndexCallback` —— **只加 key 不够**，sliver 得靠这个回调才能按 key
+找到旧元素；两者齐备后重排只是「把卡片挪个位置」，不再整块重建。顺带发现
+`SearchItem.sources` 的注释承诺「按源优先级排序」而实现只是 `append`，于是
+`sources.first`（详情页与搜索页都用它决定「默认打开哪个源」）拿到的其实是**最先
+命中**的源、由并发顺序决定；已改为在 `toSearchItem()` 里按优先级降序排。
+新增 3 例引擎侧用例；垫片 **87 → 90**。
+
 搜索层选源的实现顺带修掉一个隐性缺口：`DetailPage.item` 一直**声明了但从未使用**
 （注释写着「用于即时展示标题/封面」），现在它成了片源列表的数据来源。切源用
 `replaceNamed` 而非 `pushNamed`，并补 `didUpdateWidget` —— go_router 对同一路由模板
@@ -887,7 +897,7 @@ P1 的修法是把环境值显式收参（`resolveJavaPath({javaHome, pathValue}
 
 ### 仍未修（进下一步清单，见下）
 
-`_CategoryDetailPage` 用全局装配、搜索结果网格全量重建、选源口径不一致。
+`_CategoryDetailPage` 用全局装配、选源口径不一致。
 
 ## 下一步（按优先级，2026-09-19 续）
 
@@ -933,13 +943,11 @@ P1 的修法是把环境值显式收参（`resolveJavaPath({javaHome, pathValue}
    验证**（本机 `Process.start` 被管道缺陷挡住，`CreateFile failed 231`，只能等
    环境恢复）。
 9. **P2/P3 主链路审查余项**（来自 `docs/CODE_AUDIT_2026-09-27.md`）
-   ~~搜索层不能选源~~ ✅、~~引导页三处~~ ✅、~~播放段边界~~ ✅（2026-09-27 已修，
-   见上一节：`EpisodeIndex` 值对象统一序号约定、越界不再回退、`PlayResult` 回填
-   集号、历史落库 `episodeIndex` 并在续播前比对、历史/收藏改走 `player` 入口）。
+   ~~搜索层不能选源~~ ✅、~~引导页三处~~ ✅、~~播放段边界~~ ✅、~~搜索网格全量
+   重建~~ ✅（2026-09-27 已修，见上一节：`EpisodeIndex` 值对象统一序号约定、越界
+   不再回退、`PlayResult` 回填集号、历史落库 `episodeIndex` 并在续播前比对、
+   历史/收藏改走 `player` 入口；搜索网格改用稳定身份键 + `findChildIndexCallback`）。
    余下：
-   - **搜索结果网格全量重建**：`search_page.dart` 每次进度 `_items..clear()
-     ..addAll()`，`MediaCard` 无 key → 8 个源闪 8 次（滚动位置跳动、封面重复解码）。
-     给卡片加稳定 key 或改增量更新
    - **`_CategoryDetailPage` 用 `globalRouterAssembly`** 而非注入（`router.dart`
      两处）。功能上正确（其 `siteId` 已被 `_loadData` 同步为 `workingSiteId`），
      但正确性依赖隐式同步，脆弱
