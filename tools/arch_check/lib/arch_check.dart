@@ -292,6 +292,11 @@ bool _isSkippedDirectory(String segment) =>
     segment == '.git' ||
     segment == 'build' ||
     segment == 'ephemeral' ||
+    // 工具暂存目录：不在版本控制里（见 .gitignore），装的是排查问题时写的一次性
+    // 探针脚本。它们**不是项目源码**，不该被分层纪律与 ignore 理由规则管——真
+    // 按源码标准要求，一次探针就会把 M0 门禁顶红，而那和产品代码的健康度无关。
+    // （`analyze_inproc.dart` 这类长期用的脚本也在这里，需要它时直接跑。）
+    segment == '.workbuddy-ai' ||
     // drift schema 迁移验证代码（`melos run schema:update` 生成），
     // 与 `*.g.dart` 同样视为生成物，不参与分层纪律检查。
     segment == 'schema_versions.dart';

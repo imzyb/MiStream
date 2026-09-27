@@ -207,6 +207,71 @@ import 'package:storage/storage.dart';
     });
   });
 
+  // 门禁的「扫描范围」和规则本身一样是行为契约：放宽范围会让门禁失效，
+  // 收紧范围会让门禁误报。两者都得有测试钉住。
+  group('跳过目录', () {
+    test('.workbuddy-ai 下的探针不参与 ignore 理由检查', () async {
+      final dir = Directory(p.join(root.path, '.workbuddy-ai', 'scripts'));
+      await dir.create(recursive: true);
+      await File(p.join(dir.path, 'probe.dart')).writeAsString('$_badIgnore\n');
+
+      expect(await checkIgnoreComments(root), isEmpty);
+    });
+
+    test('.workbuddy-ai 下的探针不参与纯 Dart 检查', () async {
+      final dir = await writePackage(
+        name: 'core_domain',
+        pubspec: 'name: core_domain\n',
+        sources: {'core_domain.dart': '// 空\n'},
+      );
+      final probe = Directory(p.join(dir.path, 'lib', '.workbuddy-ai'));
+      await probe.create(recursive: true);
+      await File(
+        p.join(probe.path, 'probe.dart'),
+      ).writeAsString("import 'dart:io';\n");
+
+      expect(await checkPureDartPackage(dir, root: root), isEmpty);
+    });
+
+    test('控制组：同一份内容放在跳过目录之外仍被抓', () async {
+      // 上一条若因为「整棵树都没被扫到」而通过，这里就会露馅。
+      await File(p.join(root.path, 'a.dart')).writeAsString('$_badIgnore\n');
+      final skipped = Directory(p.join(root.path, '.workbuddy-ai'));
+      await skipped.create(recursive: true);
+      await File(
+        p.join(skipped.path, 'b.dart'),
+      ).writeAsString('$_badIgnore\n');
+
+      final violations = await checkIgnoreComments(root);
+
+      expect(violations, hasLength(1));
+      expect(violations.single.file, 'a.dart');
+    });
+
+    test('构建产物目录同样跳过', () async {
+      for (final name in ['.dart_tool', 'build', 'ephemeral', '.git']) {
+        final dir = Directory(p.join(root.path, name));
+        await dir.create(recursive: true);
+        await File(p.join(dir.path, 'x.dart')).writeAsString('$_badIgnore\n');
+      }
+
+      expect(await checkIgnoreComments(root), isEmpty);
+    });
+
+    test('schema_versions.dart 目录跳过（drift 生成物）', () async {
+      // 它是**目录**不是文件：drift 生成的 schema.dart 落在它下面。
+      final dir = Directory(
+        p.join(root.path, 'packages', 'storage', 'lib', 'schema_versions.dart'),
+      );
+      await dir.create(recursive: true);
+      await File(
+        p.join(dir.path, 'schema.dart'),
+      ).writeAsString('$_badIgnore\n');
+
+      expect(await checkIgnoreComments(root), isEmpty);
+    });
+  });
+
   group('真实仓库', () {
     test('core_domain 确实是纯 Dart 包', () async {
       final repo = _findRepoRoot();
