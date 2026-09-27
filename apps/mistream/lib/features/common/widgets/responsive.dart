@@ -114,6 +114,7 @@ class ResponsiveGridView extends StatelessWidget {
     super.key,
     required this.itemCount,
     required this.itemBuilder,
+    this.findChildIndexCallback,
     this.config = ResponsiveGridPresets.mediaCards,
     this.padding = const EdgeInsets.all(16),
     this.mainAxisSpacing = 8,
@@ -125,6 +126,17 @@ class ResponsiveGridView extends StatelessWidget {
 
   final int itemCount;
   final Widget Function(BuildContext context, int index) itemBuilder;
+
+  /// 由 key 反查当前索引，让 Flutter 在列表**重排**时复用已有元素。
+  ///
+  /// 不传的话 sliver 只按**位置**匹配元素：一旦内容重排（流式结果陆续到达、
+  /// 按优先级插到前面），同一格就会被当成「换了一项」，`itemBuilder` 里带状态
+  /// 的卡片会被整块重建 —— 封面重新走加载与淡入、悬停态丢失，看上去就是闪。
+  ///
+  /// 用法：`itemBuilder` 里给每项带一个**稳定且唯一**的 key（如
+  /// `ValueKey(item.identityKey)`），这里返回该 key 在新列表中的下标。
+  final int? Function(Key key)? findChildIndexCallback;
+
   final ResponsiveGridConfig config;
   final EdgeInsetsGeometry padding;
   final double mainAxisSpacing;
@@ -142,6 +154,7 @@ class ResponsiveGridView extends StatelessWidget {
           padding: padding,
           physics: physics,
           shrinkWrap: shrinkWrap,
+          findChildIndexCallback: findChildIndexCallback,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
             mainAxisSpacing: mainAxisSpacing,
@@ -162,6 +175,7 @@ class ResponsiveSliverGrid extends StatelessWidget {
     super.key,
     required this.itemCount,
     required this.itemBuilder,
+    this.findChildIndexCallback,
     this.config = ResponsiveGridPresets.mediaCards,
     this.padding = const EdgeInsets.all(16),
     this.mainAxisSpacing = 8,
@@ -174,6 +188,9 @@ class ResponsiveSliverGrid extends StatelessWidget {
 
   /// 条目构建器。
   final Widget Function(BuildContext context, int index) itemBuilder;
+
+  /// 由 key 反查当前索引；语义与 [ResponsiveGridView.findChildIndexCallback] 相同。
+  final int? Function(Key key)? findChildIndexCallback;
 
   /// 列数随断点变化的配置。
   final ResponsiveGridConfig config;
@@ -204,6 +221,7 @@ class ResponsiveSliverGrid extends StatelessWidget {
         ),
         delegate: SliverChildBuilderDelegate(
           itemBuilder,
+          findChildIndexCallback: findChildIndexCallback,
           childCount: itemCount,
         ),
       ),

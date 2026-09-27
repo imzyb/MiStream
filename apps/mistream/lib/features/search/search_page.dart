@@ -128,9 +128,15 @@ class _SearchPageState extends State<SearchPage> {
                   )
           : ResponsiveGridView(
               itemCount: _items.length,
+              findChildIndexCallback: _indexOfKey,
               itemBuilder: (context, index) {
                 final item = _items[index];
                 return MediaCard(
+                  // 稳定身份 = 合并去重键。结果会随源陆续返回而重排，带上它
+                  // Flutter 才能把卡片**挪**到新位置而不是按位置重建 —— 否则
+                  // 每来一个源，同一格就换成另一部片、封面重新加载淡入，整片
+                  // 网格反复闪。
+                  key: ValueKey(item.identityKey),
                   title: item.title,
                   coverUrl: item.coverUrl,
                   remarks: item.remarks,
@@ -139,6 +145,16 @@ class _SearchPageState extends State<SearchPage> {
               },
             ),
     );
+  }
+
+  /// 由 key 反查索引，配合 [ResponsiveGridView.findChildIndexCallback] 使用。
+  ///
+  /// `identityKey` 就是合并去重键、天然唯一，所以线性查找即可：结果规模是
+  /// 「源数 × 单源上限」（数百条），而每次重排只对**可见项**调用，代价可忽略。
+  int? _indexOfKey(Key key) {
+    if (key is! ValueKey<String>) return null;
+    final index = _items.indexWhere((item) => item.identityKey == key.value);
+    return index < 0 ? null : index;
   }
 
   Widget _buildStatusList() {
