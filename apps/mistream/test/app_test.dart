@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mistream/app/app.dart';
+import 'package:mistream/app/motion_controller.dart';
 import 'package:mistream/app/theme_controller.dart';
 import 'package:mistream/application/app_assembly.dart';
 import 'package:mistream/features/common/common.dart';
@@ -19,6 +20,10 @@ AppAssembly _testAssembly() {
 Future<ThemeController> _testThemeController(AppAssembly assembly) =>
     ThemeController.load(assembly.repositories.settings);
 
+/// 「减少动效」控制器：从空库读，默认关闭。
+Future<MotionController> _testMotionController(AppAssembly assembly) =>
+    MotionController.load(assembly.repositories.settings);
+
 void main() {
   testWidgets('引导已完成时启动显示首页', (tester) async {
     final assembly = _testAssembly();
@@ -29,6 +34,7 @@ void main() {
         assembly: assembly,
         onboardingDone: true,
         themeController: await _testThemeController(assembly),
+        motionController: await _testMotionController(assembly),
       ),
     );
     await tester.pump();
@@ -56,6 +62,7 @@ void main() {
         assembly: assembly,
         onboardingDone: true,
         themeController: await _testThemeController(assembly),
+        motionController: await _testMotionController(assembly),
       ),
     );
     await tester.pump();
@@ -96,6 +103,7 @@ void main() {
         assembly: assembly,
         onboardingDone: false,
         themeController: await _testThemeController(assembly),
+        motionController: await _testMotionController(assembly),
       ),
     );
     await tester.pumpAndSettle();

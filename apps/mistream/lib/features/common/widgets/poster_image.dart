@@ -51,6 +51,9 @@ class PosterImage extends StatelessWidget {
       },
       frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
         if (wasSynchronouslyLoaded) return child;
+        // 这里是**网络图片解码完成**的淡入，规范 §2.4 的四档场景（悬停反馈 /
+        // 页面切换 / 抽屉弹窗 / 播放器控制栏）都不覆盖它，所以刻意保留字面量，
+        // 没有硬塞进某一档。要令牌化的话，先在规范里给它加一行。
         return AnimatedOpacity(
           opacity: frame == null ? 0 : 1,
           duration: const Duration(milliseconds: 250),

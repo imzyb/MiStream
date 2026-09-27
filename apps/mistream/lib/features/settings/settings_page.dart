@@ -5,6 +5,7 @@ import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:mistream/app/motion_controller.dart';
 import 'package:mistream/app/router.dart' show globalRouterAssembly;
 import 'package:mistream/app/theme_controller.dart';
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
@@ -313,6 +314,30 @@ class _SettingsPageState extends State<SettingsPage> {
     await ThemeScope.read(context).set(choice);
   }
 
+  /// 「减少动效」开关。
+  ///
+  /// docs/09-UI规范.md §2.4：开关开启后所有动效降为 0ms，同时也要响应系统的
+  /// 无障碍设置。**这里只管用户开关**，与系统的合成在树根做（只有那里够得到
+  /// `MediaQuery`），所以副标题要提醒用户「系统那边也可能已经在生效」。
+  ///
+  /// 和外观一样只写控制器：改动它要重建整棵树的 `MediaQuery`，自己 setState
+  /// 只会让这一页的开关看起来变了。
+  Widget _motionTile(BuildContext context) {
+    final controller = MotionScope.of(context);
+    final on = controller.value;
+
+    return SettingsTile(
+      title: '减少动效',
+      subtitle: on ? '已关闭全部动效' : '打开后动效降为 0ms；系统无障碍设置同样生效',
+      leading: const Icon(Icons.animation),
+      trailing: Switch(
+        value: on,
+        onChanged: (value) => unawaited(controller.set(value)),
+      ),
+      onTap: () => unawaited(controller.set(!on)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -467,6 +492,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       leading: const Icon(Icons.palette_outlined),
                       onTap: _showThemeDialog,
                     ),
+                    _motionTile(context),
                   ],
                 ),
 

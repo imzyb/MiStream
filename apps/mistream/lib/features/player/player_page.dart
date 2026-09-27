@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:mistream/app/theme.dart';
 import 'package:mistream/features/player/player_controller.dart';
 import 'package:mistream/features/player/player_shortcuts.dart';
 import 'package:mistream/features/player/widgets/player_control_bar.dart';
@@ -250,6 +251,13 @@ class _PlayerPageState extends State<PlayerPage> {
     final state = controller.state;
     final error = controller.fatalError;
 
+    // 顶部信息栏与控制栏的淡入淡出（规范 §2.4：180ms / easeInOut）。
+    // 走令牌而不是写死 180：`effectivePlayerControls` 已经把「减少动效」算进去，
+    // 用户打开开关后这里就是 0ms，不必再判一次。
+    final playerControls = AppTokens.of(
+      context,
+    ).motion.effectivePlayerControls;
+
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -263,8 +271,8 @@ class _PlayerPageState extends State<PlayerPage> {
           top: 0,
           child: AnimatedOpacity(
             opacity: controller.isControlVisible ? 1 : 0,
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeInOut,
+            duration: playerControls.duration,
+            curve: curveOf(playerControls.curve),
             child: IgnorePointer(
               ignoring: !controller.isControlVisible,
               child: Container(
@@ -358,8 +366,8 @@ class _PlayerPageState extends State<PlayerPage> {
           bottom: 0,
           child: AnimatedOpacity(
             opacity: controller.isControlVisible ? 1 : 0,
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeInOut,
+            duration: playerControls.duration,
+            curve: curveOf(playerControls.curve),
             child: PlayerControlBar(
               isPlaying: controller.isPlaying,
               position: controller.position,

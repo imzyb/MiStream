@@ -3,6 +3,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import 'package:mistream/app/theme.dart';
 import 'package:mistream/features/common/common.dart' show PosterImage;
 
 /// 媒体卡片：封面 + 标题 + 备注。
@@ -45,9 +46,15 @@ class _MediaCardState extends State<MediaCard> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final widget = this.widget;
+    final tokens = AppTokens.of(context);
+    // 悬停反馈（规范 §2.4：120ms / easeOut）。这里曾经写死 180ms —— 正是
+    // 令牌要解决的问题：同一套规范被三处各写各的。
+    final hover = tokens.motion.effectiveHover;
+    final radius = BorderRadius.circular(tokens.scale.radiusMd);
+
     return InkWell(
       onTap: widget.onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: radius,
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
@@ -55,13 +62,13 @@ class _MediaCardState extends State<MediaCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: radius,
               child: Stack(
                 children: [
                   AnimatedScale(
                     scale: _hovered ? 1.05 : 1.0,
-                    duration: const Duration(milliseconds: 180),
-                    curve: Curves.easeOut,
+                    duration: hover.duration,
+                    curve: curveOf(hover.curve),
                     child: PosterImage(
                       url: widget.coverUrl,
                       aspectRatio: 0.7,
@@ -71,7 +78,8 @@ class _MediaCardState extends State<MediaCard> {
                   Positioned.fill(
                     child: AnimatedOpacity(
                       opacity: _hovered ? 1 : 0,
-                      duration: const Duration(milliseconds: 180),
+                      duration: hover.duration,
+                      curve: curveOf(hover.curve),
                       child: Container(
                         color: Colors.black38,
                         alignment: Alignment.center,

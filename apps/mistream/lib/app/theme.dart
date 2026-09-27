@@ -15,6 +15,10 @@ import 'package:theme_engine/theme_engine.dart';
 ///   轮廓了，那里必须放达 3:1 的 `outlineStrong`；真正「淡到几乎看不见」的
 ///   装饰线只能从这里取。
 /// - `scale` / `typography`：间距、圆角、投影、字体。
+/// - `motion`：动效时长与曲线。**别写裸 `Duration(milliseconds: 180)`**——
+///   规范 §2.4 给了四档场景，硬编码的结果是它们各写各的（本项目实际发生过：
+///   播放器控制栏写对了 180ms，卡片悬停却写成 180 而规范要 120）。
+///   用 [DesignMotion.effectiveHover] 这类取值器，它们已经把「减少动效」算进去。
 @immutable
 class AppTokens extends ThemeExtension<AppTokens> {
   const AppTokens({
@@ -22,6 +26,7 @@ class AppTokens extends ThemeExtension<AppTokens> {
     required this.outline,
     required this.scale,
     required this.typography,
+    required this.motion,
   });
 
   /// 主色文字：链接、强调文本、强调图标。
@@ -36,6 +41,9 @@ class AppTokens extends ThemeExtension<AppTokens> {
   /// 字体族、字号阶梯、字号缩放。
   final DesignTypography typography;
 
+  /// 动效时长与曲线。
+  final DesignMotion motion;
+
   /// 取当前主题的令牌。
   ///
   /// 取不到时回落到规范默认值，而不是返回 null 让调用方到处判空——主题扩展
@@ -49,6 +57,7 @@ class AppTokens extends ThemeExtension<AppTokens> {
       outline: scheme.outlineVariant,
       scale: DesignScale.standard,
       typography: DesignTypography.standard,
+      motion: DesignMotion.standard,
     );
   }
 
@@ -58,11 +67,13 @@ class AppTokens extends ThemeExtension<AppTokens> {
     Color? outline,
     DesignScale? scale,
     DesignTypography? typography,
+    DesignMotion? motion,
   }) => AppTokens(
     primaryText: primaryText ?? this.primaryText,
     outline: outline ?? this.outline,
     scale: scale ?? this.scale,
     typography: typography ?? this.typography,
+    motion: motion ?? this.motion,
   );
 
   @override
@@ -71,13 +82,26 @@ class AppTokens extends ThemeExtension<AppTokens> {
     return AppTokens(
       primaryText: Color.lerp(primaryText, other.primaryText, t)!,
       outline: Color.lerp(outline, other.outline, t)!,
-      // 尺度与字体不插值：动画中间态出现「圆角 10.3」没有意义，字号连续变化
-      // 还会让文字在切换主题时抖动。到点直接切。
+      // 尺度、字体与动效不插值：动画中间态出现「圆角 10.3」或「时长 150ms」
+      // 没有意义，字号连续变化还会让文字在切换主题时抖动。到点直接切。
       scale: t < 0.5 ? scale : other.scale,
       typography: t < 0.5 ? typography : other.typography,
+      motion: t < 0.5 ? motion : other.motion,
     );
   }
 }
+
+/// 把 [MotionCurve] 映射成 Flutter 的 [Curve]。
+///
+/// 映射放在 app 层而不是 `theme_engine`：那边是纯 Dart 包，引了 Flutter 就
+/// 只能跑 `flutter test`，而本环境 `flutter_tester` 起不来（widget 测试跑
+/// 不了），等于把唯一能自动验证 UI 面的地方关掉。
+Curve curveOf(MotionCurve curve) => switch (curve) {
+  MotionCurve.easeOut => Curves.easeOut,
+  MotionCurve.easeInOutCubic => Curves.easeInOutCubic,
+  MotionCurve.easeOutCubic => Curves.easeOutCubic,
+  MotionCurve.easeInOut => Curves.easeInOut,
+};
 
 /// 以 [theme] 的令牌构造 [ThemeData]。
 ///
@@ -130,6 +154,7 @@ ThemeData buildThemeData(AppTheme theme) {
         outline: Color(t.outline),
         scale: s,
         typography: ty,
+        motion: theme.motion,
       ),
     ],
     appBarTheme: AppBarTheme(
