@@ -104,9 +104,14 @@ class PlayUseCase {
       );
     }
 
-    // 2. 根据站点类型创建运行时，取详情
+    // 2. 根据站点类型创建运行时，取详情。
+    //
+    // 取完**立刻**回收，且成功/失败/抛异常三条路径都要走到。type=3 的 runtime
+    // 背后是一个常驻子进程（JS 或 JVM），漏一次回收就多留一个进程：连播多集会
+    // 持续堆积，离开播放页也不会释放。detail 返回的是字符串 body，回收之后仍能
+    // 继续用于下面的候选提取，所以「取完即回收」是安全的，不必挂到方法末尾。
     final runtime = await _createRuntime(site);
-    final detailResult = await runtime.detail(ids: vodId);
+    final detailResult = await _detailAndDispose(runtime, vodId);
     if (detailResult.isErr) {
       return Err(detailResult.errorOrNull!);
     }
@@ -204,6 +209,26 @@ class PlayUseCase {
             message: '没有可播放的线路',
           ),
     );
+  }
+
+  /// 取详情，并在**任何情况下**回收运行时。
+  ///
+  /// 与 `DetailUseCase.load`、`HomeUseCase._trySites` 保持同一套回收纪律：
+  /// 成功、业务失败、抛异常三条路径都必须 dispose。回收本身失败只吞掉异常，
+  /// 不掩盖业务结果。
+  static Future<Result<HttpResponseData, AppError>> _detailAndDispose(
+    SpiderRuntime runtime,
+    String vodId,
+  ) async {
+    try {
+      return await runtime.detail(ids: vodId);
+    } finally {
+      try {
+        await runtime.dispose();
+      } on Object {
+        // 回收失败不掩盖业务结果。
+      }
+    }
   }
 
   /// 不经嗅探、直接把原地址包成 [PlayResult]。

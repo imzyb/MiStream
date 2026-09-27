@@ -15,17 +15,34 @@ import 'package:test/test.dart';
 
 /// 固定返回同一份 detail 响应的假运行时。
 class _FakeRuntime implements SpiderRuntime {
-  _FakeRuntime(this.detailBody, {this.detailError});
+  _FakeRuntime(
+    this.detailBody, {
+    this.detailError,
+    this.detailThrow,
+    this.disposeThrow,
+  });
 
   final String detailBody;
   final AppError? detailError;
+
+  /// 非空时 `detail` 直接抛这个异常，用来验证「异常路径也要回收运行时」。
+  final Object? detailThrow;
+
+  /// 非空时 `dispose` 抛这个异常，用来验证回收失败不掩盖业务结果。
+  final Object? disposeThrow;
+
   int detailCalls = 0;
+
+  /// `dispose` 被调用次数：运行时回收是本文件的重点断言之一。
+  int disposeCalls = 0;
 
   @override
   Future<Result<HttpResponseData, AppError>> detail({
     required String ids,
   }) async {
     detailCalls++;
+    final boom = detailThrow;
+    if (boom != null) throw boom;
     final err = detailError;
     if (err != null) return Err(err);
     return Ok(
@@ -66,7 +83,11 @@ class _FakeRuntime implements SpiderRuntime {
   }) => throw UnimplementedError();
 
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() async {
+    disposeCalls++;
+    final boom = disposeThrow;
+    if (boom != null) throw boom;
+  }
 }
 
 /// 只为把假运行时注入 [PlayUseCase] 的工厂。
@@ -817,6 +838,98 @@ void main() {
       );
 
       expect(result.errorOrNull!.code, ErrorCode.spiderParseFailed);
+    });
+  });
+
+  group('运行时回收', () {
+    // type=3 的 runtime 背后是一个常驻子进程（JS 或 JVM）。漏回收不会立刻报错，
+    // 只会让进程数随播放次数单调增长，所以必须在这里钉死三条路径都 dispose。
+    test('成功路径：取完详情即回收', () async {
+      final sites = await _sitesWith();
+      final runtime = _FakeRuntime(_detailBody());
+      final useCase = PlayUseCase(sites, runtimeFactory: _FakeFactory(runtime));
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'lzm3u8',
+      );
+
+      expect(result.isOk, isTrue);
+      expect(runtime.disposeCalls, 1);
+    });
+
+    test('业务失败路径：detail 返回 Err 也要回收', () async {
+      final sites = await _sitesWith();
+      final runtime = _FakeRuntime(
+        '',
+        detailError: const RemoteError(
+          code: ErrorCode.networkTimeout,
+          message: '超时',
+        ),
+      );
+      final useCase = PlayUseCase(sites, runtimeFactory: _FakeFactory(runtime));
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'x',
+      );
+
+      expect(result.isErr, isTrue);
+      expect(runtime.disposeCalls, 1);
+    });
+
+    test('异常路径：detail 抛异常也要回收', () async {
+      final sites = await _sitesWith();
+      final runtime = _FakeRuntime('', detailThrow: StateError('子进程崩了'));
+      final useCase = PlayUseCase(sites, runtimeFactory: _FakeFactory(runtime));
+
+      try {
+        await useCase.getPlayableSource(siteId: 1, vodId: '42', flag: 'x');
+      } on Object {
+        // 异常是否被归一化成 AppError 不在本用例范围内，这里只关心回收。
+      }
+
+      expect(runtime.disposeCalls, 1);
+    });
+
+    test('回收抛异常不掩盖业务结果', () async {
+      final sites = await _sitesWith();
+      final runtime = _FakeRuntime(
+        _detailBody(),
+        disposeThrow: StateError('回收失败'),
+      );
+      final useCase = PlayUseCase(sites, runtimeFactory: _FakeFactory(runtime));
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'lzm3u8',
+      );
+
+      expect(result.isOk, isTrue);
+      expect(
+        result.valueOrNull!.mediaSource.uri.toString(),
+        'https://cdn.a.com/1/index.m3u8',
+      );
+      expect(runtime.disposeCalls, 1);
+    });
+
+    test('站点不存在时不创建运行时（没有可泄漏的对象）', () async {
+      final sites = await _sitesWith();
+      final runtime = _FakeRuntime(_detailBody());
+      final useCase = PlayUseCase(sites, runtimeFactory: _FakeFactory(runtime));
+
+      final result = await useCase.getPlayableSource(
+        siteId: 999,
+        vodId: '42',
+        flag: 'x',
+      );
+
+      expect(result.isErr, isTrue);
+      expect(runtime.detailCalls, 0);
+      expect(runtime.disposeCalls, 0);
     });
   });
 }
