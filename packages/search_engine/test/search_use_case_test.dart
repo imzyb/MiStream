@@ -217,4 +217,113 @@ void main() {
       expect(finalResult.isComplete, isTrue);
     });
   });
+
+  group('结果的身份与排序', () {
+    test('identityKey 用归一化后的键，不是源返回的原始标题', () async {
+      // 身份键就是合并去重键。UI 拿它当 ValueKey —— 若换成原始标题，
+      // 同一部片在不同源下的身份会不一致，卡片重排时被当成新项重建。
+      final searcher = _MockSearcher()
+        ..setResult(
+          1,
+          const SpiderSearchResult(
+            items: [SpiderRawItem(vodId: '1', vodName: '海贼王（2024）')],
+          ),
+        )
+        ..setResult(
+          2,
+          const SpiderSearchResult(
+            items: [SpiderRawItem(vodId: '2', vodName: '海贼王[HD]')],
+          ),
+        );
+
+      final useCase = SearchUseCase(
+        sourceProvider: _MockSourceProvider([
+          const SearchableSource(id: 1, name: '源1', priority: 5),
+          const SearchableSource(id: 2, name: '源2', priority: 3),
+        ]),
+        spiderSearcher: searcher,
+      );
+
+      final items = (await useCase.search('test').toList()).last.items;
+
+      // 两个源的标题归一化后相同 → 合并为一条。
+      expect(items, hasLength(1));
+      expect(items.single.identityKey, '海贼王');
+      // 展示标题仍是源给的原文（先到的那个源），与身份键刻意不同。
+      expect(items.single.title, '海贼王（2024）');
+      expect(items.single.sources, hasLength(2));
+    });
+
+    test('同一批结果的 identityKey 互不重复', () async {
+      // 撞 key 会让 Flutter 直接抛 Duplicate keys，必须在引擎侧就保证唯一。
+      final searcher = _MockSearcher()
+        ..setResult(
+          1,
+          const SpiderSearchResult(
+            items: [
+              SpiderRawItem(vodId: '1', vodName: '剧A'),
+              SpiderRawItem(vodId: '2', vodName: '剧B'),
+              SpiderRawItem(vodId: '3', vodName: '剧C'),
+            ],
+          ),
+        )
+        ..setResult(
+          2,
+          const SpiderSearchResult(
+            items: [
+              SpiderRawItem(vodId: '4', vodName: '剧A（2024）'),
+              SpiderRawItem(vodId: '5', vodName: '剧D'),
+            ],
+          ),
+        );
+
+      final useCase = SearchUseCase(
+        sourceProvider: _MockSourceProvider([
+          const SearchableSource(id: 1, name: '源1', priority: 5),
+          const SearchableSource(id: 2, name: '源2', priority: 3),
+        ]),
+        spiderSearcher: searcher,
+      );
+
+      final items = (await useCase.search('test').toList()).last.items;
+      final keys = items.map((e) => e.identityKey).toList();
+
+      expect(items, hasLength(4));
+      expect(keys.toSet(), hasLength(keys.length));
+    });
+
+    test('sources 按源优先级降序，first 是优先级最高的源', () async {
+      // 并发顺序由源列表顺序决定：源1（低优先级）先被消费、先命中，于是它
+      // 先进入 sources。不排序的话 `sources.first` 拿到的是**最先命中**的源，
+      // 而详情页与搜索页都靠它决定「默认打开哪个源」。
+      final searcher = _MockSearcher()
+        ..setResult(
+          1,
+          const SpiderSearchResult(
+            items: [SpiderRawItem(vodId: '1', vodName: '剧A')],
+          ),
+        )
+        ..setResult(
+          2,
+          const SpiderSearchResult(
+            items: [SpiderRawItem(vodId: '2', vodName: '剧A')],
+          ),
+        );
+
+      final useCase = SearchUseCase(
+        sourceProvider: _MockSourceProvider([
+          const SearchableSource(id: 1, name: '源1', priority: 1),
+          const SearchableSource(id: 2, name: '源2', priority: 9),
+        ]),
+        spiderSearcher: searcher,
+      );
+
+      final item = (await useCase.search('test').toList()).last.items.single;
+
+      expect(item.sources.map((s) => s.sourceId), [2, 1]);
+      expect(item.sources.first.sourcePriority, 9);
+      // maxPriority 与排在最前的源一致，两者不该各说各话。
+      expect(item.maxPriority, item.sources.first.sourcePriority);
+    });
+  });
 }

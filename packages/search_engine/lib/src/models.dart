@@ -5,6 +5,7 @@ library;
 class SearchItem {
   /// 构造结果项。
   const SearchItem({
+    required this.identityKey,
     required this.title,
     this.originalTitle,
     this.year,
@@ -13,6 +14,17 @@ class SearchItem {
     this.sources = const [],
     this.maxPriority = 0,
   });
+
+  /// 这张卡片在结果列表中的**稳定身份**。
+  ///
+  /// 就是合并去重用的那个键（`SearchUseCase` 以 `normalizeTitle(vodName)` 为键），
+  /// 所以同一批结果内**必然唯一**——可以直接当 `ValueKey` 用，不会撞 key。
+  ///
+  /// 为什么要把它显式带出来：搜索结果随各源陆续返回而**重排**（按源优先级排序，
+  /// 新命中会插到前面）。列表若按**位置**匹配元素，同一格会被当成「换了一部片」，
+  /// 封面重新走一遍加载与淡入，看起来就是整片网格反复闪。带上稳定身份，UI 才能
+  /// 认出「还是那一部片」并把它挪到新位置。
+  final String identityKey;
 
   /// 展示用标题（归一化后）。
   final String title;

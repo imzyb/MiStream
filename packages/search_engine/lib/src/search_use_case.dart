@@ -190,6 +190,7 @@ class SearchUseCase {
           merged[key]!.addSource(source, item.vodId);
         } else {
           merged[key] = _MergedEntry(
+            identityKey: key,
             title: item.vodName,
             originalTitle: item.vodName,
             year: item.vodYear,
@@ -231,6 +232,7 @@ class SearchUseCase {
 
 class _MergedEntry {
   _MergedEntry({
+    required this.identityKey,
     required this.title,
     required SearchableSource source,
     required String vodId,
@@ -241,6 +243,12 @@ class _MergedEntry {
   }) {
     addSource(source, vodId);
   }
+
+  /// 合并用的键，也是对外暴露的稳定身份（见 [SearchItem.identityKey]）。
+  ///
+  /// 由构造方传入而不是在这里重算 `normalizeTitle(title)`：键是 `merged` 的
+  /// map key，只有一份真相，重算等于又埋一处「同一件事写两遍」。
+  final String identityKey;
   final String title;
   final String? originalTitle;
   final String? year;
@@ -262,12 +270,17 @@ class _MergedEntry {
   }
 
   SearchItem toSearchItem() => SearchItem(
+    identityKey: identityKey,
     title: title,
     originalTitle: originalTitle,
     year: year,
     coverUrl: coverUrl,
     remarks: remarks,
-    sources: List.of(sources),
+    // 按源优先级降序，与 [SearchItem.sources] 的文档一致：调用方（详情页的
+    // 片源列表、搜索页的「默认打开哪个源」）都取 `sources.first`，不排序的话
+    // 拿到的是**最先命中**的那个源 —— 由并发顺序决定，每次搜索都可能不同。
+    sources: List.of(sources)
+      ..sort((a, b) => b.sourcePriority.compareTo(a.sourcePriority)),
     maxPriority: maxPriority,
   );
 }
