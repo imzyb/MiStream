@@ -844,13 +844,13 @@ M0 门禁顶红过一次，而那与产品代码的健康度无关。把 `.workb
   收益；减少动效已由 `disableAnimations` 兜住）
 - 主题包的**安装/启用链路**未接：只有解析与校验，没有从插件目录加载
 
-## 本次会话（2026-09-27 续）：主链路审查 + 两个真缺陷修复
+## 本次会话（2026-09-27 续）：主链路审查 + 播放段边界修复
 
 按「添加接口源 → 选择播放源 → 选择/搜索影片 → 播放影片」走了一遍端到端代码
 审查（只读），完整报告见 **`docs/CODE_AUDIT_2026-09-27.md`**。四段的降级链都是
 真实现，不是注释里的愿景；问题集中在**资源回收 / 环境探测 / 同一件事实现两遍**。
 
-### 已修（6 项，均已反向验证或补了单测）
+### 已修（9 项，均已反向验证或补了单测）
 
 | 缺陷 | 位置 | 验证 |
 | --- | --- | --- |
@@ -860,13 +860,25 @@ M0 门禁顶红过一次，而那与产品代码的健康度无关。把 `.workb
 | **P2** 搜索层无法选片源（`_goDetail` 只取 `sources.first`） | `apps/mistream/lib/features/detail/detail_page.dart` | 详情页新增「片源」切换 |
 | **P3** 引导页导入失败提示在重试**之前**就显示（闪一下 + 多发一次请求），图片类内容还会被无意义地重试 | `apps/mistream/lib/features/onboarding/onboarding_page.dart` | 改为最后一次尝试才报错 |
 | **P3** 引导页自建一套弱于 `ConfigDecoder.probeNonJson` 的 HTML 判定；Base64 导入丢 `sourceUrl`（相对路径脚本解析失败） | 同上 + `packages/core_config/test/config_decoder_test.dart` | 改用 `probeNonJson`，并补 **6 例直接单测**（此前只有间接覆盖） |
+| **P2** 剧集序号在**生成端**与**消费端**各写一份且互不一致（详情端用「非空剧集计数」、播放端用 `split('#')` 下标），源里出现空段（`第1集$u1##第4集$u4`）就整体错位 | `apps/mistream/lib/application/detail_use_case.dart` + `packages/search_engine/lib/src/play_use_case.dart` | 摘掉真实下标 → 详情用例**变红** |
+| **P2** 剧集越界**静默回退第 1 集**：多线路集数不等是常态，用户点第 5 集可能从另一条线路播出第 1 集，且进度记到错位置 | 同上 | 摘掉「跳过该线路」→ **2 例变红** |
+| **P2** 历史/收藏的「继续播放」push 了 `detail` 而 extra 用的是播放路由的键名 → extra 被整个丢弃，实际只是打开详情页；`history.flag`（线路名）被当集号传；`episodeIndex` 从未落库 | `apps/mistream/lib/features/library/library_page.dart` + `apps/mistream/lib/app/router.dart` | 入口改走 `player` 并传 `episodeIndex`；UI 层无自动化测试，人工核对控制流 |
 
 P0 的修法是把「取详情 + 回收」收进 `_detailAndDispose`，成功 / 业务失败 / 抛异常
 三条路径都 dispose，与 `DetailUseCase.load`、`HomeUseCase._trySites` 同一套纪律。
 P1 的修法是把环境值显式收参（`resolveJavaPath({javaHome, pathValue})`）——进程内的
 环境变量改不了，不收参则「PATH 回退」这条最关键的路径永远只能靠人工碰运气验证。
 新增 `apps/mistream/test/application/app_assembly_test.dart`（13 例），已挂进
-`run_tests_shim.dart`。垫片总用例数 **60 → 78**。
+`run_tests_shim.dart`。
+
+播放段边界的修法是把「第几集」收成一个值对象 `EpisodeIndex`（`core_domain`）：
+生成端用 **`split('#')` 的真实下标**编码（此前用非空计数，跳过的空段会让后续序号
+整体前移），消费端越界返回 `null` 而**不回退**——各线路集数不等是常态，回退会让
+用户看错集却不自知，宁可明确报 `notFound`。`PlayResult` 顺带回填实际集号，播放页
+据此落库 `episodeIndex`，并在续播前比对集号：历史按 `(siteId, vodId)` 唯一，切集后
+那条记录里的进度属于**上一集**，拿来 seek 会让新一集从中间开始播。
+新增 14 例值对象单测 + 7 例播放端用例 + 3 例详情端用例；垫片 **78 → 87**，
+`core_domain` 独立跑 **14 例**。三处修复各做了一次反向验证，均按预期变红。
 
 搜索层选源的实现顺带修掉一个隐性缺口：`DetailPage.item` 一直**声明了但从未使用**
 （注释写着「用于即时展示标题/封面」），现在它成了片源列表的数据来源。切源用
@@ -875,8 +887,7 @@ P1 的修法是把环境值显式收参（`resolveJavaPath({javaHome, pathValue}
 
 ### 仍未修（进下一步清单，见下）
 
-`_CategoryDetailPage` 用全局装配、剧集越界静默回退第 1 集、`episodeId` 序号约定
-两处各自实现、搜索结果网格全量重建、选源口径不一致。
+`_CategoryDetailPage` 用全局装配、搜索结果网格全量重建、选源口径不一致。
 
 ## 下一步（按优先级，2026-09-19 续）
 
@@ -922,12 +933,10 @@ P1 的修法是把环境值显式收参（`resolveJavaPath({javaHome, pathValue}
    验证**（本机 `Process.start` 被管道缺陷挡住，`CreateFile failed 231`，只能等
    环境恢复）。
 9. **P2/P3 主链路审查余项**（来自 `docs/CODE_AUDIT_2026-09-27.md`）
-   ~~搜索层不能选源~~ ✅、~~引导页三处~~ ✅（2026-09-27 已修，见上一节）。余下：
-   - **播放段边界**：`play_use_case.dart` 剧集越界**静默回退第 1 集**，UI 无提示；
-     `episodeId` 的「序号」约定在 `detail_use_case.dart`（生成）与
-     `play_use_case.dart`（消费）两处各自实现，任一处改动都会静默退到第 1 集。
-     修的时候一起做：回退时把「实际播放的集号」回传给 UI，或越界时优先换一条
-     集数足够的线路；`episodeId` 抽成显式值对象
+   ~~搜索层不能选源~~ ✅、~~引导页三处~~ ✅、~~播放段边界~~ ✅（2026-09-27 已修，
+   见上一节：`EpisodeIndex` 值对象统一序号约定、越界不再回退、`PlayResult` 回填
+   集号、历史落库 `episodeIndex` 并在续播前比对、历史/收藏改走 `player` 入口）。
+   余下：
    - **搜索结果网格全量重建**：`search_page.dart` 每次进度 `_items..clear()
      ..addAll()`，`MediaCard` 无 key → 8 个源闪 8 次（滚动位置跳动、封面重复解码）。
      给卡片加稳定 key 或改增量更新
