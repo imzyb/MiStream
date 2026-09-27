@@ -55,6 +55,23 @@ class _DetailPageState extends State<DetailPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_load()));
   }
 
+  @override
+  void didUpdateWidget(DetailPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 切换片源走的是 `replaceNamed`（路由参数变、页面栈不增长）。go_router 对
+    // 同一路由模板复用同一个 page key，于是 State 会被复用、`initState` 不再跑
+    // ——不在这里补一次加载，换了片源页面会停在上一部片的详情上。
+    if (oldWidget.siteId != widget.siteId || oldWidget.vodId != widget.vodId) {
+      _selectedFlagIndex = 0;
+      _descriptionExpanded = false;
+      _detail = null;
+      _favorite = null;
+      _loading = true;
+      _error = null;
+      unawaited(_load());
+    }
+  }
+
   Future<void> _load() async {
     // 首次调用来自 post-frame 回调，页面可能已被弹出。
     if (!mounted) return;
@@ -234,7 +251,13 @@ class _DetailPageState extends State<DetailPage> {
           ),
         ),
 
-        // 播放源选择
+        // 片源切换：只在「同片多源」时出现（搜索合并了多个源的同一部片）。
+        // 与下面的「线路」是两回事——线路是**同一个源里**的不同播放通道，
+        // 片源是**不同的站点**，同一部片在不同站点上的清晰度/完整度可能差很多。
+        if (_alternativeSources.isNotEmpty)
+          SliverToBoxAdapter(child: _buildSourcePicker(theme)),
+
+        // 线路选择
         if (detail.flags.length > 1)
           SliverToBoxAdapter(
             child: SizedBox(
@@ -298,6 +321,73 @@ class _DetailPageState extends State<DetailPage> {
   List<VodEpisode> get _episodes {
     final flag = _currentFlag;
     return _detailOrNull.episodes[flag] ?? [];
+  }
+
+  /// 搜索结果带来的「同片多源」列表。
+  ///
+  /// 只有一个源（或不是从搜索进来的）时返回空——多一行只有单个选项的 chip
+  /// 只是噪音。
+  List<SearchSourceRef> get _alternativeSources {
+    final sources = widget.item?.sources ?? const <SearchSourceRef>[];
+    return sources.length > 1 ? sources : const <SearchSourceRef>[];
+  }
+
+  bool _isCurrentSource(SearchSourceRef source) =>
+      source.sourceId == widget.siteId && source.vodId == widget.vodId;
+
+  /// 换到另一个片源。
+  ///
+  /// 用 `replaceNamed` 而不是 `pushNamed`：切源是「换个角度看同一部片」，不是
+  /// 层层深入的导航，堆栈里堆一串详情页只会让返回键变得难用。`extra` 要跟着
+  /// 传，否则切一次源后源列表就丢了，再也切不回去。
+  void _switchSource(SearchSourceRef source) {
+    if (_isCurrentSource(source)) return;
+    context.replaceNamed(
+      'detail',
+      pathParameters: {
+        'siteId': source.sourceId.toString(),
+        'vodId': source.vodId,
+      },
+      extra: widget.item,
+    );
+  }
+
+  Widget _buildSourcePicker(ThemeData theme) {
+    final sources = _alternativeSources;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+          child: Text(
+            '片源（${sources.length}）',
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        SizedBox(
+          height: 40,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: sources.length,
+            itemBuilder: (context, index) {
+              final source = sources[index];
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ChoiceChip(
+                  label: Text(source.sourceName),
+                  selected: _isCurrentSource(source),
+                  onSelected: (_) => _switchSource(source),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
   }
 
   Widget _buildDescription(String description, ThemeData theme) {
