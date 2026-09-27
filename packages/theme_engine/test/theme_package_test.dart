@@ -259,19 +259,130 @@ void main() {
       expect(result.warnings.join(), contains('超出规范区间'));
     });
 
-    test('未落地名字空间（动效）静默忽略，不刷告警', () {
+    test('尚未落地的名字空间静默忽略，不刷告警', () {
       final warns = <String>[];
       final pkg = ThemePackage.fromJson(
-        _pkg({
-          'motion.hover': '120ms',
-          'motion.page': 240,
-          'assets.background': 'bg.jpg',
-        }),
+        _pkg({'assets.background': 'bg.jpg', 'i18n.locale': 'zh-CN'}),
         onWarn: warns.add,
       );
       expect(pkg.tokens, isEmpty);
       expect(pkg.numbers, isEmpty);
       expect(warns, isEmpty, reason: '未落地的名字空间不该逐个告警');
+    });
+  });
+
+  group('动效令牌', () {
+    test('覆盖时长与曲线', () {
+      final merged = ThemePackage.fromJson(
+        _pkg({'motion.hover': 90, 'motion.overlay.curve': 'easeInOut'}),
+      ).applyTo(AppTheme.dark);
+
+      expect(merged.motion.hover.duration, const Duration(milliseconds: 90));
+      // 只覆盖时长时，曲线仍取基准的
+      expect(merged.motion.hover.curve, MotionCurve.easeOut);
+      expect(merged.motion.overlay.curve, MotionCurve.easeInOut);
+      // 只覆盖曲线时，时长仍取基准的
+      expect(merged.motion.overlay.duration, const Duration(milliseconds: 200));
+    });
+
+    test('没覆盖的场景取基准值', () {
+      final merged = ThemePackage.fromJson(
+        _pkg({'motion.hover': 90}),
+      ).applyTo(AppTheme.dark);
+
+      expect(
+        merged.motion.playerControls,
+        DesignMotion.standard.playerControls,
+      );
+    });
+
+    test('时长可以写成字符串', () {
+      final pkg = ThemePackage.fromJson(_pkg({'motion.hover': '90'}));
+      expect(pkg.motionDurations['hover'], 90);
+    });
+
+    test('非法时长告警并忽略', () {
+      final warns = <String>[];
+      final pkg = ThemePackage.fromJson(
+        _pkg({'motion.hover': '120ms'}),
+        onWarn: warns.add,
+      );
+      expect(pkg.motionDurations, isEmpty);
+      expect(warns.single, contains('motion.hover'));
+    });
+
+    test('未知曲线告警并忽略，且提示有哪些可用', () {
+      final warns = <String>[];
+      final pkg = ThemePackage.fromJson(
+        _pkg({'motion.hover.curve': 'easeInOutSine'}),
+        onWarn: warns.add,
+      );
+      expect(pkg.motionCurves, isEmpty);
+      expect(warns.single, contains('easeInOutSine'));
+      expect(warns.single, contains('easeOutCubic'));
+    });
+
+    /// `motion.*` 现在是我们支持的名字空间了，陌生键多半是拼错。
+    test('未知 motion.* 键告警', () {
+      final warns = <String>[];
+      final pkg = ThemePackage.fromJson(
+        _pkg({'motion.page': 240, 'motion.hover.duration': 120}),
+        onWarn: warns.add,
+      );
+      expect(pkg.motionDurations, isEmpty);
+      expect(warns, hasLength(2));
+      expect(warns.join(), contains('motion.page'));
+    });
+
+    /// 「减少动效」是无障碍选项，不是审美选项——主题包说了不算。
+    test('主题包不能设置 reduceMotion', () {
+      final warns = <String>[];
+      final pkg = ThemePackage.fromJson(
+        _pkg({'motion.reduceMotion': true}),
+        onWarn: warns.add,
+      );
+      expect(warns.single, contains('motion.reduceMotion'));
+
+      expect(pkg.applyTo(AppTheme.dark).motion.reduceMotion, isFalse);
+    });
+
+    test('基准已开减少动效时，主题包覆盖不会把它关掉', () {
+      final base = AppTheme(
+        id: 'base',
+        name: '基准',
+        isDark: true,
+        tokens: AppTheme.dark.tokens,
+        motion: DesignMotion.standard.copyWith(reduceMotion: true),
+      );
+
+      final merged = ThemePackage.fromJson(
+        _pkg({'motion.hover': 90}),
+      ).applyTo(base);
+
+      expect(merged.motion.reduceMotion, isTrue);
+      // 覆盖进来的 90ms 被「减少动效」压掉了
+      expect(merged.motion.effectiveHover.duration, Duration.zero);
+    });
+
+    /// 畸形包不得导致崩溃：`(1e30 * 1000).round()` 会抛 UnsupportedError。
+    test('超大时长不崩，被夹住并被告警', () {
+      final result = loadThemePackage(
+        _pkg({'motion.hover': 1e30}, brightness: 'dark'),
+        base: AppTheme.dark,
+      );
+
+      expect(result.fellBack, isFalse);
+      expect(result.theme.motion.hover.duration, const Duration(hours: 1));
+      expect(result.warnings.join(), contains('超过 1000ms'));
+    });
+
+    test('动效问题只告警，不触发回退', () {
+      final result = loadThemePackage(
+        _pkg({'motion.overlay': -5}, brightness: 'dark'),
+        base: AppTheme.dark,
+      );
+      expect(result.fellBack, isFalse);
+      expect(result.warnings.join(), contains('不能为负'));
     });
   });
 }

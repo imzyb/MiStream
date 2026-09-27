@@ -4,6 +4,7 @@ library;
 import 'package:meta/meta.dart';
 
 import 'contrast.dart';
+import 'motion.dart';
 import 'scale.dart';
 
 @immutable
@@ -15,6 +16,7 @@ class AppTheme {
     required this.tokens,
     this.scale = DesignScale.standard,
     this.typography = DesignTypography.standard,
+    this.motion = DesignMotion.standard,
   });
 
   final String id;
@@ -27,6 +29,12 @@ class AppTheme {
 
   /// 字体族、字号阶梯、字号缩放。
   final DesignTypography typography;
+
+  /// 动效时长与曲线。
+  ///
+  /// 内置四套主题都用规范默认值——动效不属于「配色」，没有明暗之分。它留在
+  /// [AppTheme] 里是为了让主题包能覆盖，以及让 app 层有一个统一的取用点。
+  final DesignMotion motion;
 
   /// 浅色。
   ///
@@ -285,12 +293,13 @@ List<String> checkContrast(DesignTokens t) {
   return fails;
 }
 
-/// 主题的尺度与字体令牌校验，返回问题清单（空 = 通过）。
+/// 主题的尺度、字体与动效令牌校验，返回问题清单（空 = 通过）。
 ///
-/// 颜色走 [checkContrast]（不达标就整个拒掉主题包），尺度/字体走这里——
-/// 它们的问题（圆角顺序反了、字号阶梯乱了）**不致命**，夹住/回退即可，
-/// 所以只告警不拒绝。
+/// 颜色走 [checkContrast]（不达标就整个拒掉主题包），其余走这里——它们的
+/// 问题（圆角顺序反了、字号阶梯乱了、动效时长超过一秒）**不致命**，夹住或
+/// 按基准值用即可，所以只告警不拒绝。
 List<String> validateTheme(AppTheme theme) => [
   ...validateScale(theme.scale),
   ...validateTypography(theme.typography),
+  ...validateMotion(theme.motion),
 ];

@@ -3,6 +3,7 @@ library;
 
 import 'package:meta/meta.dart';
 
+import 'motion.dart';
 import 'scale.dart';
 import 'theme.dart';
 
@@ -41,6 +42,26 @@ const _scaleNumberKeys = <String, String>{
 /// 数值令牌（字体）到 [DesignTypography] 字段的映射，键名取自规范 §2.3。
 const _fontNumberKeys = <String, String>{'font.scale': 'scale'};
 
+/// 动效时长令牌到 [DesignMotion] 字段的映射，键名取自规范 §2.4。
+///
+/// 单位是毫秒。与尺度、字体分开存，不塞进 [ThemePackage.numbers]：那边按字段
+/// 名做键，`overlay` 这种名字将来很容易和尺度令牌撞上，而撞了不会报错，只会
+/// 静默覆盖。
+const _motionDurationKeys = <String, String>{
+  'motion.hover': 'hover',
+  'motion.pageTransition': 'pageTransition',
+  'motion.overlay': 'overlay',
+  'motion.playerControls': 'playerControls',
+};
+
+/// 动效曲线令牌：`motion.<场景>.curve`，值是 [MotionCurve] 的枚举名。
+const _motionCurveKeys = <String, String>{
+  'motion.hover.curve': 'hover',
+  'motion.pageTransition.curve': 'pageTransition',
+  'motion.overlay.curve': 'overlay',
+  'motion.playerControls.curve': 'playerControls',
+};
+
 /// 一份已解析的主题包。
 ///
 /// 只保留**成功解析且本包认识**的令牌；其余一律不带，由 [applyTo] 从基准主题
@@ -51,6 +72,8 @@ class ThemePackage {
     this.tokens = const {},
     this.numbers = const {},
     this.strings = const {},
+    this.motionDurations = const {},
+    this.motionCurves = const {},
     this.id,
     this.isDark,
   });
@@ -63,6 +86,12 @@ class ThemePackage {
 
   /// 字符串令牌（目前只有 `font.family`）。
   final Map<String, String> strings;
+
+  /// 动效时长，毫秒（键是 [DesignMotion] 的字段名）。
+  final Map<String, double> motionDurations;
+
+  /// 动效曲线（键是 [DesignMotion] 的字段名）。
+  final Map<String, MotionCurve> motionCurves;
 
   /// 主题包 id，缺失时为 `null`。
   final String? id;
@@ -109,6 +138,8 @@ class ThemePackage {
     final tokens = <String, int>{};
     final numbers = <String, double>{};
     final strings = <String, String>{};
+    final motionDurations = <String, double>{};
+    final motionCurves = <String, MotionCurve>{};
 
     for (final entry in rawTokens.entries) {
       final key = entry.key;
@@ -117,9 +148,9 @@ class ThemePackage {
         continue;
       }
 
-      // 不认识的名字空间静默跳过（动效 `motion.*` 等尚未落地，逐个告警只会
-      // 淹掉真正有用的那条）；`color.*` 是我们已经支持的命名空间，里面出现
-      // 陌生键才值得提醒主题作者。
+      // 已支持的名字空间（`color.*` / `motion.*`）里出现陌生键值得提醒作者，
+      // 那多半是拼错了；尚未落地的名字空间静默跳过，逐个告警只会淹掉真正
+      // 有用的那条。
       final colorField = _colorTokenKeys[key];
       if (colorField != null) {
         final value = _parseColor(entry.value);
@@ -156,6 +187,39 @@ class ThemePackage {
         } else {
           warn('令牌 font.family 的值不是非空字符串（$value），已忽略');
         }
+        continue;
+      }
+
+      final durationField = _motionDurationKeys[key];
+      if (durationField != null) {
+        final value = _parseNumber(entry.value);
+        if (value == null) {
+          warn('令牌 $key 的值不是合法数字（${entry.value}），已忽略');
+        } else {
+          motionDurations[durationField] = value;
+        }
+        continue;
+      }
+
+      final curveField = _motionCurveKeys[key];
+      if (curveField != null) {
+        final value = entry.value;
+        final curve = value is String ? MotionCurve.fromName(value) : null;
+        if (curve == null) {
+          warn(
+            '令牌 $key 不是已知曲线（$value），已忽略。'
+            '可用：${MotionCurve.values.map((c) => c.name).join('、')}',
+          );
+        } else {
+          motionCurves[curveField] = curve;
+        }
+        continue;
+      }
+      if (key.startsWith('motion.')) {
+        // 「减少动效」不在这里：它属于无障碍选项，由 app 层合成，主题包说了
+        // 不算。所以 `motion.reduceMotion` 会落到这条分支被拒掉。
+        warn('未知的动效令牌 $key，已忽略');
+        continue;
       }
     }
 
@@ -163,6 +227,8 @@ class ThemePackage {
       tokens: tokens,
       numbers: numbers,
       strings: strings,
+      motionDurations: motionDurations,
+      motionCurves: motionCurves,
       id: id,
       isDark: isDark,
     );
@@ -205,6 +271,26 @@ class ThemePackage {
         family: strings['family'],
         scale: numbers['scale'],
       ),
+      motion: _mergeMotion(base.motion),
+    );
+  }
+
+  /// 把动效覆盖叠到 [base] 上：包里有就用包里的，没有就取 [base] 的。
+  ///
+  /// 刻意不动 [DesignMotion.reduceMotion]——那是无障碍选项，由 app 层根据用户
+  /// 偏好与系统设置合成。主题包在 `fromJson` 阶段就已经把 `motion.reduceMotion`
+  /// 当未知键拒掉了。
+  DesignMotion _mergeMotion(DesignMotion base) {
+    MotionSpec merge(String field, MotionSpec spec) => spec.copyWith(
+      duration: _msToDuration(motionDurations[field]),
+      curve: motionCurves[field],
+    );
+
+    return base.copyWith(
+      hover: merge('hover', base.hover),
+      pageTransition: merge('pageTransition', base.pageTransition),
+      overlay: merge('overlay', base.overlay),
+      playerControls: merge('playerControls', base.playerControls),
     );
   }
 }
@@ -255,7 +341,7 @@ ThemeLoadResult loadThemePackage(
   final fails = checkContrast(merged.tokens);
   if (fails.isEmpty) {
     for (final problem in validateTheme(merged)) {
-      warn('主题包的尺度/字体令牌有问题（已按基准值使用）：$problem');
+      warn('主题包的尺度/字体/动效令牌有问题（不致命，仍按包里的值使用）：$problem');
     }
     return ThemeLoadResult(theme: merged, fellBack: false, warnings: warnings);
   }
@@ -282,6 +368,21 @@ double? _parseNumber(Object? value) {
     return (d != null && d.isFinite) ? d : null;
   }
   return null;
+}
+
+/// 毫秒 → [Duration]；`null` 表示「包里没写，用基准值」。
+///
+/// 上界不是为了好看：`(1e30 * 1000).round()` 会抛 `UnsupportedError`，而输入
+/// 来自主题包这种用户数据。超过一小时的值一定会在 [validateMotion] 里被报
+/// 「超过上限」，所以这里只需保证不崩，不必保证精确。
+Duration? _msToDuration(double? ms) {
+  if (ms == null) return null;
+
+  const cap = Duration.microsecondsPerHour;
+  final microseconds = ms * Duration.microsecondsPerMillisecond;
+  if (microseconds >= cap) return const Duration(hours: 1);
+  if (microseconds <= -cap) return const Duration(hours: -1);
+  return Duration(microseconds: microseconds.round());
 }
 
 /// 解析颜色：`#RGB` / `#RRGGBB` / `#AARRGGBB`，或直接的 ARGB 整数。

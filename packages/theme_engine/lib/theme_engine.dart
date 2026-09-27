@@ -2,6 +2,7 @@
 library;
 
 export 'src/contrast.dart';
+export 'src/motion.dart';
 export 'src/scale.dart';
 export 'src/theme.dart';
 export 'src/theme_choice.dart';
