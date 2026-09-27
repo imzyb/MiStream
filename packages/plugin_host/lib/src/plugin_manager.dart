@@ -19,8 +19,9 @@ class PluginEvent {
 /// Manages plugin lifecycle: install, enable, disable, uninstall.
 ///
 /// Plugins are identified by their manifest [PluginManifest.id].
-/// State transitions are validated — e.g., you cannot enable a plugin
-/// that is in error state.
+/// State transitions are validated against [PluginState] — e.g. you cannot
+/// disable a plugin that is not currently enabled. 迁移的完整规则见
+/// [PluginState] 的文档。
 class PluginManager {
   final Map<String, _PluginEntry> _plugins = {};
   final StreamController<PluginEvent> _eventController =
@@ -33,25 +34,39 @@ class PluginManager {
   Iterable<PluginManifest> get manifests =>
       _plugins.values.map((e) => e.manifest);
 
-  /// Install a plugin from a manifest and API implementation.
+  /// Install a plugin: register it, then activate it.
+  ///
+  /// 登记**先于**激活。这样激活失败时插件会以 [PluginState.error] 留在管理器里
+  /// —— 用户看得到它、能卸载它，而不是无痕消失。激活抛出的异常仍然向上传播，
+  /// 调用方据此提示「已安装但启用失败」；此时插件已登记，重试要走 [enable]。
   Future<void> install(PluginManifest manifest, PluginApi api) async {
     if (_plugins.containsKey(manifest.id)) {
       throw StateError('Plugin ${manifest.id} already installed');
     }
 
-    await api.onActivate();
-
-    _plugins[manifest.id] = _PluginEntry(
+    final entry = _PluginEntry(
       manifest: manifest,
       api: api,
       state: PluginState.installed,
     );
+    _plugins[manifest.id] = entry;
 
+    try {
+      await api.onActivate();
+    } on Object {
+      entry.state = PluginState.error;
+      _emit(manifest.id, PluginState.installed, PluginState.error);
+      rethrow;
+    }
+
+    entry.state = PluginState.enabled;
     _emit(manifest.id, PluginState.installed, PluginState.enabled);
-    _plugins[manifest.id]!.state = PluginState.enabled;
   }
 
   /// Enable a disabled plugin.
+  ///
+  /// 处于 [PluginState.error] 的插件也允许启用 —— 那是「重试激活」。激活再次
+  /// 失败会退回 [PluginState.error] 并抛出。
   Future<void> enable(String pluginId) async {
     final entry = _plugins[pluginId];
     if (entry == null) throw StateError('Plugin $pluginId not found');
@@ -61,14 +76,23 @@ class PluginManager {
       );
     }
 
-    await entry.api.onActivate();
-
     final old = entry.state;
+    try {
+      await entry.api.onActivate();
+    } on Object {
+      entry.state = PluginState.error;
+      _emit(pluginId, old, PluginState.error);
+      rethrow;
+    }
+
     entry.state = PluginState.enabled;
     _emit(pluginId, old, PluginState.enabled);
   }
 
   /// Disable an enabled plugin.
+  ///
+  /// `onDeactivate` 抛异常时状态**保持 [PluginState.enabled]**：插件实际仍在
+  /// 运行，标成「已停用」或「故障」都不符合事实。异常照常抛出。
   Future<void> disable(String pluginId) async {
     final entry = _plugins[pluginId];
     if (entry == null) throw StateError('Plugin $pluginId not found');
@@ -86,6 +110,9 @@ class PluginManager {
   }
 
   /// Uninstall a plugin.
+  ///
+  /// 任何状态都能卸载，**包括 [PluginState.error]** —— 卸载是故障插件唯一的
+  /// 恢复手段，加闸门会让用户被卡死。因此这里不做状态校验。
   Future<void> uninstall(String pluginId) async {
     final entry = _plugins.remove(pluginId);
     if (entry == null) throw StateError('Plugin $pluginId not found');
@@ -121,12 +148,26 @@ class PluginManager {
   }
 
   /// Dispose all plugins.
+  ///
+  /// 逐个 `onDispose`，**单个失败不中断其余**：一个坏插件（例如 [PluginState.error]
+  /// 的那个）不该让其它插件的清理也做不成，更不该让事件流永远关不掉。
+  /// 清理完成后把第一个异常抛出去 —— 既不静默吞掉，也不半途而废。
   Future<void> disposeAll() async {
+    Object? firstFailure;
+    StackTrace? firstStack;
     for (final entry in _plugins.values) {
-      await entry.api.onDispose();
+      try {
+        await entry.api.onDispose();
+      } on Object catch (error, stack) {
+        firstFailure ??= error;
+        firstStack ??= stack;
+      }
     }
     _plugins.clear();
     await _eventController.close();
+    if (firstFailure != null) {
+      Error.throwWithStackTrace(firstFailure, firstStack!);
+    }
   }
 
   void _emit(String pluginId, PluginState oldState, PluginState newState) {
