@@ -176,6 +176,94 @@ void main() {
       expect(report.hasError, isFalse);
       expect(_messages(report).join(), contains('超出规范区间'));
     });
+
+    /// 「不会导致被拒」和「按默认值使用」是两回事——包里写的值其实照原样
+    /// 生效，提示文案不能说反。
+    test('告警的提示不说「会按默认值使用」', () {
+      final report = linter.lint(
+        _valid(
+          tokens: const {
+            'color.outline': '#CBD5E1',
+            'radius.md': 40,
+            'radius.lg': 8,
+          },
+        ),
+      );
+      final hint = _hints(report).firstWhere((h) => h.contains('不会导致主题被拒'));
+      expect(hint, contains('照原样生效'));
+    });
+  });
+
+  group('动效', () {
+    test('时长超上限只是 warning，不阻止加载', () {
+      final report = linter.lint(
+        _valid(
+          tokens: const {'color.outline': '#CBD5E1', 'motion.hover': 1500},
+        ),
+      );
+      expect(report.hasError, isFalse);
+      expect(_messages(report).join(), contains('超过 1000ms'));
+    });
+
+    test('负时长被告警', () {
+      final report = linter.lint(
+        _valid(
+          tokens: const {'color.outline': '#CBD5E1', 'motion.overlay': -5},
+        ),
+      );
+      expect(report.hasError, isFalse);
+      expect(_messages(report).join(), contains('不能为负'));
+    });
+
+    test('未知曲线名被告警，且提示有哪些可用', () {
+      final report = linter.lint(
+        _valid(
+          tokens: const {
+            'color.outline': '#CBD5E1',
+            'motion.hover.curve': 'bounce',
+          },
+        ),
+      );
+      expect(report.hasError, isFalse);
+      expect(_messages(report).join(), contains('bounce'));
+      expect(_messages(report).join(), contains('easeOutCubic'));
+    });
+
+    test('主题包设置 reduceMotion 被告警', () {
+      final report = linter.lint(
+        _valid(
+          tokens: const {
+            'color.outline': '#CBD5E1',
+            'motion.reduceMotion': true,
+          },
+        ),
+      );
+      expect(report.hasError, isFalse);
+      expect(_messages(report).join(), contains('motion.reduceMotion'));
+    });
+
+    test('合法的动效覆盖通过，生效值取到包里的', () {
+      final report = linter.lint(
+        _valid(
+          tokens: const {
+            'color.outline': '#CBD5E1',
+            'motion.hover': 90,
+            'motion.overlay.curve': 'easeInOut',
+          },
+        ),
+      );
+      expect(report.hasError, isFalse);
+      expect(
+        report.theme!.motion.hover.duration,
+        const Duration(milliseconds: 90),
+      );
+      expect(report.theme!.motion.overlay.curve, MotionCurve.easeInOut);
+      // 没覆盖的场景取基准值
+      expect(
+        report.theme!.motion.playerControls,
+        DesignMotion.standard.playerControls,
+      );
+    });
   });
 
   group('基准主题', () {
@@ -215,6 +303,11 @@ void main() {
         _valid(tokens: const {'color.primary': 'red'}), // 非法值
         _valid(tokens: const {'color.unknown': '#123456'}), // 未知键
         _valid(tokens: _hexTokens(AppTheme.dark.tokens), brightness: 'dark'),
+        // 动效问题不该把两边拉歪：lint 给 warning，运行时也不回退。
+        _valid(tokens: const {'motion.hover': 1500}),
+        _valid(tokens: const {'motion.hover.curve': 'bounce'}),
+        _valid(tokens: const {'motion.reduceMotion': true}),
+        _valid(tokens: const {'motion.hover': 1e30}),
       ];
 
       for (final text in samples) {

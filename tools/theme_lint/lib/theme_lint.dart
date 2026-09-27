@@ -144,9 +144,7 @@ class ThemeLinter {
         LintIssue(
           LintSeverity.warning,
           problem,
-          hint:
-              '这一项不会导致主题被拒，'
-              '会按内置默认值使用',
+          hint: '不会导致主题被拒，但包里写的值会照原样生效',
         ),
       );
     }

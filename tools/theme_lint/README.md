@@ -29,7 +29,7 @@ dart run tools/theme_lint/bin/theme_lint.dart --base oled path/to/theme.json
 | 级别 | 内容 |
 | --- | --- |
 | error | 不是合法 JSON、清单根不是对象、缺 `id`、`type` 不是 `theme`、缺 `theme` / `theme.tokens`、**对比度不达标** |
-| warning | 缺 `version`、未知 `color.*` 令牌、非法令牌值、`brightness` 与底色矛盾、尺度/字体令牌不合规 |
+| warning | 缺 `version`、未知 `color.*` / `motion.*` 令牌、非法令牌值、`brightness` 与底色矛盾、尺度/字体/动效令牌不合规 |
 | info | 未覆盖的颜色令牌（会取基准主题的值） |
 
 只有 error 会阻止加载；warning / info 只提示。
@@ -42,9 +42,10 @@ dart run tools/theme_lint/bin/theme_lint.dart --base oled path/to/theme.json
 却被拒。`test/theme_lint_test.dart` 里有一条用例拿同一份文本同时跑两边，
 断言结论一致。
 
-**二、尺度/字体问题不触发回退。** 圆角顺序反了不会让界面不可读，整包回退却会
-把用户真正想改的那个圆角也丢掉，所以这类问题只告警、按基准值使用。只有
-**对比度**不达标才整包拒绝——那是「不可读」，规范 §9 的硬红线。
+**二、只有对比度不达标才整包拒绝。** 圆角顺序反了、动效时长超过一秒，都不会
+让界面不可读；整包回退却会把用户真正想改的那个圆角也丢掉。所以这类问题只
+告警，**包里写的值照原样生效**（`font.scale` 是例外，它会被夹进 0.8×–1.5×）。
+对比度是「不可读」，规范 §9 的硬红线，必须拒。
 
 ## `brightness` 自洽性检查为什么单独做
 
@@ -59,4 +60,4 @@ dart run tools/theme_lint/bin/theme_lint.dart --base oled path/to/theme.json
 - **不校验字体是否存在**。Flutter 不提供字体枚举，做不到；运行时用优先级回退链
   兜底（见 `docs/09-UI规范.md` §2.3）。
 - **不校验资源文件**（`theme.assets` 引用的图片）是否存在、是否超尺寸。
-- `motion.*` 名字空间尚未落地，会被静默忽略。
+- 尚未落地的名字空间（如 `assets.*`）仍被静默忽略，不逐个告警。
