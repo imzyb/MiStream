@@ -1,0 +1,18 @@
+name: theme_lint
+description: >
+  主题包校验器，规则见 docs/09-UI规范.md §9 与 docs/06-插件系统.md §9。
+  即规范里提到的 `mistream theme lint`，供主题作者在本地自查。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  meta: ^1.18.0
+  theme_engine:
+    path: ../../packages/theme_engine
+
+dev_dependencies:
+  test: ^1.31.0

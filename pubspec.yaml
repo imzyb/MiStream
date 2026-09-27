@@ -42,6 +42,7 @@ workspace:
   - tools/libmpv_dist
   - tools/mock_source_server
   - tools/quickjs_dist
+  - tools/theme_lint
 
 dev_dependencies:
   # 上界锁在 7.8.2：melos 自 7.8.2 起要求 cli_util ^0.5.0，而 stable 基线上
@@ -101,6 +102,10 @@ melos:
     check:arch:
       description: 分层纪律与 ignore 注释校验（ROADMAP M0 出口标准 ③）
       run: dart run tools/arch_check/bin/arch_check.dart
+
+    theme:lint:
+      description: 校验主题包（docs/06-插件系统.md §9 的 `mistream theme lint`）
+      run: dart run tools/theme_lint/bin/theme_lint.dart
 
     check:all:
       description: M0 出口标准一键校验
