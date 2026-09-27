@@ -344,5 +344,61 @@ void main() {
       expect(detail.episodes, isEmpty);
       expect(detail.description, isEmpty);
     });
+
+    test('parseDetail 的剧集序号是真实下标，空段只占位', () {
+      // 源里偶尔出现 `第1集$u1##第4集$u4` 这种写法。播放端按 `split('#')` 的
+      // 下标回查地址，所以这里必须给真实下标——若按「非空剧集计数」生成，第 4 集
+      // 的 id 会变成 '1'，播放端就会取到中间那个空段。
+      final detail = DetailUseCase.parseDetail(
+        const {
+          'vod_name': '样片',
+          'vod_play_from': 'only',
+          'vod_play_url':
+              r'第1集$https://cdn.example/e1.m3u8'
+              r'##第4集$https://cdn.example/e4.m3u8',
+        },
+      );
+
+      final eps = detail.episodes['only']!;
+      expect(eps, hasLength(2));
+      expect(eps[0].id, '0');
+      expect(eps[0].name, '第1集');
+      // 真实下标是 2（中间隔着一个空段），不是 1。
+      expect(eps[1].id, '2');
+      expect(eps[1].name, '第4集');
+    });
+
+    test('parseDetail 对没有名字的剧集按真实下标兜底命名', () {
+      final detail = DetailUseCase.parseDetail(
+        const {
+          'vod_name': '样片',
+          'vod_play_from': 'only',
+          'vod_play_url':
+              r'https://cdn.example/e1.m3u8#https://cdn.example/e2.m3u8',
+        },
+      );
+
+      final eps = detail.episodes['only']!;
+      expect(eps.map((e) => e.name), ['第1集', '第2集']);
+      expect(eps.map((e) => e.id), ['0', '1']);
+    });
+
+    test('parseDetail 与 EpisodeIndex 的编解码一致', () {
+      // 生成端与消费端共用同一个值对象，这个断言防止有人把其中一端改回裸字符串。
+      final detail = DetailUseCase.parseDetail(
+        const {
+          'vod_name': '样片',
+          'vod_play_from': 'only',
+          'vod_play_url': r'第1集$a#第2集$b#第3集$c',
+        },
+      );
+
+      final ids = detail.episodes['only']!.map((e) => e.id).toList();
+      expect(ids.map(EpisodeIndex.parse), [
+        EpisodeIndex.first,
+        const EpisodeIndex(1),
+        const EpisodeIndex(2),
+      ]);
+    });
   });
 }

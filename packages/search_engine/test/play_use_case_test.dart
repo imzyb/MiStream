@@ -276,7 +276,9 @@ void main() {
       );
     });
 
-    test('集数越界时回到第一集', () async {
+    test('集数越界时报错，不回退到第一集', () async {
+      // 回退是危险的：用户点第 99 集却看到第 1 集，且进度会记到错的位置上。
+      // 该源只有 3 集，越界就该明确失败。
       final sites = await _sitesWith();
       final useCase = PlayUseCase(
         sites,
@@ -290,13 +292,117 @@ void main() {
         episodeId: '99',
       );
 
+      expect(result.isErr, isTrue);
+      expect(result.errorOrNull!.code, ErrorCode.notFound);
+      expect(result.errorOrNull!.message, contains('第 100 集'));
+    });
+
+    test('只有部分线路缺这一集时跳过该线路，其它线路照常播', () async {
+      // 各线路集数不等是常态：点第 5 集时，3 集的那条线路应当被跳过，
+      // 而不是悄悄回退成「第 1 集」混进候选里。
+      final sites = await _sitesWith();
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(
+          _FakeRuntime(
+            _detailBody(
+              playFrom: r'short$$$full',
+              playUrl:
+                  r'第1集$https://cdn.a.com/short1.m3u8'
+                  r'$$$'
+                  r'第1集$https://cdn.a.com/f1.m3u8'
+                  r'#第2集$https://cdn.a.com/f2.m3u8'
+                  r'#第3集$https://cdn.a.com/f3.m3u8'
+                  r'#第4集$https://cdn.a.com/f4.m3u8'
+                  r'#第5集$https://cdn.a.com/f5.m3u8',
+            ),
+          ),
+        ),
+      );
+
+      // 用户选中的是集数不足的那条（short），它没有第 5 集。
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'short',
+        episodeId: '4',
+      );
+
+      expect(result.isOk, isTrue);
       expect(
         result.valueOrNull!.mediaSource.uri.toString(),
-        'https://cdn.a.com/1/index.m3u8',
+        'https://cdn.a.com/f5.m3u8',
+      );
+      // 绝不能是 short 线路的第 1 集。
+      expect(
+        result.valueOrNull!.mediaSource.uri.toString(),
+        isNot('https://cdn.a.com/short1.m3u8'),
+      );
+    });
+
+    test('剧集串里的空段不会让序号错位', () async {
+      // 详情页与播放页都用 split('#') 的真实下标定位，空段占位但不计入集号。
+      // 若详情页改回「非空剧集计数」，它会为第 3 项生成 id '1'，播放端就会取到
+      // 空段并报「播放地址为空」——这个用例把两端的约定钉在一起。
+      final sites = await _sitesWith();
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(
+          _FakeRuntime(
+            _detailBody(
+              playFrom: 'only',
+              playUrl:
+                  r'第1集$https://cdn.a.com/e1.m3u8##第4集$https://cdn.a.com/e4.m3u8',
+            ),
+          ),
+        ),
+      );
+
+      // 真实下标 2 = 第 4 集。
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'only',
+        episodeId: '2',
+      );
+
+      expect(result.isOk, isTrue);
+      expect(
+        result.valueOrNull!.mediaSource.uri.toString(),
+        'https://cdn.a.com/e4.m3u8',
+      );
+    });
+
+    test('剧集名留空（只有分隔符）时也能取到地址', () async {
+      // 按「整串就是地址」处理会把 $ 一起交给播放器，那是必然打不开的地址。
+      final sites = await _sitesWith();
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(
+          _FakeRuntime(
+            _detailBody(
+              playFrom: 'only',
+              playUrl: r'$https://cdn.a.com/noname.m3u8',
+            ),
+          ),
+        ),
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'only',
+      );
+
+      expect(result.isOk, isTrue);
+      expect(
+        result.valueOrNull!.mediaSource.uri.toString(),
+        'https://cdn.a.com/noname.m3u8',
       );
     });
 
     test('episodeId 非数字时回到第一集', () async {
+      // 与「越界」不同：拿不到有效集号时按第一集处理是合理的兜底。
       final sites = await _sitesWith();
       final useCase = PlayUseCase(
         sites,
@@ -314,6 +420,59 @@ void main() {
         result.valueOrNull!.mediaSource.uri.toString(),
         'https://cdn.a.com/1/index.m3u8',
       );
+    });
+  });
+
+  group('播放结果回填集号', () {
+    test('PlayResult 带上归一后的集号', () async {
+      final sites = await _sitesWith();
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(_FakeRuntime(_detailBody())),
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'lzm3u8',
+        episodeId: '2',
+      );
+
+      expect(result.valueOrNull!.episodeIndex, const EpisodeIndex(2));
+    });
+
+    test('未指定集号时回填第一集', () async {
+      // 播放页要用它写历史，不该再自己解析一遍入参。
+      final sites = await _sitesWith();
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(_FakeRuntime(_detailBody())),
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'lzm3u8',
+      );
+
+      expect(result.valueOrNull!.episodeIndex, EpisodeIndex.first);
+    });
+
+    test('脏集号也回填第一集', () async {
+      final sites = await _sitesWith();
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(_FakeRuntime(_detailBody())),
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'lzm3u8',
+        episodeId: '-3',
+      );
+
+      expect(result.valueOrNull!.episodeIndex, EpisodeIndex.first);
     });
   });
 

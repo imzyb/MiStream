@@ -18,11 +18,20 @@ const _defaultUserAgent =
 class PlayResult {
   const PlayResult({
     required this.mediaSource,
+    required this.episodeIndex,
     this.title,
     this.coverUrl,
     this.viaSniffing = false,
   });
   final MediaSource mediaSource;
+
+  /// 本次实际播放的剧集序号。
+  ///
+  /// 是**权威值**，不是把入参原样带回来：调用方（播放页）要用它写播放历史，
+  /// 而历史必须记录真正播出的那一集。入参为 `null` 或脏值时这里已经归一成
+  /// 第一集，调用方不必再解析一遍 [getPlayableSource] 的 `episodeId`。
+  final EpisodeIndex episodeIndex;
+
   final String? title;
   final String? coverUrl;
 
@@ -86,7 +95,9 @@ class PlayUseCase {
   /// [siteId] 站点 ID
   /// [vodId] 影片 ID
   /// [flag] 播放源标识（如"量子"、"无尽"，对应 `vod_play_from` 中的线路名）
-  /// [episodeId] 剧集索引（0-based，对应 `vod_play_url` 中的剧集位置）
+  /// [episodeId] 剧集序号，字符串形态即详情页的 `VodEpisode.id`；`null`、空串
+  ///   或脏值都按第一集处理。序号与线路内剧集下标的对应关系由 [EpisodeIndex]
+  ///   统一定义，越界会明确报错而**不会**退回第一集。
   Future<Result<PlayResult, AppError>> getPlayableSource({
     required int siteId,
     required String vodId,
@@ -125,7 +136,8 @@ class PlayUseCase {
     if (extracted.isErr) {
       return Err(extracted.errorOrNull!);
     }
-    final candidates = extracted.valueOrNull!;
+    final candidates = extracted.valueOrNull!.list;
+    final episodeIndex = extracted.valueOrNull!.episodeIndex;
 
     // 4. 站点域名作为默认 Referer：源站的反盗链多数只看域，不看具体路径。
     final apiUri = Uri.tryParse(site.api);
@@ -136,7 +148,7 @@ class PlayUseCase {
     final sniffer = resolver;
     if (sniffer == null && browserSniffer == null) {
       // 两级嗅探都没装：保持旧行为，原地址直接交给播放器。
-      return Ok(_plainResult(candidates.first.url, siteReferer));
+      return Ok(_plainResult(candidates.first.url, siteReferer, episodeIndex));
     }
 
     // 5. 逐条线路尝试：网页线路要嗅探出真实流地址，直链线路走快路径。
@@ -157,6 +169,7 @@ class PlayUseCase {
               uri: Uri.parse(media.url),
               headers: media.headers,
             ),
+            episodeIndex: episodeIndex,
             viaSniffing: media.viaSniffing,
           ),
         );
@@ -186,6 +199,7 @@ class PlayUseCase {
                 uri: Uri.parse(hit),
                 headers: {...headers, 'Referer': candidate.url},
               ),
+              episodeIndex: episodeIndex,
               viaSniffing: true,
             ),
           );
@@ -199,7 +213,7 @@ class PlayUseCase {
         .where((c) => SnifferResolver.looksLikeDirectMedia(c.url))
         .firstOrNull;
     if (directFallback != null) {
-      return Ok(_plainResult(directFallback.url, siteReferer));
+      return Ok(_plainResult(directFallback.url, siteReferer, episodeIndex));
     }
 
     return Err(
@@ -232,7 +246,11 @@ class PlayUseCase {
   }
 
   /// 不经嗅探、直接把原地址包成 [PlayResult]。
-  PlayResult _plainResult(String url, String? referer) => PlayResult(
+  PlayResult _plainResult(
+    String url,
+    String? referer,
+    EpisodeIndex episodeIndex,
+  ) => PlayResult(
     mediaSource: MediaSource(
       uri: Uri.parse(url),
       headers: {
@@ -240,6 +258,7 @@ class PlayUseCase {
         'Referer': ?referer,
       },
     ),
+    episodeIndex: episodeIndex,
   );
 
   /// 把嗅探失败翻译成领域错误。
@@ -269,8 +288,8 @@ class PlayUseCase {
     };
   }
 
-  /// 本集在某条线路上的候选地址。
-  Result<List<_Candidate>, AppError> _extractCandidates({
+  /// 本集在各条线路上的候选地址，以及归一后的集号。
+  Result<_Candidates, AppError> _extractCandidates({
     required String body,
     required String flag,
     required String? episodeId,
@@ -298,12 +317,21 @@ class PlayUseCase {
       );
 
       final requestedIndex = flags.indexOf(flag);
-      final episodeIndex = int.tryParse(episodeId ?? '') ?? 0;
+      final episodeIndex = EpisodeIndex.parse(episodeId);
 
       final out = <_Candidate>[];
+      // 有没有**任何**一条线路含这一集。全部都没有时该报「集不存在」，而不是
+      // 「地址为空」——前者用户能理解（源更新了集数），后者看着像解析 bug。
+      var anyLineHasEpisode = false;
       for (var i = 0; i < flagUrls.length; i++) {
-        final url = _episodeUrl(flagUrls[i], episodeIndex);
-        if (url == null || url.isEmpty) continue;
+        final episodes = _splitEpisodes(flagUrls[i]);
+        final resolved = episodeIndex.resolveIn(episodes.length);
+        // 越界 = 这条线路没有这一集。**跳过**而不是退回第一集：各线路集数不等
+        // 是常态，若在这里回退，用户点第 5 集时就可能从另一条线路悄悄播出第 1 集。
+        if (resolved == null) continue;
+        anyLineHasEpisode = true;
+        final url = _episodeUrl(episodes[resolved.value]);
+        if (url == null) continue;
         out.add(
           _Candidate(
             url: url,
@@ -314,6 +342,14 @@ class PlayUseCase {
       }
 
       if (out.isEmpty) {
+        if (!anyLineHasEpisode) {
+          return Err(
+            LocalError(
+              code: ErrorCode.notFound,
+              message: '第 ${episodeIndex.value + 1} 集在该源上不存在',
+            ),
+          );
+        }
         return const Err(
           LocalError(
             code: ErrorCode.spiderParseFailed,
@@ -331,7 +367,7 @@ class PlayUseCase {
         if (aDirect != bDirect) return aDirect ? -1 : 1;
         return 0;
       });
-      return Ok(out);
+      return Ok(_Candidates(list: out, episodeIndex: episodeIndex));
     } on Object catch (e) {
       return Err(
         LocalError(
@@ -342,17 +378,24 @@ class PlayUseCase {
     }
   }
 
-  /// 从一条线路的剧集串里取第 [episodeIndex] 集的地址。
+  /// 把一条线路的剧集串切成剧集列表。
   ///
-  /// 线路内以 `#` 分隔剧集，每集是 `名称$地址`；越界时退回第一集。
-  static String? _episodeUrl(String line, int episodeIndex) {
-    final episodes = line.split('#');
-    if (episodes.isEmpty) return null;
-    var index = episodeIndex;
-    if (index < 0 || index >= episodes.length) index = 0;
-    final episode = episodes[index];
+  /// 单独抽出来是因为 `String.split` 对空串返回 `['']`（长度 1）而不是空列表，
+  /// 这个语义正好用来区分两种「没地址」：有线路但地址为空时集号**是**有效的
+  /// （长度 1），只有真的越界才由 [EpisodeIndex.resolveIn] 判为不存在。
+  static List<String> _splitEpisodes(String line) => line.split('#');
+
+  /// 从单集串（`名称$地址`）里取出地址；没有地址时返回 `null`。
+  ///
+  /// 只管一集、不管下标——「取第几集」与「越界怎么办」分别由
+  /// [EpisodeIndex.resolveIn] 和调用方负责，各自只有一处实现。
+  ///
+  /// `$` 在第 0 位（名称留空，如 `$https://...`）也算分隔符：按「整串就是地址」
+  /// 处理会把 `$` 一起交给播放器，那是必然打不开的地址。
+  static String? _episodeUrl(String episode) {
     final dollarIndex = episode.indexOf(r'$');
-    return dollarIndex > 0 ? episode.substring(dollarIndex + 1) : episode;
+    final url = dollarIndex >= 0 ? episode.substring(dollarIndex + 1) : episode;
+    return url.isEmpty ? null : url;
   }
 
   /// 根据站点类型创建运行时。
@@ -379,6 +422,17 @@ class PlayUseCase {
     // 降级：总是用 HttpRuntime
     return HttpRuntimeAdapter(HttpRuntime(site.api));
   }
+}
+
+/// [_extractCandidates] 的结果：本集的候选地址，以及归一后的集号。
+///
+/// 集号跟着候选一起返回，是为了让 [PlayResult] 能带上「实际播的是哪一集」——
+/// 调用方要用它写播放历史，不该再自己解析一遍入参。
+class _Candidates {
+  const _Candidates({required this.list, required this.episodeIndex});
+
+  final List<_Candidate> list;
+  final EpisodeIndex episodeIndex;
 }
 
 /// 一条候选播放地址。

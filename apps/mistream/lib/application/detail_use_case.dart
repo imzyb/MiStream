@@ -19,7 +19,10 @@ class VodEpisode {
   /// 剧集名（如「第 1 集」）。
   final String name;
 
-  /// 剧集地址或标识，透传给播放页。
+  /// 剧集在本线路 `vod_play_url` 里的下标（[EpisodeIndex.asId] 的字符串形态）。
+  ///
+  /// 播放页把它原样交给 `PlayUseCase` 回查地址，两端的对应关系由
+  /// [EpisodeIndex] 统一定义。
   final String id;
 }
 
@@ -225,12 +228,16 @@ class DetailUseCase {
       final epParts = urlStr.split('#');
       for (var j = 0; j < epParts.length; j++) {
         final ep = epParts[j];
+        // 空段只占位、不成集：源里偶尔出现 `第1集$u1##第4集$u4` 这种写法。
         if (ep.isEmpty) continue;
         final dollarIndex = ep.indexOf(r'$');
         final name = dollarIndex > 0
             ? ep.substring(0, dollarIndex)
             : '第${j + 1}集';
-        eps.add(VodEpisode(name: name, id: '${eps.length}'));
+        // id 必须是 `epParts` 里的**真实下标**，不能是 `eps.length`：跳过的空段
+        // 仍占一个位置，用计数会让序号整体前移，播放端按下标回查就取错集
+        // （详见 EpisodeIndex 的文档）。
+        eps.add(VodEpisode(name: name, id: EpisodeIndex(j).asId));
       }
       episodes[flag] = eps;
     }
