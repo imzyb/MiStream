@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:media_sniffer/media_sniffer.dart';
+import 'package:meta/meta.dart';
 import 'package:mistream/application/config_install_service.dart';
 import 'package:mistream/application/detail_use_case.dart';
 import 'package:search_engine/search_engine.dart';
@@ -167,14 +168,51 @@ class AppAssembly {
     );
   }
 
-  /// 定位 java 可执行文件：JAVA_HOME 优先，fallback 到 PATH 里的 `java`。
-  static String? _resolveJavaPath() {
-    final javaHome = Platform.environment['JAVA_HOME'];
+  /// 定位 java 可执行文件：`JAVA_HOME` 优先，其次在 `PATH` 里逐个目录找。
+  ///
+  /// 只认 `JAVA_HOME` 是不够的：用 winget / scoop / 绿色版 JDK 装的机器常常只把
+  /// `java` 放进 `PATH` 而不设 `JAVA_HOME`。漏掉这一路，`classifySiteRuntime`
+  /// 判为 jvm 的站点（`api` 以 `csp_` 开头）会被整体当成「无运行时」——片源列表
+  /// 里灰显不可点，探测阶段也直接跳过，整份 `csp_` 配置看起来完全不可用。
+  static String? _resolveJavaPath() => resolveJavaPath(
+    javaHome: Platform.environment['JAVA_HOME'],
+    pathValue: Platform.environment['PATH'],
+  );
+
+  /// [_resolveJavaPath] 的实际逻辑。
+  ///
+  /// 环境值显式收参而不是自己读 `Platform.environment`，是为了可测——进程内的
+  /// 环境变量改不了，只能把「值」传进来；否则「PATH 回退」这一条最关键的路径
+  /// 就永远只能靠人工在真实机器上碰运气验证。
+  @visibleForTesting
+  static String? resolveJavaPath({String? javaHome, String? pathValue}) {
     if (javaHome != null && javaHome.isNotEmpty) {
       final candidate = File(
         '$javaHome${Platform.pathSeparator}bin'
-        '${Platform.pathSeparator}java.exe',
+        '${Platform.pathSeparator}${_javaExecutableName}',
       );
+      if (candidate.existsSync()) return candidate.path;
+    }
+    return findExecutableOnPath(pathValue, _javaExecutableName);
+  }
+
+  /// java 可执行文件名；Windows 带 `.exe` 后缀。
+  static String get _javaExecutableName =>
+      Platform.isWindows ? 'java.exe' : 'java';
+
+  /// 在 `PATH` 值里逐个目录找 [executable]，返回第一个存在的绝对路径。
+  ///
+  /// 用 `existsSync` 逐目录探测，而不是 `Process.run('java', ['-version'])`：
+  /// 本机进程创建有已知缺陷（命名管道忙），环境探测必须避免起子进程。
+  @visibleForTesting
+  static String? findExecutableOnPath(String? pathValue, String executable) {
+    if (pathValue == null || pathValue.isEmpty) return null;
+    final separator = Platform.isWindows ? ';' : ':';
+    for (final rawDir in pathValue.split(separator)) {
+      // PATH 里出现空段（`;;`）或多余空白是常态，跳过即可，不必当错误。
+      final dir = rawDir.trim();
+      if (dir.isEmpty) continue;
+      final candidate = File('$dir${Platform.pathSeparator}$executable');
       if (candidate.existsSync()) return candidate.path;
     }
     return null;
