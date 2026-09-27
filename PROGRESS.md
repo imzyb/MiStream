@@ -10,14 +10,14 @@
 | --- | --- | --- |
 | M0 工程奠基 | 4/4 | ✅ 完成 |
 | M1 播放内核 | 0/7 | ⏸ 依赖真实播放矩阵 |
-| M2 数据层 | 0/5 | ⏸ 缺迁移/备份验证 |
+| M2 数据层 | 4/5 | 🟢 迁移/备份/导入导出均已自动化验证；冷启动 50ms 阈值待基准机确认 |
 | M3 RPC + Spider 骨架 | 5/6 | 🟢 仅剩真实 type=1 源 |
 | M4 JS 运行时 | 5/6 | 🟢 仅剩真实源 |
 | M5 主线 UI 闭环 | 5/7 | 🟢 仅剩真实配置/长跑 |
 | M6 嗅探与解析 | 1/5 | 🟡 CDP 嗅探运行时已落地，缺真实 type=0 源 |
 | M7 直播 | 0/4 | 🟡 包已建，缺验收 |
 | M8 下载与离线 | 0/5 | 🟡 真实实现已接入，缺验收 |
-| M9 插件系统与主题 | 0/6 | 🟡 包已建，缺验收 |
+| M9 插件系统与主题 | 0/6 | 🟡 包已建；状态机已补测（现有 4 态），缺升级/回滚 |
 | M10 发布工程 | 0/6 | 🟡 发布链草稿已就位 |
 | M11-M15 | — | 🔴 未启动 |
 
@@ -95,7 +95,7 @@
 - **M6** `packages/media_sniffer`（66 测试）：规则引擎、直链验证、HLS 样本测试齐；`runtimes/sniffer` **已落地 CDP 嗅探运行时**（70 测试，含真实 Edge/Chrome 端到端启动验证）；缺真实 type=0 网页源验收
 - **M7** `packages/live`（17 测试）：m3u/txt 解析、drift 收藏、XMLTV EPG；缺换台/重试/长跑验收
 - **M8** `packages/download`（22 测试）：任务状态机、Range 断点续传、HLS 分片；**假实现已替换为真实实现**（提交 `720dad3`），缺真实网络断点/离线播放验收
-- **M9** `packages/plugin_host`（19 测试）+ **`packages/theme_engine`**（新增独立包，提交 `b113410`）：清单/权限/sha256/isolate 沙箱、对比度计算；缺生命周期状态机全覆盖
+- **M9** `packages/plugin_host`（**30 测试**，2026-09-28 由 19 补到 30）+ **`packages/theme_engine`**（新增独立包，提交 `b113410`）：清单/权限/sha256/isolate 沙箱、对比度计算。**生命周期状态机已补测**（提交 `68a163d`：`PluginState.error` 此前从未被赋值、属死状态，已让激活失败可进入 error 并补全迁移真值表）。仍缺**升级/回滚**状态（`PluginManager` 无 upgrade/rollback），故「生命周期状态机测试全覆盖」尚不能勾
 
 
 > 注：`DownloadManager.startDownload()` 已完成真实实现（提交 `720dad3`）。`runtimes/sniffer` 的占位已由 CDP 实现替换（提交 `bb00635`）。
@@ -899,6 +899,62 @@ P1 的修法是把环境值显式收参（`resolveJavaPath({javaHome, pathValue}
 
 `_CategoryDetailPage` 用全局装配、选源口径不一致。
 
+## 本次会话（2026-09-28）：插件生命周期状态机补全
+
+接着上一节收尾「M9 剩余」。开工前先核账，发现两处记录失真（都已更正）：
+
+- **「M2 缺迁移/备份验证」不成立**：`storage/test/migration_test.dart`（5 例，
+  v1→v3 / v2→v3）、`backup_manager_test.dart`（含「迁移失败抛异常且备份仍在，
+  库文件未被半迁移污染」）、`backup_exporter_test.dart`（导出/导入 6 例）、
+  `perf_test.dart` 早已齐备。总览表 M2 由 `0/5 ⏸ 缺迁移/备份验证` 更正为
+  `4/5 🟢`（仅冷启动 50ms 需基准机确认，测试里是 500ms 护栏）
+- **「plugin_host 19 测试」没被真正跑过**：垫片 `run_tests_shim.dart` 里
+  **从来没有 plugin_host 的入口**，该包两个测试文件一直是静默漏跑。已补进垫片
+
+### 缺陷：`PluginState.error` 是死状态（提交 `68a163d`）
+
+`plugin_api.dart` 声明了 4 个状态与 3 个迁移闸门（`canEnable` / `canDisable` /
+`canUninstall`），但全仓核对的结果是：
+
+- `PluginState.error` **从未被赋值**。`install` / `enable` 都是
+  `await api.onActivate()` 裸调用 —— 激活失败时异常直接抛给调用方，
+  **管理器里不留任何痕迹**：用户既看不到这个插件，也无从卸载它
+- `canUninstall` **定义了却无人调用**，且语义是错的（`this != error` 意味着
+  故障插件永远卸不掉）。已删除 —— 卸载本就不该设闸门
+
+修法：
+
+- `install` 改为**先登记后激活**，激活失败时插件以 `error` 态留在管理器里并
+  发出事件；异常仍照常抛出（调用方据此提示「已安装但启用失败」，重试走 `enable`）
+- `enable` 同样在激活失败时转入 `error`；`canEnable` 接纳 `error` —— 那是
+  「重试激活」，否则故障插件只剩卸载重装一条路
+- `disable` 失败时**保持 `enabled`**：插件实际仍在运行，标成已停用或故障
+  都不符合事实
+- `disposeAll` 逐个容错：一个坏插件的 `onDispose` 不该阻断其余插件的清理，
+  更不该让事件流关不掉；清理完再把第一个异常抛出去，不静默吞掉
+
+### 顺带修掉一个假覆盖
+
+`install duplicate throws` 用的是 `expect(() => manager.install(...), throwsA(...))`。
+`install` 是 `async` 函数，异常进的是 Future 而不是同步抛出，**闭包形式断言
+不到** —— 已改为 `await expectLater(...)`，并补上「重复安装失败不破坏已装好的
+那个」的断言。
+
+### 验证
+
+| 项 | 结果 |
+| --- | --- |
+| 垫片用例 | 90 → **120**（plugin_host 19 → 30） |
+| `analyze_inproc` | 313 文件 **0 error / 0 warning / 0 info** |
+| `dart format` | 0 changed |
+| `arch_check` | 分层纪律检查通过 |
+| 反向验证 | 摘掉 `canEnable` 的 error 分支 → 2 例红；还原 `install` 登记顺序 → 3 例红；还原 `disposeAll` 朴素循环 → 1 例红 |
+
+**仍未做**：ROADMAP M9 交付物「版本目录 + 指针切换的原子升级与回滚」尚未落地
+（`PluginManager` 只有 install/enable/disable/uninstall/disposeAll）。因此
+「生命周期状态机测试全覆盖」只算**覆盖了现有 4 态的全部迁移**，升级/回滚补齐前
+不能勾。
+
 ## 下一步（按优先级，2026-09-19 续）
 
 1. **P0 仓库健康** ✅ **已定位并交付守卫脚本**；根因属 I: 盘文件系统语义，
@@ -909,12 +965,20 @@ P1 的修法是把环境值显式收参（`resolveJavaPath({javaHome, pathValue}
    契约）均落地；2026-09-25 补齐最后的 JSON 解析组
    `jsonpath`/`pjfh`/`pj`/`pjfa`（提交 `0888440`，compat 用例 130 → **178**）。
    同表其余项建议继续对 `docs/05` §2.2 核账
-4. **P3 验收** 补齐出口标准中纯本地可验证的条目：M2 迁移回滚测试、
+4. **P3 验收** 补齐出口标准中纯本地可验证的条目：~~M2 迁移回滚测试~~ ✅
+   **已完成**（`storage/test/migration_test.dart` 5 例覆盖 v1→v3 / v2→v3；
+   `backup_manager_test.dart` 覆盖「迁移失败 → 回滚 → 备份仍在」；本文件
+   此前记「缺迁移/备份验证」有误，2026-09-28 已更正总览表）、
    ~~M9 主题对比度测试~~ ✅ **已完成**（2026-09-26，四套主题 × 16 对组合
    全量断言，主题包共用同一份矩阵）、~~M9 尺度/字体/动效令牌~~ ✅ **已完成**
-   （2026-09-26 续与 2026-09-27）、M5 长跑稳定性
+   （2026-09-26 续与 2026-09-27）、~~M9 生命周期状态机测试~~ ✅ **已完成现有
+   4 态的全部迁移**（2026-09-28，提交 `68a163d`）、M5 长跑稳定性
    - **M9 剩余**：主题包的安装/启用链路（从插件目录加载，现在只有解析与校验）、
-     生命周期状态机测试全覆盖、沙箱逃逸测试
+     **升级/回滚** —— ROADMAP M9 交付物「版本目录 + 指针切换的原子升级与回滚」
+     尚未落地（`PluginManager` 只有 install/enable/disable/uninstall/disposeAll，
+     全仓 `upgrade|rollback` 只命中错误码常量与 `database.dart` 的 `onUpgrade`）、
+     沙箱逃逸测试（其中 SSRF 一条实际由
+     `spider_host/test/host_api_redirect_test.dart` 9 例覆盖，不在 plugin_host）
 5. **P4 债务** `libs/*.jar` 改 `tools/jvm_dist` 按需拉取、契约/长跑测试、
    播放页/首页之外的页面去 `globalRouterAssembly`（播放页与首页已完成注入化）
 6. **P5 阻塞** 网络方案（代理 / 可访问机器）——所有「真实源」类出口标准都卡在此
