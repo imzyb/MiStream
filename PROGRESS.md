@@ -850,13 +850,16 @@ M0 门禁顶红过一次，而那与产品代码的健康度无关。把 `.workb
 审查（只读），完整报告见 **`docs/CODE_AUDIT_2026-09-27.md`**。四段的降级链都是
 真实现，不是注释里的愿景；问题集中在**资源回收 / 环境探测 / 同一件事实现两遍**。
 
-### 已修（3 项，均已反向验证）
+### 已修（6 项，均已反向验证或补了单测）
 
 | 缺陷 | 位置 | 验证 |
 | --- | --- | --- |
 | **P0** `PlayUseCase` 创建的 runtime 从不回收，每播一集泄漏一个 JS/JVM 子进程 | `packages/search_engine/lib/src/play_use_case.dart` | 摘掉回收 → 新增 5 例中 **4 例变红** |
 | **P1** `_resolveJavaPath` 只查 `JAVA_HOME`（注释却承诺 PATH 回退），导致 `csp_` 站点在未设该变量的机器上被整体判成「无运行时」 | `apps/mistream/lib/application/app_assembly.dart` | 摘掉回退 → 新增 8 例中 **3 例变红** |
 | **P2** `parseDetail` 文档注释写「剧集以 `##` 分隔」，实现是 `#`（代码对、注释错） | `apps/mistream/lib/application/detail_use_case.dart` | 纯文档 |
+| **P2** 搜索层无法选片源（`_goDetail` 只取 `sources.first`） | `apps/mistream/lib/features/detail/detail_page.dart` | 详情页新增「片源」切换 |
+| **P3** 引导页导入失败提示在重试**之前**就显示（闪一下 + 多发一次请求），图片类内容还会被无意义地重试 | `apps/mistream/lib/features/onboarding/onboarding_page.dart` | 改为最后一次尝试才报错 |
+| **P3** 引导页自建一套弱于 `ConfigDecoder.probeNonJson` 的 HTML 判定；Base64 导入丢 `sourceUrl`（相对路径脚本解析失败） | 同上 + `packages/core_config/test/config_decoder_test.dart` | 改用 `probeNonJson`，并补 **6 例直接单测**（此前只有间接覆盖） |
 
 P0 的修法是把「取详情 + 回收」收进 `_detailAndDispose`，成功 / 业务失败 / 抛异常
 三条路径都 dispose，与 `DetailUseCase.load`、`HomeUseCase._trySites` 同一套纪律。
@@ -865,11 +868,15 @@ P1 的修法是把环境值显式收参（`resolveJavaPath({javaHome, pathValue}
 新增 `apps/mistream/test/application/app_assembly_test.dart`（13 例），已挂进
 `run_tests_shim.dart`。垫片总用例数 **60 → 78**。
 
+搜索层选源的实现顺带修掉一个隐性缺口：`DetailPage.item` 一直**声明了但从未使用**
+（注释写着「用于即时展示标题/封面」），现在它成了片源列表的数据来源。切源用
+`replaceNamed` 而非 `pushNamed`，并补 `didUpdateWidget` —— go_router 对同一路由模板
+复用同一个 page key，不补的话换源后页面会停在上一部片上。
+
 ### 仍未修（进下一步清单，见下）
 
-搜索层不能选源、引导页三处（重复报错 / HTML 判定弱 / Base64 丢 `sourceUrl`）、
-剧集越界静默回退第 1 集、`episodeId` 序号约定两处各自实现、搜索结果网格全量重建、
-`_CategoryDetailPage` 用全局装配、选源口径不一致。
+`_CategoryDetailPage` 用全局装配、剧集越界静默回退第 1 集、`episodeId` 序号约定
+两处各自实现、搜索结果网格全量重建、选源口径不一致。
 
 ## 下一步（按优先级，2026-09-19 续）
 
@@ -914,22 +921,16 @@ P1 的修法是把环境值显式收参（`resolveJavaPath({javaHome, pathValue}
    换新窗口内的宿主复用已修（四续，`ac86873`）；仍待做的是**真子进程端到端
    验证**（本机 `Process.start` 被管道缺陷挡住，`CreateFile failed 231`，只能等
    环境恢复）。
-9. **P2/P3 主链路审查余项**（来自 `docs/CODE_AUDIT_2026-09-27.md`，P0/P1 已修）
-   - **搜索层不能选源**：`search_page.dart` 的 `_goDetail` 只取 `sources.first`。
-     `SearchItem.sources` 已随 `extra` 传进详情页，数据是现成的；注意**线路 ≠
-     片源**，详情页现有的线路 chips 解决不了这个问题
-   - **引导页三处**：① `:56-59` 收到 `notConfig` 会换 UA 重试，但 `:110-117` 在
-     返回 `notConfig` 前已 `setState` 报过错 → 重复报错 + 多发一次请求（
-     `_ImportAttempt` 的枚举注释把「已给明确错误」与「值得重试」混在一个值里）；
-     ② HTML 判定只看前 200 字节 `startsWith`，弱于 `ConfigDecoder.probeNonJson`；
-     ③ `:393` `_importFromBase64` 调 `_processImport(bytes)` **不传 `sourceUrl`**
-     → 相对路径 spider 脚本解析失败（同样内容用 URL 导入却成功）——这是真实
-     功能缺失，建议单独提
+9. **P2/P3 主链路审查余项**（来自 `docs/CODE_AUDIT_2026-09-27.md`）
+   ~~搜索层不能选源~~ ✅、~~引导页三处~~ ✅（2026-09-27 已修，见上一节）。余下：
    - **播放段边界**：`play_use_case.dart` 剧集越界**静默回退第 1 集**，UI 无提示；
      `episodeId` 的「序号」约定在 `detail_use_case.dart`（生成）与
-     `play_use_case.dart`（消费）两处各自实现，任一处改动都会静默退到第 1 集
+     `play_use_case.dart`（消费）两处各自实现，任一处改动都会静默退到第 1 集。
+     修的时候一起做：回退时把「实际播放的集号」回传给 UI，或越界时优先换一条
+     集数足够的线路；`episodeId` 抽成显式值对象
    - **搜索结果网格全量重建**：`search_page.dart` 每次进度 `_items..clear()
-     ..addAll()`，`MediaCard` 无 key → 8 个源闪 8 次（滚动位置跳动、封面重复解码）
+     ..addAll()`，`MediaCard` 无 key → 8 个源闪 8 次（滚动位置跳动、封面重复解码）。
+     给卡片加稳定 key 或改增量更新
    - **`_CategoryDetailPage` 用 `globalRouterAssembly`** 而非注入（`router.dart`
      两处）。功能上正确（其 `siteId` 已被 `_loadData` 同步为 `workingSiteId`），
      但正确性依赖隐式同步，脆弱
