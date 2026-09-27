@@ -3,6 +3,7 @@ library;
 
 import 'dart:async' show unawaited;
 
+import 'package:core_domain/core_domain.dart' show EpisodeIndex;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mistream/app/router.dart' show globalRouterAssembly;
@@ -171,35 +172,50 @@ class _LibraryPageState extends State<LibraryPage>
     }
   }
 
+  /// 历史记录点进去直接续播。
+  ///
+  /// 走 `player` 而不是 `detail`：`History` 里已经存了线路名（`flag`）与集号
+  /// （`episodeIndex`），足够直接起播。此前这里 push 的是 `detail`，而 extra
+  /// 用的却是播放路由的键名——detail 路由只认 `SearchItem`，整个 extra 被丢弃，
+  /// 「继续播放」实际只是打开了详情页。
   void _playHistory(History history) {
-    context.pushNamed(
-      'detail',
-      pathParameters: {
-        'siteId': history.siteId.toString(),
-        'vodId': history.vodId,
-      },
-      extra: <String, Object?>{
-        'episodeId': history.flag ?? '',
-        'episodeName': history.episodeName ?? '',
-        'vodName': history.vodName,
-        'vodPic': history.vodPic,
-      },
+    final flag = history.flag;
+    // 早期记录可能没写线路名，此时没有足够信息起播，退回详情页让用户自己选。
+    if (flag == null || flag.isEmpty) {
+      _openDetail(history.siteId, history.vodId);
+      return;
+    }
+    unawaited(
+      context.pushNamed(
+        'player',
+        pathParameters: {
+          'siteId': history.siteId.toString(),
+          'vodId': history.vodId,
+          'flag': flag,
+        },
+        extra: <String, Object?>{
+          // 集号来自落库的 episodeIndex。**不要**用 flag 充当集号——线路名与
+          // 集号是两套语义，此前就是这么传错的。
+          'episodeId': EpisodeIndex.of(history.episodeIndex).asId,
+          'episodeName': history.episodeName ?? '',
+          'vodName': history.vodName,
+          'vodPic': history.vodPic,
+        },
+      ),
     );
   }
 
-  void _playFavorite(Favorite favorite) {
-    context.pushNamed(
-      'detail',
-      pathParameters: {
-        'siteId': favorite.siteId.toString(),
-        'vodId': favorite.vodId,
-      },
-      extra: <String, Object?>{
-        'episodeId': '',
-        'episodeName': '',
-        'vodName': favorite.vodName,
-        'vodPic': favorite.vodPic,
-      },
+  /// 收藏没有线路名与集号，只能先进详情页。
+  void _playFavorite(Favorite favorite) =>
+      _openDetail(favorite.siteId, favorite.vodId);
+
+  /// 打开详情页；线路与剧集由详情页自己加载，不需要额外参数。
+  void _openDetail(int siteId, String vodId) {
+    unawaited(
+      context.pushNamed(
+        'detail',
+        pathParameters: {'siteId': siteId.toString(), 'vodId': vodId},
+      ),
     );
   }
 

@@ -3,6 +3,7 @@ library;
 
 import 'dart:async';
 
+import 'package:core_domain/core_domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -291,12 +292,20 @@ class _PlayerPageWrapperState extends State<PlayerPageWrapper> {
   String? _error;
   bool _isFullscreen = false;
 
+  /// 本次播放的剧集序号。
+  ///
+  /// `initState` 里归一一次，写历史与判断能否续播都用它——不要在各处重复解析
+  /// `widget.episodeId`，那正是两处约定漂移的起点（见 [EpisodeIndex]）。
+  late final EpisodeIndex _episodeIndex;
+
   /// 当前可用的装配：优先注入的，其次全局。
   AppAssembly? get _assembly => widget.assembly ?? globalRouterAssembly;
 
   @override
   void initState() {
     super.initState();
+    // `null`、空串、脏值一律按第一集算。
+    _episodeIndex = EpisodeIndex.parse(widget.episodeId);
     unawaited(_init());
   }
 
@@ -321,16 +330,12 @@ class _PlayerPageWrapperState extends State<PlayerPageWrapper> {
         return;
       }
 
-      String? episodeId;
-      if (widget.episodeId != null && widget.episodeId!.isNotEmpty) {
-        episodeId = widget.episodeId;
-      }
-
       final playResult = await assembly.playUseCase.getPlayableSource(
         siteId: widget.siteId,
         vodId: widget.vodId,
         flag: widget.flag,
-        episodeId: episodeId,
+        // 空串与脏值由 `EpisodeIndex` 归一，这里不必预判。
+        episodeId: widget.episodeId,
       );
 
       if (playResult.isErr) {
@@ -411,14 +416,18 @@ class _PlayerPageWrapperState extends State<PlayerPageWrapper> {
         widget.vodId,
       );
       if (!mounted || controller != _controller) return;
-      final target = ResumePolicy.resolve(
-        history == null
-            ? null
-            : ResumePoint(
-                position: Duration(milliseconds: history.positionMs),
-                duration: Duration(milliseconds: history.durationMs),
-              ),
-      );
+      // 历史按 `(siteId, vodId)` 唯一，整部片只有一条记录。切集之后那条记录里的
+      // 进度属于**上一集**，拿它来 seek 会让新一集从中间开始播。集号对不上就
+      // 当作没有历史——只是不续播，下面的周期落库照常启动。
+      final resumeFrom =
+          history == null ||
+              EpisodeIndex.of(history.episodeIndex) != _episodeIndex
+          ? null
+          : ResumePoint(
+              position: Duration(milliseconds: history.positionMs),
+              duration: Duration(milliseconds: history.durationMs),
+            );
+      final target = ResumePolicy.resolve(resumeFrom);
       if (target != null) {
         _resumeAt = target;
         controller.addListener(_maybeResume);
@@ -452,6 +461,10 @@ class _PlayerPageWrapperState extends State<PlayerPageWrapper> {
   }
 
   /// 把当前播放进度写入历史（周期 + 退出时各一次）。
+  ///
+  /// 集号必须一起写：历史按 `(siteId, vodId)` 唯一，整部片只留一条记录，
+  /// 不记集号的话「继续播放」就分不清进度属于哪一集（见
+  /// [_prepareResumeAndRecord] 里的续播判断）。
   void _flushProgress() {
     final controller = _controller;
     final assembly = _assembly;
@@ -466,6 +479,7 @@ class _PlayerPageWrapperState extends State<PlayerPageWrapper> {
         vodName: widget.vodName ?? widget.title ?? '未知影片',
         vodPic: widget.vodPic,
         flag: widget.flag,
+        episodeIndex: _episodeIndex.value,
         episodeName: widget.title,
         positionMs: positionMs,
         durationMs: durationMs,
@@ -487,6 +501,8 @@ class _PlayerPageWrapperState extends State<PlayerPageWrapper> {
           'siteId': widget.siteId,
           'vodId': widget.vodId,
           'flag': widget.flag,
+          // 实际播出的集号（权威值来自播放编排，不是入参原样回显）。
+          'episodeIndex': playResult.episodeIndex.value,
           'url': source.uri.toString(),
           'viaSniffing': playResult.viaSniffing,
           'state': controller.state.name,
