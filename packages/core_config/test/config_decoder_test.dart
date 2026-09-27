@@ -99,6 +99,83 @@ void main() {
     });
   });
 
+  // `probeNonJson` 是 `decodeWithProbe` 与 `ConfigFetcher.defaultConfigVerdict`
+  // 共用的判据（两处各写一套迟早走偏），但此前只有前者间接覆盖。这里直接钉住
+  // 契约：认不出的必须返回 null（放行），因为配置可能是 Base64 / AES 密文，
+  // 判据只能是否定式的。
+  group('ConfigDecoder.probeNonJson', () {
+    test('空输入返回 null', () {
+      expect(ConfigDecoder.probeNonJson(const []), isNull);
+    });
+
+    test('四种图片魔数都能认出', () {
+      expect(
+        ConfigDecoder.probeNonJson([0xFF, 0xD8, ...List.filled(8, 0)]),
+        '图片（JPEG）',
+      );
+      expect(
+        ConfigDecoder.probeNonJson([
+          0x89,
+          0x50,
+          0x4E,
+          0x47,
+          ...List.filled(8, 0),
+        ]),
+        '图片（PNG）',
+      );
+      expect(
+        ConfigDecoder.probeNonJson([0x47, 0x49, 0x46, ...List.filled(8, 0)]),
+        '图片（GIF）',
+      );
+      expect(
+        ConfigDecoder.probeNonJson([0x42, 0x4D, ...List.filled(8, 0)]),
+        '图片（BMP）',
+      );
+    });
+
+    test('HTML 判定大小写不敏感', () {
+      expect(
+        ConfigDecoder.probeNonJson(utf8.encode('<HTML><body>x</body>')),
+        '网页（HTML）',
+      );
+      expect(
+        ConfigDecoder.probeNonJson(utf8.encode('<!DOCTYPE html><p>x')),
+        '网页（HTML）',
+      );
+    });
+
+    test('HTML 标记不在开头也能认出（扫前 512 字节）', () {
+      // 有的站会先吐一段空白/BOM/注释再开始 HTML，只看开头会漏判，
+      // 漏判的后果是拿网页去解析 JSON，最后报一句误导人的「不是有效的 JSON」。
+      final body = '${' ' * 100}<html><body>x</body>';
+      expect(ConfigDecoder.probeNonJson(utf8.encode(body)), '网页（HTML）');
+    });
+
+    test('超出 512 字节的 HTML 标记不认（判据是有界的）', () {
+      final body = '${' ' * 600}<html>';
+      expect(ConfigDecoder.probeNonJson(utf8.encode(body)), isNull);
+    });
+
+    test('配置形态的内容一律放行', () {
+      // 判据只能是否定式的：Base64 与 AES 密文都不该被误判成网页/图片。
+      expect(ConfigDecoder.probeNonJson(utf8.encode(configJson)), isNull);
+      expect(
+        ConfigDecoder.probeNonJson(
+          utf8.encode(base64Encode(utf8.encode(configJson))),
+        ),
+        isNull,
+      );
+      // 密文里出现 `<` `>` 这类字节也不该被当 HTML。
+      expect(
+        ConfigDecoder.probeNonJson([
+          ...List.filled(32, 0x3C),
+          ...List.filled(32, 0x00),
+        ]),
+        isNull,
+      );
+    });
+  });
+
   group('ConfigDecoder 宽容解析（TVBox 配置普遍不是严格 JSON）', () {
     test('行首 // 注释被剔除后能解码', () {
       const raw =

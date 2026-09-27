@@ -14,7 +14,7 @@ import 'package:punycoder/punycoder.dart';
 
 /// 首次启动引导页。
 ///
-/// 展示三种导入方式：粘贴 URL、粘贴 Base64、从文件导入。
+/// 展示三种导入方式：粘贴 URL、粘贴 Base64、从剪贴板粘贴。
 /// 导入成功后将配置解析并写入数据库，跳转到首页。
 class OnboardingPage extends StatefulWidget {
   /// 构造引导页。
@@ -27,6 +27,15 @@ class OnboardingPage extends StatefulWidget {
 class _OnboardingPageState extends State<OnboardingPage> {
   final _urlController = TextEditingController();
   final _base64Controller = TextEditingController();
+
+  /// Base64 导入时可选的「配置来源地址」。
+  ///
+  /// Base64 内容本身不带地址，而配置里的**相对路径脚本**（`./lib/drpy2.js`）
+  /// 需要一个基准 URL 才能解析成完整地址（见 `SpiderRuntimeFactory.resolveApiUrl`）。
+  /// 留一个显式入口，好过让用户猜为什么同一份配置用 URL 导入能用、用 Base64
+  /// 导入就加载不出脚本。
+  final _base64SourceUrlController = TextEditingController();
+
   bool _importing = false;
   String? _error;
 
@@ -34,6 +43,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
   void dispose() {
     _urlController.dispose();
     _base64Controller.dispose();
+    _base64SourceUrlController.dispose();
     _httpClient?.close();
     super.dispose();
   }
@@ -53,21 +63,37 @@ class _OnboardingPageState extends State<OnboardingPage> {
     // TVBox 订阅站常按 UA 分流：认 okhttp 才给配置，浏览器 UA 一律 302 到
     // 首页。所以先用客户端形态的 UA 试，拿到网页再退到浏览器 UA 试一次——
     // 两类站点都覆盖到，且不必让用户去猜该用哪个。
-    final first = await _importWithUserAgent(rawUrl, kConfigFetchUserAgent);
+    //
+    // 第一次拿到网页时**先不报错**：那多半只是 UA 不对，先报出来会闪一下再被
+    // 成功覆盖。只有最后一次尝试仍拿不到配置，才把错误显示给用户。
+    final first = await _importWithUserAgent(
+      rawUrl,
+      kConfigFetchUserAgent,
+      isLastAttempt: false,
+    );
     if (first != _ImportAttempt.notConfig) return;
     if (!mounted) return;
-    await _importWithUserAgent(rawUrl, kConfigFetchBrowserUserAgent);
+    await _importWithUserAgent(
+      rawUrl,
+      kConfigFetchBrowserUserAgent,
+      isLastAttempt: true,
+    );
   }
 
   /// 用指定 [userAgent] 走一次完整的「拉取 → 识别 → 导入」。
   ///
-  /// 返回值告诉调用方要不要换 UA 再试一次：拿到网页/图片这类**不是配置**
-  /// 的内容时返回 [_ImportAttempt.notConfig]，其余情况（成功或已给出明确
-  /// 错误）都返回 [_ImportAttempt.done]，由本方法负责把错误显示出去。
+  /// 返回值告诉调用方要不要换 UA 再试一次：拿到**网页**这类可能因 UA 而变的
+  /// 内容时返回 [_ImportAttempt.notConfig]，且此时**不**报错（留给下一次尝试，
+  /// 避免错误文案闪动）；其余情况（成功，或已给出明确错误）都返回
+  /// [_ImportAttempt.done]。
+  ///
+  /// [isLastAttempt] 为真表示没有下一次了——此时连「拿到网页」也要把错误显示
+  /// 出去，否则两次尝试都拿到网页，用户什么反馈都看不到。
   Future<_ImportAttempt> _importWithUserAgent(
     String rawUrl,
-    String userAgent,
-  ) async {
+    String userAgent, {
+    required bool isLastAttempt,
+  }) async {
     try {
       // 处理中文域名 (IDN): 将 Unicode 域名转为 punycode，保留路径原样
       final normalizedUrl = _normalizeUrl(rawUrl);
@@ -77,7 +103,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
       );
       if (bytes == null) return _ImportAttempt.done; // error already shown
 
-      // 检查内容类型：跳过图片等二进制文件
+      // 图片 / 音视频：换 UA 也不会变成配置，直接报错收工，别白跑第二次请求。
       final contentType = _lastContentType ?? '';
       if (contentType.contains('image/') ||
           contentType.contains('audio/') ||
@@ -88,32 +114,36 @@ class _OnboardingPageState extends State<OnboardingPage> {
               '该地址返回的是${contentType.split('/').first}文件，不是配置。\n'
               '${_diagnosticSuffix()}';
         });
-        return _ImportAttempt.notConfig;
+        return _ImportAttempt.done;
       }
 
-      // 检查是否为 HTML 页面
-      final preview = utf8
-          .decode(bytes.take(200).toList(), allowMalformed: true)
-          .trim();
-      if (preview.startsWith('<!DOCTYPE') ||
-          preview.startsWith('<html') ||
-          preview.startsWith('<HTML') ||
-          preview.startsWith('<!doctype')) {
-        // 尝试从 HTML 中提取可用的配置链接
-        final html = utf8.decode(bytes, allowMalformed: true);
-        final suggestions = _extractConfigUrls(html);
-        if (suggestions.isNotEmpty && mounted) {
-          setState(() => _importing = false);
-          await _showConfigSuggestions(suggestions);
-          return _ImportAttempt.done;
+      // 内容识别复用 `ConfigDecoder.probeNonJson`——`core_config` 已有用例覆盖，
+      // 且判据（大小写不敏感、扫前 512 字节）比原来这里的 `startsWith` 更稳：
+      // 原来只解码前 200 字节且大小写敏感，漏判后会把网页当 JSON 去解析，最后
+      // 报一句「不是有效的 JSON 格式」——地址填对的人完全看不出是被分流了。
+      // 两处各写一套判据迟早走偏，这正是审查里记下的重复实现。
+      final nonJson = ConfigDecoder.probeNonJson(bytes);
+      if (nonJson != null) {
+        // 只有网页值得换 UA 再试（订阅站按 UA 分流）；图片换 UA 也不会变配置。
+        if (nonJson.startsWith('网页')) {
+          // 尝试从 HTML 中提取可用的配置链接
+          final html = utf8.decode(bytes, allowMalformed: true);
+          final suggestions = _extractConfigUrls(html);
+          if (suggestions.isNotEmpty && mounted) {
+            setState(() => _importing = false);
+            await _showConfigSuggestions(suggestions);
+            return _ImportAttempt.done;
+          }
+          // 换 UA 有可能拿到 JSON，所以还有下一次时不报错。
+          if (!isLastAttempt) return _ImportAttempt.notConfig;
         }
         setState(() {
           _importing = false;
           _error =
-              '该地址返回的是 HTML 页面，不是 JSON 配置。\n'
+              '该地址返回的是$nonJson，不是 TVBox JSON 配置。\n'
               '${_diagnosticSuffix()}';
         });
-        return _ImportAttempt.notConfig;
+        return _ImportAttempt.done;
       }
 
       // 尝试解析 JSON
@@ -383,6 +413,19 @@ class _OnboardingPageState extends State<OnboardingPage> {
       return;
     }
 
+    // 先校验可选的来源地址：静默忽略用户填错的地址，会让他以为填了有用。
+    final rawSourceUrl = _base64SourceUrlController.text.trim();
+    final sourceUrl = rawSourceUrl.isEmpty ? null : _normalizeUrl(rawSourceUrl);
+    if (sourceUrl != null) {
+      final uri = Uri.tryParse(sourceUrl);
+      if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+        setState(
+          () => _error = '配置来源地址无效，请填完整的 HTTP/HTTPS 地址，或留空',
+        );
+        return;
+      }
+    }
+
     setState(() {
       _importing = true;
       _error = null;
@@ -390,7 +433,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
     try {
       final bytes = base64.decode(text);
-      await _processImport(bytes);
+      await _processImport(bytes, sourceUrl: sourceUrl);
     } on Object catch (e) {
       setState(() {
         _importing = false;
@@ -524,6 +567,17 @@ class _OnboardingPageState extends State<OnboardingPage> {
                   ),
                 ),
                 const SizedBox(height: 8),
+                TextField(
+                  controller: _base64SourceUrlController,
+                  decoration: const InputDecoration(
+                    labelText: '配置来源地址（可选）',
+                    hintText: 'https://example.com/tvbox.json',
+                    helperText: '仅当配置里用了相对路径脚本（如 ./lib/drpy2.js）时需要填',
+                    helperMaxLines: 2,
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 8),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.tonal(
@@ -628,6 +682,9 @@ enum _ImportAttempt {
   /// 已成功，或已给出明确错误（错误已显示在界面上）。
   done,
 
-  /// 拿到的是网页/图片这类「不是配置」的内容，值得换个 UA 再试一次。
+  /// 拿到的是**网页**——订阅站按 UA 分流的典型表现，值得换个 UA 再试一次。
+  ///
+  /// 此时**不报错**：错误留给最后一次尝试去报，否则用户会看到一条可能马上被
+  /// 成功覆盖的提示闪一下。图片/音视频不算这一类——换 UA 也不会变成配置。
   notConfig,
 }
