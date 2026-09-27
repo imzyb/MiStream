@@ -844,6 +844,33 @@ M0 门禁顶红过一次，而那与产品代码的健康度无关。把 `.workb
   收益；减少动效已由 `disableAnimations` 兜住）
 - 主题包的**安装/启用链路**未接：只有解析与校验，没有从插件目录加载
 
+## 本次会话（2026-09-27 续）：主链路审查 + 两个真缺陷修复
+
+按「添加接口源 → 选择播放源 → 选择/搜索影片 → 播放影片」走了一遍端到端代码
+审查（只读），完整报告见 **`docs/CODE_AUDIT_2026-09-27.md`**。四段的降级链都是
+真实现，不是注释里的愿景；问题集中在**资源回收 / 环境探测 / 同一件事实现两遍**。
+
+### 已修（3 项，均已反向验证）
+
+| 缺陷 | 位置 | 验证 |
+| --- | --- | --- |
+| **P0** `PlayUseCase` 创建的 runtime 从不回收，每播一集泄漏一个 JS/JVM 子进程 | `packages/search_engine/lib/src/play_use_case.dart` | 摘掉回收 → 新增 5 例中 **4 例变红** |
+| **P1** `_resolveJavaPath` 只查 `JAVA_HOME`（注释却承诺 PATH 回退），导致 `csp_` 站点在未设该变量的机器上被整体判成「无运行时」 | `apps/mistream/lib/application/app_assembly.dart` | 摘掉回退 → 新增 8 例中 **3 例变红** |
+| **P2** `parseDetail` 文档注释写「剧集以 `##` 分隔」，实现是 `#`（代码对、注释错） | `apps/mistream/lib/application/detail_use_case.dart` | 纯文档 |
+
+P0 的修法是把「取详情 + 回收」收进 `_detailAndDispose`，成功 / 业务失败 / 抛异常
+三条路径都 dispose，与 `DetailUseCase.load`、`HomeUseCase._trySites` 同一套纪律。
+P1 的修法是把环境值显式收参（`resolveJavaPath({javaHome, pathValue})`）——进程内的
+环境变量改不了，不收参则「PATH 回退」这条最关键的路径永远只能靠人工碰运气验证。
+新增 `apps/mistream/test/application/app_assembly_test.dart`（13 例），已挂进
+`run_tests_shim.dart`。垫片总用例数 **60 → 78**。
+
+### 仍未修（进下一步清单，见下）
+
+搜索层不能选源、引导页三处（重复报错 / HTML 判定弱 / Base64 丢 `sourceUrl`）、
+剧集越界静默回退第 1 集、`episodeId` 序号约定两处各自实现、搜索结果网格全量重建、
+`_CategoryDetailPage` 用全局装配、选源口径不一致。
+
 ## 下一步（按优先级，2026-09-19 续）
 
 1. **P0 仓库健康** ✅ **已定位并交付守卫脚本**；根因属 I: 盘文件系统语义，
@@ -887,6 +914,28 @@ M0 门禁顶红过一次，而那与产品代码的健康度无关。把 `.workb
    换新窗口内的宿主复用已修（四续，`ac86873`）；仍待做的是**真子进程端到端
    验证**（本机 `Process.start` 被管道缺陷挡住，`CreateFile failed 231`，只能等
    环境恢复）。
+9. **P2/P3 主链路审查余项**（来自 `docs/CODE_AUDIT_2026-09-27.md`，P0/P1 已修）
+   - **搜索层不能选源**：`search_page.dart` 的 `_goDetail` 只取 `sources.first`。
+     `SearchItem.sources` 已随 `extra` 传进详情页，数据是现成的；注意**线路 ≠
+     片源**，详情页现有的线路 chips 解决不了这个问题
+   - **引导页三处**：① `:56-59` 收到 `notConfig` 会换 UA 重试，但 `:110-117` 在
+     返回 `notConfig` 前已 `setState` 报过错 → 重复报错 + 多发一次请求（
+     `_ImportAttempt` 的枚举注释把「已给明确错误」与「值得重试」混在一个值里）；
+     ② HTML 判定只看前 200 字节 `startsWith`，弱于 `ConfigDecoder.probeNonJson`；
+     ③ `:393` `_importFromBase64` 调 `_processImport(bytes)` **不传 `sourceUrl`**
+     → 相对路径 spider 脚本解析失败（同样内容用 URL 导入却成功）——这是真实
+     功能缺失，建议单独提
+   - **播放段边界**：`play_use_case.dart` 剧集越界**静默回退第 1 集**，UI 无提示；
+     `episodeId` 的「序号」约定在 `detail_use_case.dart`（生成）与
+     `play_use_case.dart`（消费）两处各自实现，任一处改动都会静默退到第 1 集
+   - **搜索结果网格全量重建**：`search_page.dart` 每次进度 `_items..clear()
+     ..addAll()`，`MediaCard` 无 key → 8 个源闪 8 次（滚动位置跳动、封面重复解码）
+   - **`_CategoryDetailPage` 用 `globalRouterAssembly`** 而非注入（`router.dart`
+     两处）。功能上正确（其 `siteId` 已被 `_loadData` 同步为 `workingSiteId`），
+     但正确性依赖隐式同步，脆弱
+   - **选源口径不一致**：选择器只让 `isUsable` 的源可点，而
+     `HomeUseCase._getEnabledSites` 又「无条件尊重用户显式选择，哪怕缺运行时」
+     —— 后者在首页路径上不可达，两种意图各写了一半
 
 > **测试运行方式（重要）**：含夹具或 native 依赖的包，必须 `cd` 进包目录再跑
 > `dart test`。从仓库根跑会因 cwd 不对而误报失败/跳过（`spider_js` 实测：
