@@ -13,7 +13,7 @@
 | M2 数据层 | 4/5 | 🟢 迁移/备份/导入导出均已自动化验证；冷启动 50ms 阈值待基准机确认 |
 | M3 RPC + Spider 骨架 | 5/6 | 🟢 仅剩真实 type=1 源 |
 | M4 JS 运行时 | 5/6 | 🟢 仅剩真实源 |
-| M5 主线 UI 闭环 | 5/7 | 🟢 仅剩真实配置/长跑 |
+| M5 主线 UI 闭环 | 6/7 | 🟢 仅剩真实配置源 |
 | M6 嗅探与解析 | 1/5 | 🟡 CDP 嗅探运行时已落地，缺真实 type=0 源 |
 | M7 直播 | 0/4 | 🟡 包已建，缺验收 |
 | M8 下载与离线 | 0/5 | 🟡 真实实现已接入，缺验收 |
@@ -85,15 +85,22 @@
 - [x] 关闭重开续播 → `apps/mistream/test/application/resume_policy_test.dart`（15 用例，覆盖不足 5s / 距片尾 30s 两条边界的含等于与不含等于、时长为零、无历史）+ `apps/mistream/test/features/player/player_resume_e2e_test.dart`（5 用例，驱动真实播放页验证 seek 到历史位置、三条不续播边界、进度写回历史）
       实现：`application/resume_policy.dart`（纯决策，可在 dart test 下跑）+ `router.dart` 播放页注入装配与引擎
 - [x] 四态齐全 → `features/common/widgets/state_views.dart`
-- [ ] 无 P0 崩溃 / 源崩溃不影响主进程 — 进程隔离已就位（type=3 走子进程、嗅探走 isolate）。
-      **2026-09-28：长跑工装已落地** —— `packages/spider_host/test/host_soak_test.dart`
-      用**真子进程**反复 SIGKILL，断言「每轮崩溃恰好换一个新进程、被换掉的老进程真的
-      退出、主进程存活、宿主 RSS 不无界增长」，并覆盖「持续崩溃 → 退避重启 → 熔断 →
-      `reset` 恢复」。规模可放大：`MISTREAM_SOAK_CYCLES=N` 定轮数、
-      `MISTREAM_SOAK_SECONDS=N` 定时长（2 小时长跑 =
+- [x] 无 P0 崩溃 / 源崩溃不影响主进程 — 进程隔离已就位（type=3 走子进程、嗅探走 isolate）。
+      **2026-09-28 工装落地，2026-09-29 00:21 完成 2 小时真机长跑** ——
+      `packages/spider_host/test/host_soak_test.dart` 用**真子进程**反复 SIGKILL，
+      断言「每轮崩溃恰好换一个新进程、被换掉的老进程真的退出、主进程存活、宿主 RSS
+      不无界增长」，并覆盖「持续崩溃 → 退避重启 → 熔断 → `reset` 恢复」与
+      「启动阶段抛异常也退避重试」。规模可放大：`MISTREAM_SOAK_CYCLES=N` 定轮数、
+      `MISTREAM_SOAK_SECONDS=N` 定时长（2 小时 =
       `MISTREAM_SOAK_SECONDS=7200 dart run test/host_soak_test.dart`，须 `cd` 进包目录）。
-      **仍未勾**：本机只跑到 7 分钟级（420s / **463 轮**，RSS 增长 10.1MB 且曲线
-      **收敛**、非按轮线性），ROADMAP 要求的 2 小时真机长跑未做
+      **实测（2026-09-28 启动 → 09-29 00:21 结束）**：**11155 轮 / 7200s 全绿**，
+      `EXIT=0`，全程零报错，主进程始终存活。宿主 RSS 基线 275.5MB → 结束
+      **43.1MB**（增长 **−232.4MB**；阶梯下降：3000 轮 286.4MB → 3500 轮 186.2MB
+      → 5000 轮 159.4MB → 7000 轮 45.5MB → 11155 轮 43.1MB）。**RSS 单调不增 =
+      无泄漏**。
+      第一版跑到第 8660 轮曾判红，**根因是环境不是宿主**（I: 盘的
+      `.dart_tool/package_config.json` 被系统拒绝访问，子进程起不来），已修
+      `start()` catch 分支不自愈的缺口、并把桩搬出 I: 盘，详见下方三续。
 - [x] 集成测试（mock 源）端到端 → `runtimes/spider_js/test/type3_mock_integration_test.dart`（init→home→detail→play 全链路）+ `apps/mistream/test/m5_mock_e2e_test.dart`（配置导入→落库→搜索→详情→播放地址）
 
 ## M6/M7/M8/M9 · 包已建，验收未做 🟡
@@ -1118,16 +1125,28 @@ OS，稳态比起点还低 220MB。上一节记的「463 轮结束 282.4MB」不
 反向验证的 7 项：升级顺序（先激活后切指针）、发布失败回写指针、init 不清残留、
 prune 不判无指针、版本比较退化成字符串、rollback 假装成功、upgrade 不检查产物存在。
 
-### 六、长跑重跑（进行中）
+### 六、长跑重跑：2 小时全绿（M5 出口标准最后一条已勾）
 
 工装加固后重跑 `MISTREAM_SOAK_SECONDS=7200`，日志
-`.workbuddy-ai/soak/soak-2h-rerun.log`（**该目录不入库**，命令见下方）。2 小时
-真机长跑通过后，M5 出口标准最后一条才可勾。
+`.workbuddy-ai/soak/soak-2h-rerun.log`（**该目录不入库**）：
 
 ```bash
 cd packages/spider_host
 MISTREAM_SOAK_SECONDS=7200 dart run test/host_soak_test.dart
 ```
+
+**结果（2026-09-28 22:20 启动 → 2026-09-29 00:21 结束）：11155 轮 / 7200s 全绿**，
+`EXIT=0`，**全程零报错**，4 条用例全过，主进程始终存活。
+
+| 轮数 | 50 | 3000 | 3500 | 5000 | 7000 | 11155 |
+| --- | --- | --- | --- | --- | --- | --- |
+| RSS | 277.1 | 286.4 | 186.2 | 159.4 | 45.5 | **43.1** |
+
+基线 275.5MB → 结束 43.1MB（**增长 −232.4MB**）。阶梯下降，**单调不增 = 无泄漏**。
+
+对比第一版：第一版 94 分钟跑到 8650 轮就撞环境故障；重跑跑满 120 分钟、**11155 轮**
+（多 2500 轮）且零报错 —— 桩搬出 I: 盘确实消除了那个故障。**M5 出口标准最后一条
+据此勾选**。
 
 ## 下一步（按优先级，2026-09-19 续）
 
