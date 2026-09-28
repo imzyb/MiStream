@@ -16,6 +16,7 @@ export 'src/plugin_loader.dart'
 export 'src/plugin_manager.dart' show PluginEvent, PluginManager;
 export 'src/plugin_manifest.dart'
     show PluginManifest, PluginPermission, PluginType;
+export 'src/plugin_store.dart' show DownloadedPlugin, PluginStore;
 export 'src/path_guard.dart' show isPathTraversal;
 export 'src/plugin_sandbox.dart'
     show
