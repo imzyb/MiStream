@@ -17,7 +17,7 @@
 | M6 嗅探与解析 | 1/5 | 🟡 CDP 嗅探运行时已落地，缺真实 type=0 源 |
 | M7 直播 | 0/4 | 🟡 包已建，缺验收 |
 | M8 下载与离线 | 0/5 | 🟡 真实实现已接入，缺验收 |
-| M9 插件系统与主题 | 0/6 | 🟡 包已建；状态机已补测（现有 4 态），缺升级/回滚 |
+| M9 插件系统与主题 | 1/6 | 🟡 原子升级/回滚已落地；缺主题包安装链路 |
 | M10 发布工程 | 0/6 | 🟡 发布链草稿已就位 |
 | M11-M15 | — | 🔴 未启动 |
 
@@ -103,7 +103,7 @@
 - **M6** `packages/media_sniffer`（66 测试）：规则引擎、直链验证、HLS 样本测试齐；`runtimes/sniffer` **已落地 CDP 嗅探运行时**（70 测试，含真实 Edge/Chrome 端到端启动验证）；缺真实 type=0 网页源验收
 - **M7** `packages/live`（17 测试）：m3u/txt 解析、drift 收藏、XMLTV EPG；缺换台/重试/长跑验收
 - **M8** `packages/download`（22 测试）：任务状态机、Range 断点续传、HLS 分片；**假实现已替换为真实实现**（提交 `720dad3`），缺真实网络断点/离线播放验收
-- **M9** `packages/plugin_host`（**30 测试**，2026-09-28 由 19 补到 30）+ **`packages/theme_engine`**（新增独立包，提交 `b113410`）：清单/权限/sha256/isolate 沙箱、对比度计算。**生命周期状态机已补测**（提交 `68a163d`：`PluginState.error` 此前从未被赋值、属死状态，已让激活失败可进入 error 并补全迁移真值表）。仍缺**升级/回滚**状态（`PluginManager` 无 upgrade/rollback），故「生命周期状态机测试全覆盖」尚不能勾
+- **M9** `packages/plugin_host`（**56 测试**，2026-09-28 由 19 → 30 → 56）+ **`packages/theme_engine`**（新增独立包，提交 `b113410`）：清单/权限/sha256/isolate 沙箱、对比度计算、**版本目录 + 指针切换的原子升级与回滚**（新增 `PluginStore`，26 例 + 反向验证 7 项，见 2026-09-28 三续）。**生命周期状态机已补测**（提交 `68a163d`：`PluginState.error` 此前从未被赋值、属死状态，已让激活失败可进入 error 并补全迁移真值表）。仍缺**主题包的安装/启用链路**（从插件目录加载，现在只有解析与校验）
 
 
 > 注：`DownloadManager.startDownload()` 已完成真实实现（提交 `720dad3`）。`runtimes/sniffer` 的占位已由 CDP 实现替换（提交 `bb00635`）。
@@ -958,10 +958,10 @@ P1 的修法是把环境值显式收参（`resolveJavaPath({javaHome, pathValue}
 | `arch_check` | 分层纪律检查通过 |
 | 反向验证 | 摘掉 `canEnable` 的 error 分支 → 2 例红；还原 `install` 登记顺序 → 3 例红；还原 `disposeAll` 朴素循环 → 1 例红 |
 
-**仍未做**：ROADMAP M9 交付物「版本目录 + 指针切换的原子升级与回滚」尚未落地
-（`PluginManager` 只有 install/enable/disable/uninstall/disposeAll）。因此
-「生命周期状态机测试全覆盖」只算**覆盖了现有 4 态的全部迁移**，升级/回滚补齐前
-不能勾。
+**当时仍未做**：ROADMAP M9 交付物「版本目录 + 指针切换的原子升级与回滚」。
+（`PluginManager` 只有 install/enable/disable/uninstall/disposeAll。）该条已于
+**本次会话（2026-09-28 三续）**落地，见下；「生命周期状态机测试全覆盖」的
+状态机部分算覆盖了现有 4 态的全部迁移。
 
 ## 本次会话（2026-09-28 续）：M5 长跑工装
 
@@ -1025,6 +1025,109 @@ MISTREAM_SOAK_SECONDS=7200 dart run test/host_soak_test.dart
 **仍未勾**：ROADMAP 要求的 **2 小时真机长跑**未做（本机只跑到 7 分钟级 / 463 轮）。
 工装与命令已就位，真机一条命令即可。
 
+## 本次会话（2026-09-28 三续）：M9 原子升级/回滚 + 长跑工装加固
+
+两件事并行：用户选定的 ③「2 小时长跑」出结果了但**红在第 8660 轮**，根因排查与
+加固；同时开工早已同意但一直没做的 M9 `upgrade`/`rollback`。
+
+### 一、2 小时长跑：8650 轮全绿，第 8660 轮红在环境层
+
+第一版（`MISTREAM_SOAK_SECONDS=7200`）跑到 **第 8660 轮**失败，报：
+
+```
+Error: Error when reading '../../.dart_tool/package_config.json': 拒绝访问。
+第 8660 轮崩溃后宿主没能自愈
+```
+
+**这不是「源崩溃影响了主进程」** —— 主进程全程存活。失败在**子进程启动阶段**：
+每轮 `dart run` 都要读 I: 盘的 `.dart_tool/package_config.json`，8650 次之后被
+系统拒绝访问，子进程起不来，宿主退避 5 次后按设计熔断，此后每轮都失败。
+
+已排除资源耗尽：I: 盘余 709G、`%TEMP%` 仅 44 个条目、`.dart_tool` 仅 64 个文件，
+**都不随轮数增长**。是那块盘的虚拟化文件系统语义（同源问题见 P0 那条）。
+
+**RSS 曲线（重要，纠正了上一节的判断）**：阶梯式**下降**，不是增长 ——
+
+| 轮数 | RSS |
+| --- | --- |
+| 50 | 276.1MB |
+| 2950 | 285.1MB（高水位） |
+| 3000 | **127.0MB** |
+| 3450 | **65.7MB** |
+| 6000 | 63.0MB |
+| 8650 | **55.8MB** |
+
+276 → 285MB 是「VM 堆按需扩张」的高水位，之后 major GC 分几次把内存**归还**给
+OS，稳态比起点还低 220MB。上一节记的「463 轮结束 282.4MB」不是矛盾，只是 420 秒
+的短跑停在**高水位段**就结束了。**RSS 单调不增 = 无泄漏**，这条结论比之前更硬。
+
+### 二、修掉一个真缺口：`start()` 的 catch 分支不自愈
+
+`_onProcessExit`（进程崩溃/握手失败）会挂退避重启，但 **launcher 自己抛异常时
+（exe 不存在、权限被拒、端口耗尽）走的是 `start()` 的 catch 分支，那里只
+`_notifyReady(false)` 就返回**，不挂 `_scheduleRestart` —— 源码注释里原本就写着
+「不会自愈」。这与 docs/08 §6「失败退避重启」的承诺不符，也是长跑第 8660 轮之后
+宿主永久失能的原因。
+
+已改为走同一把 `_scheduleRestart`（退避与熔断语义与进程崩溃完全一致）。新增用例
+`启动阶段就抛异常时也会退避重试，直到熔断` 覆盖这条路径（此前零覆盖）。
+
+### 三、长跑工装加固：桩搬到本机 C 盘
+
+新增 `packages/spider_host/test/support/child_staging.dart`：把子进程桩复制到
+`%TEMP%` 再跑。桩只用 `dart:io`/`dart:convert`，而 dart 是按**脚本所在目录**向上
+找 pubspec（实测：cwd 留在 I: 盘、脚本放 C: 盘也能跑通），所以放进一个没有
+`pubspec.yaml` 的目录就完全不碰 pub 层 —— **I: 盘 `package_config.json` 的读取
+次数从「每轮 1 次」降到「整轮 1 次」**。
+
+### 四、M9 原子升级与回滚（`packages/plugin_host/lib/src/plugin_store.dart`）
+
+磁盘布局 `<pluginsDir>/<id>/versions/<ver>/` + `<pluginsDir>/<id>/files/current`
+（**文件**，内容就是版本号）。两条实测驱动的决策：
+
+- **指针必须是文件**：`File.renameSync` 覆盖已存在文件 OK，而
+  `Directory.renameSync` 覆盖非空目录抛 `PathExistsException`（Windows 实测）。
+  用文件做指针，切换就是**一次 rename**，天然原子。
+- **写入先落 `.staging_<ver>` 再换名**：同卷 rename 原子，磁盘上永远要么是完整的
+  旧版本、要么是完整的新版本。
+
+核心不变量：**任何失败路径都不能让用户失去当前能用的版本**。具体地：
+
+- `upgrade` **新版本先在旧版本仍运行时激活**，成功才动指针；激活失败返回 `null`，
+  指针与旧版本目录一个字节都不动
+- 发布通知（`publishPointer` 钩子）失败时**保留新指针**并返回 `null` —— 磁盘上
+  新版本才是真的，把指针写回旧版本会让它指向可能已被清理的目录
+- 不设「拒绝降级」闸门（降级就是「升级到更低的版本号」）；重复投递同一版本由
+  `alreadyCurrent` 短路
+- `rollback` 只回到记录的上一个版本；目标目录已被清理时返回 `null`，**不假装成功**
+- `pruneBrokenVersions` 在「从未发布过」时直接跳过，不误删刚下载好的版本
+- `remove` 幂等（跑在 `uninstall` 里，也会被每个测试的 tearDown 走到）
+
+### 五、验证
+
+| 项 | 结果 |
+| --- | --- |
+| 新增用例 | **26**（store 15 + upgrade 11），`plugin_host` 包 30 → **56** |
+| 全量垫片 | 120 → **146** 例 |
+| 反向验证 | `rev_verify_plugin_upgrade.py` **7 项全部变红**，且每项只红对应那一条（覆盖精确） |
+| `analyze_inproc` | **320 文件 0 error / 0 warning / 0 info** |
+| `dart format` | 0 changed |
+| `arch_check` | 分层纪律检查通过 |
+
+反向验证的 7 项：升级顺序（先激活后切指针）、发布失败回写指针、init 不清残留、
+prune 不判无指针、版本比较退化成字符串、rollback 假装成功、upgrade 不检查产物存在。
+
+### 六、长跑重跑（进行中）
+
+工装加固后重跑 `MISTREAM_SOAK_SECONDS=7200`，日志
+`.workbuddy-ai/soak/soak-2h-rerun.log`（**该目录不入库**，命令见下方）。2 小时
+真机长跑通过后，M5 出口标准最后一条才可勾。
+
+```bash
+cd packages/spider_host
+MISTREAM_SOAK_SECONDS=7200 dart run test/host_soak_test.dart
+```
+
 ## 下一步（按优先级，2026-09-19 续）
 
 1. **P0 仓库健康** ✅ **已定位并交付守卫脚本**；根因属 I: 盘文件系统语义，
@@ -1043,10 +1146,9 @@ MISTREAM_SOAK_SECONDS=7200 dart run test/host_soak_test.dart
    全量断言，主题包共用同一份矩阵）、~~M9 尺度/字体/动效令牌~~ ✅ **已完成**
    （2026-09-26 续与 2026-09-27）、~~M9 生命周期状态机测试~~ ✅ **已完成现有
    4 态的全部迁移**（2026-09-28，提交 `68a163d`）、M5 长跑稳定性
+   - ~~M9 升级/回滚~~ ✅ **已完成**（2026-09-28 三续：新增 `PluginStore`，
+     26 例 + 反向验证 7 项全红；**M9 总览 0/6 → 1/6**）
    - **M9 剩余**：主题包的安装/启用链路（从插件目录加载，现在只有解析与校验）、
-     **升级/回滚** —— ROADMAP M9 交付物「版本目录 + 指针切换的原子升级与回滚」
-     尚未落地（`PluginManager` 只有 install/enable/disable/uninstall/disposeAll，
-     全仓 `upgrade|rollback` 只命中错误码常量与 `database.dart` 的 `onUpgrade`）、
      沙箱逃逸测试（其中 SSRF 一条实际由
      `spider_host/test/host_api_redirect_test.dart` 9 例覆盖，不在 plugin_host）
 5. **P4 债务** `libs/*.jar` 改 `tools/jvm_dist` 按需拉取、契约/长跑测试、
