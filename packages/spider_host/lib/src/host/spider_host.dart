@@ -341,9 +341,18 @@ class SpiderHost {
       _notifyReady(true);
       return Ok(result);
     } on Object catch (e, st) {
-      // 走到这里说明启动过程抛了异常，进程没起来、也没挂上重启定时器——
-      // 不会自愈。唤醒等待者，免得它们空等到超时。
+      // 走到这里说明**启动阶段**就抛了异常（exe 不存在、权限被拒、端口耗尽…），
+      // 进程根本没起来——上面那些「进程退出 → 重启」的路径一条都不会走。
+      // 必须在这里自己挂退避重启，否则宿主会永久停在未就绪态。
+      //
+      // 这不是假想：2 小时长跑第 8660 轮就是这么红的。I: 盘的
+      // `.dart_tool/package_config.json` 被系统拒绝访问，子进程起不来，
+      // 而宿主不重试，此后每一轮都失败。
+      //
+      // 退避次数与熔断语义跟「进程崩溃」完全一致（同一把 [_scheduleRestart]）：
+      // 连续 [maxRestartAttempts] 次起不来照样熔断，等外部 [reset]。
       _notifyReady(false);
+      _scheduleRestart('启动失败: ${AppError.from(e, st).message}');
       return Err(AppError.from(e, st));
     }
   }

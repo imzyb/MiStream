@@ -6,6 +6,7 @@ import 'package:spider_host/src/host/host_api.dart';
 import 'package:spider_host/src/host/spider_host.dart';
 import 'package:test/test.dart';
 
+import 'support/child_staging.dart';
 import 'support/tcp_process_launcher.dart';
 
 /// 真子进程的长跑与崩溃循环验收（ROADMAP M5「源崩溃 100% 不影响主进程」）。
@@ -28,29 +29,41 @@ import 'support/tcp_process_launcher.dart';
 void main() {
   group('SpiderHost 真子进程长跑', () {
     late List<LaunchedChild> children;
+    late Directory stubDir;
 
     // 在 group 层读：`test` 的超时要按它算，见 [soakTimeout]。
     final maxCycles = envInt('MISTREAM_SOAK_CYCLES', 8);
     final maxSeconds = envInt('MISTREAM_SOAK_SECONDS', 0);
 
-    setUp(() => children = []);
+    setUp(() {
+      children = [];
+      // 桩先搬到本机 C: 盘再跑。长跑每轮都要起一个 `dart run`，就地跑会读
+      // I: 盘（虚拟化文件系统）的 package_config —— 8660 轮后开始被系统
+      // 拒绝访问，子进程起不来，整条长跑判红。见 [stageChildStubs]。
+      stubDir = stageChildStubs([
+        Platform.script.resolve('support/rpc_child.dart').toFilePath(),
+        Platform.script.resolve('support/rpc_child_crash.dart').toFilePath(),
+      ]);
+    });
 
     tearDown(() async {
       // 收尾：把还活着的子进程都杀掉，别留下孤儿。
       for (final child in children) {
         child.process.kill();
       }
+      cleanChildStubs();
     });
+
+    /// 桩在本机磁盘上的绝对路径。
+    String stubPath(String name) =>
+        '${stubDir.path}${Platform.pathSeparator}$name';
 
     /// 造宿主。[onSpawn] 在每次子进程真正起来后回调，用来计数。
     SpiderHost newHost({required int threshold, void Function()? onSpawn}) {
       final base = tcpProcessLauncher(children: children);
       return SpiderHost(
         executable: Platform.resolvedExecutable,
-        arguments: [
-          'run',
-          Platform.script.resolve('support/rpc_child.dart').toFilePath(),
-        ],
+        arguments: ['run', stubPath('rpc_child.dart')],
         sourceTearDownsPerProcess: threshold,
         // 退避压到 0：长跑要的是「崩溃—自愈」的循环次数，不是等退避。
         backoffFor: (_) => Duration.zero,
@@ -164,9 +177,7 @@ void main() {
 
     test('持续崩溃触发熔断：主进程不崩，call 明确失败，reset 能重新尝试', () async {
       const maxRestart = 3;
-      final crashScript = Platform.script
-          .resolve('support/rpc_child_crash.dart')
-          .toFilePath();
+      final crashScript = stubPath('rpc_child_crash.dart');
 
       final host = SpiderHost(
         executable: Platform.resolvedExecutable,
@@ -222,6 +233,45 @@ void main() {
       );
       expect(respawned, isTrue, reason: 'reset 后应当重新尝试拉起子进程');
     }, timeout: const Timeout(Duration(seconds: 180)));
+
+    test('启动阶段就抛异常时也会退避重试，直到熔断', () async {
+      // 这条路径此前完全没有覆盖：launcher 自己抛异常（exe 不存在、权限被拒、
+      // 端口耗尽），进程根本没起来，走的是 `start()` 的 catch 分支，而不是
+      // 「进程退出 → 重启」。不挂重试的话宿主会**永久停在未就绪态**。
+      //
+      // 不是假想：2 小时长跑第 8660 轮就是这么红的 —— I: 盘的
+      // `.dart_tool/package_config.json` 被系统拒绝访问，子进程起不来。
+      var attempts = 0;
+      const maxRestart = 2;
+      final host = SpiderHost(
+        executable: Platform.resolvedExecutable,
+        arguments: const ['run', '不存在的桩.dart'],
+        maxRestartAttempts: maxRestart,
+        backoffFor: (_) => Duration.zero,
+        launcher: (executable, args) async {
+          attempts++;
+          throw ProcessException(executable, args, '注入的启动失败', 5);
+        },
+        hostApi: HostApi(),
+      );
+      addTearDown(host.dispose);
+
+      final first = await host.start().timeout(const Duration(seconds: 10));
+      expect(first.isErr, isTrue, reason: '启动失败应当如实返回 Err');
+
+      // 首次 + 最多 maxRestart 次自动重试。
+      final retried = await waitFor(
+        () => attempts >= maxRestart + 1,
+        timeout: const Duration(seconds: 10),
+      );
+      expect(retried, isTrue, reason: '启动失败也必须走退避重启，否则宿主永久失能');
+
+      // 熔断后不再重试，与「进程崩溃」用同一把上限。
+      await Future<void>.delayed(const Duration(seconds: 1));
+      expect(attempts, maxRestart + 1, reason: '熔断后不该继续重试');
+      expect(host.isTripped, isTrue);
+      expect(host.isReady, isFalse);
+    }, timeout: const Timeout(Duration(seconds: 60)));
 
     test('dispose 后不留孤儿进程', () async {
       final host = newHost(threshold: 999);
