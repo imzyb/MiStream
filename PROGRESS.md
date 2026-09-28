@@ -1109,7 +1109,8 @@ OS，稳态比起点还低 220MB。上一节记的「463 轮结束 282.4MB」不
 | --- | --- |
 | 新增用例 | **26**（store 15 + upgrade 11），`plugin_host` 包 30 → **56** |
 | 全量垫片 | 120 → **146** 例 |
-| 反向验证 | `rev_verify_plugin_upgrade.py` **7 项全部变红**，且每项只红对应那一条（覆盖精确） |
+| 反向验证（M9） | `python .workbuddy-ai/scripts/rev_verify_plugin_upgrade.py` **7 项全部变红**，且每项只红对应那一条（覆盖精确） |
+| 反向验证（长跑） | `python .workbuddy-ai/scripts/rev_verify_soak.py` **4 项全部变红**（第 4 项是新加的，专钉 `start()` catch 分支的自愈） |
 | `analyze_inproc` | **320 文件 0 error / 0 warning / 0 info** |
 | `dart format` | 0 changed |
 | `arch_check` | 分层纪律检查通过 |
