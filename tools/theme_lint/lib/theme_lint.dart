@@ -144,7 +144,9 @@ class ThemeLinter {
         LintIssue(
           LintSeverity.warning,
           problem,
-          hint: '不会导致主题被拒，但包里写的值会照原样生效',
+          hint:
+              '不会导致主题被拒，主题仍会加载；'
+              '越界值会被夹进安全区间，不会按你写的原样生效',
         ),
       );
     }
@@ -238,19 +240,22 @@ class ThemeLinter {
     final declared = theme['brightness'];
     if (declared != 'dark' && declared != 'light') return;
 
-    final wantsDark = declared == 'dark';
-    // 0.5 是黑白中点附近的经验分界，够用来识别「抄反了」这种量级的错误。
-    final looksDark = ContrastChecker.luminance(merged.tokens.background) < 0.5;
-    if (wantsDark == looksDark) return;
-
-    issues.add(
-      LintIssue(
-        LintSeverity.warning,
-        'brightness 声明为 $declared，但 color.background 是'
-        '${looksDark ? '深色' : '浅色'}',
-        hint: '多半是 brightness 抄反了；它决定这个包叠到哪套内置主题上',
-      ),
-    );
+    // 判据抽在 theme_engine 里，运行时（loadThemePackage）用的是同一份 ——
+    // 只写在这里的话，不经 lint 直接装包的用户永远看不到这条提示。
+    for (final problem in checkBrightnessConsistency(
+      declared == 'dark',
+      merged.tokens,
+    )) {
+      issues.add(
+        LintIssue(
+          LintSeverity.warning,
+          problem,
+          hint:
+              '多半是 brightness 抄反了；它决定这个包叠到哪套内置主题上，'
+              '也决定系统 UI（状态栏、滚动条）按明还是按暗画',
+        ),
+      );
+    }
   }
 
   /// 没覆盖的令牌会取基准主题的值——说清楚，否则作者会以为自己的包是完整配色。

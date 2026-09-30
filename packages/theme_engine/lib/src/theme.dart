@@ -293,6 +293,50 @@ List<String> checkContrast(DesignTokens t) {
   return fails;
 }
 
+/// 找出**带透明度**的颜色令牌，返回问题清单（空 = 全部不透明）。
+///
+/// 为什么必须有这道检查：`ContrastChecker.luminance` 只看 RGB、**忽略 alpha**，
+/// 所以「全透明黑底 + 全透明白字」算出来是 21:1，判为完全达标 —— 但渲染出来
+/// 什么都看不见，等效白屏。对比度校验的结论只有在「所有令牌都不透明」时才与
+/// 渲染一致，这个前提必须显式守住。
+///
+/// 规范 §2.1 里只有 `color.overlay`（`rgba(0,0,0,0.6)`）是刻意半透明的，而它
+/// **尚未建模**。将来建模时要把这条检查对它开豁免，别把遮罩一起拒了。
+List<String> findTranslucentTokens(DesignTokens t) {
+  final problems = <String>[];
+  for (final entry in t.toMap().entries) {
+    final alpha = (entry.value >> 24) & 0xFF;
+    if (alpha != 0xFF) {
+      problems.add(
+        '${entry.key} 带透明度（alpha=0x${alpha.toRadixString(16).padLeft(2, '0')}）',
+      );
+    }
+  }
+  return problems;
+}
+
+/// 检查「声明的明暗」与「实际背景亮度」是否自洽，返回问题清单（空 = 一致）。
+///
+/// [declaredDark] 为 `null` 表示主题包没声明 `brightness`，这时无从判断，直接通过。
+///
+/// 为什么要查：`brightness` 决定**系统 UI** 怎么画（状态栏图标、滚动条、原生
+/// 控件），而配色由令牌决定。两者矛盾时，浅色状态栏图标会压在深色窗口上 ——
+/// 那部分界面不可读，且**对比度断言查不出来**（断言只看令牌之间，不看系统 UI）。
+///
+/// 0.5 是黑白中点附近的经验分界，够用来识别「抄反了」这种量级的错误。
+///
+/// 抽成共用函数是因为 `loadThemePackage`（运行时）与 `tools/theme_lint` 都要用：
+/// 只写在 lint 里的话，不经 lint 直接装包的用户永远看不到这条提示。
+List<String> checkBrightnessConsistency(bool? declaredDark, DesignTokens t) {
+  if (declaredDark == null) return const [];
+  final looksDark = ContrastChecker.luminance(t.background) < 0.5;
+  if (looksDark == declaredDark) return const [];
+  return [
+    '声明 brightness=${declaredDark ? 'dark' : 'light'}，但 color.background '
+        '实际是${looksDark ? '深色' : '浅色'}',
+  ];
+}
+
 /// 主题的尺度、字体与动效令牌校验，返回问题清单（空 = 通过）。
 ///
 /// 颜色走 [checkContrast]（不达标就整个拒掉主题包），其余走这里——它们的

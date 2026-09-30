@@ -64,8 +64,14 @@ const _motionCurveKeys = <String, String>{
 
 /// 一份已解析的主题包。
 ///
-/// 只保留**成功解析且本包认识**的令牌；其余一律不带，由 [applyTo] 从基准主题
-/// 补齐。这样主题包永远不可能把某个令牌留空。
+/// 只保留**成功解析、本包认识、且安全**的令牌；其余一律不带，由 [applyTo] 从
+/// 基准主题补齐。这样主题包永远不可能把某个令牌留空。
+///
+/// 「安全」有两条硬约束，都在解析阶段就守住，因为下游的校验依赖它们：
+/// - **颜色一律不透明**：对比度计算忽略 alpha，放行半透明会让「不达标就回退」
+///   静默失效（详见 `_parseColor`）
+/// - **尺度令牌夹进安全区间**：`spacing.unit = -5` 会让 `SizedBox` 断言失败、
+///   `1e300` 会把布局撑爆（详见 `_clampScaleToken`）
 @immutable
 class ThemePackage {
   const ThemePackage({
@@ -153,11 +159,11 @@ class ThemePackage {
       // 有用的那条。
       final colorField = _colorTokenKeys[key];
       if (colorField != null) {
-        final value = _parseColor(entry.value);
-        if (value == null) {
-          warn('令牌 $key 的值不是合法颜色（${entry.value}），已忽略');
+        final parsed = _parseColor(entry.value);
+        if (parsed.color == null) {
+          warn('令牌 $key ${parsed.failure}，已忽略');
         } else {
-          tokens[colorField] = value;
+          tokens[colorField] = parsed.color!;
         }
         continue;
       }
@@ -173,8 +179,10 @@ class ThemePackage {
         if (value == null) {
           warn('令牌 $key 的值不是合法数字（${entry.value}），已忽略');
         } else if (scaleField != null) {
-          numbers[scaleField] = value;
+          numbers[scaleField] = _clampScaleToken(key, scaleField, value, warn);
         } else {
+          // font.scale 不在这里夹：DesignTypography.effectiveScale 会夹进
+          // 规范区间，validateTypography 负责告警。
           numbers[fontField!] = value;
         }
         continue;
@@ -235,6 +243,10 @@ class ThemePackage {
   }
 
   /// 覆盖到 [base] 上：包里有就用包里的，没有就取 [base] 的。
+  ///
+  /// 尺度结果会再过一遍 [clampScale]：包里的值在 [fromJson] 阶段已经夹过一次，
+  /// 这里是**对 [base] 的兜底** —— 万一传入的基准主题自身越界，也不会把畸形值
+  /// 带进渲染。夹住是兜底，告警仍由解析阶段照发，作者得知道自己写的值没生效。
   AppTheme applyTo(AppTheme base) {
     final merged = Map<String, int>.from(base.tokens.toMap())..addAll(tokens);
     final s = base.scale;
@@ -257,15 +269,17 @@ class ThemePackage {
         outline: merged['outline']!,
         outlineStrong: merged['outlineStrong']!,
       ),
-      scale: s.copyWith(
-        unit: numbers['unit'],
-        radiusSm: numbers['radiusSm'],
-        radiusMd: numbers['radiusMd'],
-        radiusLg: numbers['radiusLg'],
-        radiusFull: numbers['radiusFull'],
-        elevationCard: numbers['elevationCard'],
-        elevationDialog: numbers['elevationDialog'],
-        elevationOverlay: numbers['elevationOverlay'],
+      scale: clampScale(
+        s.copyWith(
+          unit: numbers['unit'],
+          radiusSm: numbers['radiusSm'],
+          radiusMd: numbers['radiusMd'],
+          radiusLg: numbers['radiusLg'],
+          radiusFull: numbers['radiusFull'],
+          elevationCard: numbers['elevationCard'],
+          elevationDialog: numbers['elevationDialog'],
+          elevationOverlay: numbers['elevationOverlay'],
+        ),
       ),
       typography: t.copyWith(
         family: strings['family'],
@@ -314,16 +328,21 @@ class ThemeLoadResult {
   final List<String> warnings;
 }
 
-/// 加载主题包：解析 → 叠加 → 对比度校验 → 不达标回退。
+/// 加载主题包：解析 → 叠加 → 不透明性与对比度校验 → 不达标回退。
 ///
 /// docs/09-UI规范.md §9：主题永远不能让 App 白屏或不可读。所以这里最后一定
 /// 跑 [checkContrast]（与内置主题同一份断言），不达标就整个退回 [base]，
 /// 并把具体哪对不达标写进 [ThemeLoadResult.warnings]——用户要改主题包，得先
 /// 知道是哪个令牌。
 ///
+/// [findTranslucentTokens] 与 [checkContrast] 是**同一道闸门**的两半，缺一不可：
+/// 对比度计算忽略 alpha，只看对比度的话「全透明前景 + 全透明背景」会以 21:1
+/// 满分通过，而渲染出来什么都看不见。不透明性守住了，对比度的结论才等于渲染
+/// 结果。这道检查也覆盖 [base] 本身 —— 即使传入的基准主题畸形，也不会漏过去。
+///
 /// 尺度/字体的问题（[validateTheme]）**不触发回退**：圆角顺序反了、字号阶梯
 /// 乱了不会让界面不可读，夹住或按基准值用即可。回退整包反而是更差的选择——
-/// 用户明明只想改一个圆角。
+/// 用户明明只想改一个圆角。（越界值由 [clampScale] 兜底，不会真的生效。）
 ThemeLoadResult loadThemePackage(
   Object? json, {
   required AppTheme base,
@@ -338,15 +357,23 @@ ThemeLoadResult loadThemePackage(
   final pkg = ThemePackage.fromJson(json, onWarn: warn);
   final merged = pkg.applyTo(base);
 
-  final fails = checkContrast(merged.tokens);
+  final fails = <String>[
+    ...findTranslucentTokens(merged.tokens),
+    ...checkContrast(merged.tokens),
+  ];
   if (fails.isEmpty) {
-    for (final problem in validateTheme(merged)) {
-      warn('主题包的尺度/字体/动效令牌有问题（不致命，仍按包里的值使用）：$problem');
+    // 明暗声明与配色矛盾时**只告警、不回退**：配色本身是合规的（对比度过了），
+    // 不可读的只有系统 UI 那部分。回退整包反而会让用户失去想要的配色。
+    for (final problem in <String>[
+      ...checkBrightnessConsistency(pkg.isDark, merged.tokens),
+      ...validateTheme(merged),
+    ]) {
+      warn('主题包的非致命问题（主题仍会加载）：$problem');
     }
     return ThemeLoadResult(theme: merged, fellBack: false, warnings: warnings);
   }
 
-  warn('主题包对比度不达标，已回退到内置主题：${fails.join('、')}');
+  warn('主题包对比度/不透明度不达标，已回退到内置主题：${fails.join('、')}');
   return ThemeLoadResult(theme: base, fellBack: true, warnings: warnings);
 }
 
@@ -370,6 +397,44 @@ double? _parseNumber(Object? value) {
   return null;
 }
 
+/// 把尺度令牌夹进安全区间，**并在真的夹住时告警**。
+///
+/// ⚠️ 为什么在**解析阶段**就夹，而不是等到合成时：
+/// `loadThemePackage` 与 `tools/theme_lint` 共用 `fromJson → applyTo →
+/// validateTheme` 这一条链路，两者之间有一致性测试。夹在解析阶段，两边拿到的
+/// `ThemePackage.numbers` 就是同一份安全值、收到的告警也同一批，**一致性由构造
+/// 保证**；夹在合成阶段则要靠两处各自记得做同一件事。
+///
+/// 告警必须基于**作者写的原始值**：夹住之后再校验，`-5` 已经变成 `1`，
+/// 错误就查不出来了 —— 那正是「静默改值」，比报错更难排查。
+///
+/// 区间见 [kMaxSpacingUnit] / [kMaxRadius] / [kMaxElevation]。
+double _clampScaleToken(
+  String key,
+  String field,
+  double value,
+  void Function(String) warn,
+) {
+  final (lower, upper) = switch (field) {
+    'unit' => (1.0, kMaxSpacingUnit),
+    'elevationCard' || 'elevationDialog' || 'elevationOverlay' => (
+      0.0,
+      kMaxElevation,
+    ),
+    _ => (0.0, kMaxRadius),
+  };
+
+  if (value >= lower && value <= upper) return value;
+
+  final clamped = value.clamp(lower, upper).toDouble();
+  warn(
+    value < lower
+        ? '令牌 $key = $value 低于下限 $lower，已按 $clamped 使用'
+        : '令牌 $key = $value 超过上限 $upper，已按 $clamped 使用',
+  );
+  return clamped;
+}
+
 /// 毫秒 → [Duration]；`null` 表示「包里没写，用基准值」。
 ///
 /// 上界不是为了好看：`(1e30 * 1000).round()` 会抛 `UnsupportedError`，而输入
@@ -386,26 +451,52 @@ Duration? _msToDuration(double? ms) {
 }
 
 /// 解析颜色：`#RGB` / `#RRGGBB` / `#AARRGGBB`，或直接的 ARGB 整数。
-int? _parseColor(Object? value) {
-  if (value is int) return value;
-  if (value is! String) return null;
+///
+/// 返回 `(颜色, 失败原因)`，成功时原因为 `null`、颜色非 `null`。让解析函数
+/// 带回原因而不是自己告警，是为了让调用方**只发一条**告警 —— 否则「不合法」
+/// 与「带透明度」会各报一次，同一行输入刷两条。
+///
+/// ⚠️ **带透明度的值一律拒掉，不静默改成不透明。**
+/// 理由：设计令牌的契约是实色。`ContrastChecker.luminance` 忽略 alpha，
+/// 若放行 `#00000000`（全透明黑）做背景，对比度会算成「不透明黑」的 21:1、
+/// 判为完全达标，而实际渲染什么都看不见 —— 校验结论与渲染结果对不上，
+/// 「不达标就回退」这道防线整个失效。
+///
+/// 拒绝而非强改 alpha：改写会静默把作者写的值换掉（`#80FF0000` 变成
+/// `#FFFF0000`），比「明确拒绝并告警」更难排查。
+({int? color, String? failure}) _parseColor(Object? value) {
+  int? argb;
+  if (value is int) {
+    argb = value & 0xFFFFFFFF;
+  } else if (value is String) {
+    final s = value.trim();
+    if (!s.startsWith('#')) return (color: null, failure: '的值不是合法颜色（$value）');
+    final hex = s.substring(1);
+    final n = int.tryParse(hex, radix: 16);
+    if (n == null) return (color: null, failure: '的值不是合法颜色（$value）');
 
-  final s = value.trim();
-  if (!s.startsWith('#')) return null;
-  final hex = s.substring(1);
-  final n = int.tryParse(hex, radix: 16);
-  if (n == null) return null;
+    argb = switch (hex.length) {
+      3 =>
+        0xFF000000 |
+            _expand3((n >> 8) & 0xF) << 16 |
+            _expand3((n >> 4) & 0xF) << 8 |
+            _expand3(n & 0xF),
+      6 => 0xFF000000 | n,
+      8 => n,
+      _ => null,
+    };
+  }
+  if (argb == null) return (color: null, failure: '的值不是合法颜色（$value）');
 
-  return switch (hex.length) {
-    3 =>
-      0xFF000000 |
-          _expand3((n >> 8) & 0xF) << 16 |
-          _expand3((n >> 4) & 0xF) << 8 |
-          _expand3(n & 0xF),
-    6 => 0xFF000000 | n,
-    8 => n,
-    _ => null,
-  };
+  final alpha = (argb >> 24) & 0xFF;
+  if (alpha != 0xFF) {
+    final hex = alpha.toRadixString(16).padLeft(2, '0');
+    return (
+      color: null,
+      failure: '带透明度（alpha=0x$hex），设计令牌要求不透明',
+    );
+  }
+  return (color: argb, failure: null);
 }
 
 int _expand3(int nibble) => nibble | (nibble << 4);

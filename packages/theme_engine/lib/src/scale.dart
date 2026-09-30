@@ -208,11 +208,71 @@ class DesignTypography {
   };
 }
 
+/// 间距基数上限。
+///
+/// 不是审美偏好，是**兜底**：主题包是用户数据，`spacing.unit = 1e300` 会让
+/// `spacing(4)` 变成 `4e300`，布局直接被撑爆（白屏）。规范默认 4，最大间距档是
+/// 12 档，16 已经足够宽松。
+const double kMaxSpacingUnit = 16;
+
+/// 圆角上限。默认的 `radiusFull = 9999` 表示胶囊，所以上界就取它。
+const double kMaxRadius = 9999;
+
+/// 投影上限。规范默认 1 / 8 / 16。
+const double kMaxElevation = 64;
+
+/// 把尺度令牌夹进安全区间。
+///
+/// ⚠️ 这是**兜底**，不是校验。校验（[validateScale]）负责告诉作者哪里写错了，
+/// 这里负责保证**即使作者写错了，界面也不会崩或白屏**。两者缺一不可——
+/// 只校验不夹住，等于「告警了但仍按畸形值生效」。
+///
+/// 为什么必须夹住（实测）：
+/// - `unit = -5` → `SizedBox(width: -5)` 在 debug 下直接断言失败
+/// - `unit = 1e300` → 布局尺寸溢出，白屏
+/// - `radius.lg = -1` / `elevation.overlay = 1e300` → 同上
+///
+/// 非有限值（NaN / Infinity）回落到 [DesignScale.standard] 的对应值。
+///
+/// 刻意**不**在这里纠正单调性（`sm <= md <= lg`）：顺序反了只是观感问题，
+/// 不会崩也不会白屏，交给 [validateScale] 告警即可。
+DesignScale clampScale(DesignScale s) {
+  double fix(double v, double fallback, double lower, double upper) {
+    if (!v.isFinite) return fallback;
+    return v.clamp(lower, upper).toDouble();
+  }
+
+  const std = DesignScale.standard;
+  return DesignScale(
+    unit: fix(s.unit, std.unit, 1, kMaxSpacingUnit),
+    radiusSm: fix(s.radiusSm, std.radiusSm, 0, kMaxRadius),
+    radiusMd: fix(s.radiusMd, std.radiusMd, 0, kMaxRadius),
+    radiusLg: fix(s.radiusLg, std.radiusLg, 0, kMaxRadius),
+    radiusFull: fix(s.radiusFull, std.radiusFull, 0, kMaxRadius),
+    elevationCard: fix(s.elevationCard, std.elevationCard, 0, kMaxElevation),
+    elevationDialog: fix(
+      s.elevationDialog,
+      std.elevationDialog,
+      0,
+      kMaxElevation,
+    ),
+    elevationOverlay: fix(
+      s.elevationOverlay,
+      std.elevationOverlay,
+      0,
+      kMaxElevation,
+    ),
+  );
+}
+
 /// 校验尺度令牌，返回问题清单（空 = 通过）。
 ///
 /// 主题包是用户数据，错了不能抛异常把加载链路打断——收集成清单交给调用方
 /// 告警。圆角与投影的顺序不是审美偏好：`radiusFull` 小于 `radiusLg` 会让
 /// 「胶囊」比「对话框」还方，那是明确的配置错误。
+///
+/// 上界也在这里报：超界值会被 [clampScale] 夹住，但作者必须知道自己写的值
+/// 没有生效，否则会反复调试一个「改了没用」的数字。
 List<String> validateScale(DesignScale s) {
   final problems = <String>[];
   void positive(String name, double v) {
@@ -223,11 +283,26 @@ List<String> validateScale(DesignScale s) {
     if (v.isNaN || v < 0) problems.add('$name 不能为负（当前 $v）');
   }
 
+  void atMost(String name, double v, double max) {
+    if (v.isFinite && v > max) {
+      problems.add('$name 超过上限 $max（当前 $v），将被夹住');
+    }
+  }
+
   positive('spacing.unit', s.unit);
+  atMost('spacing.unit', s.unit, kMaxSpacingUnit);
   nonNegative('radius.sm', s.radiusSm);
   nonNegative('radius.md', s.radiusMd);
   nonNegative('radius.lg', s.radiusLg);
   nonNegative('radius.full', s.radiusFull);
+  for (final entry in {
+    'radius.sm': s.radiusSm,
+    'radius.md': s.radiusMd,
+    'radius.lg': s.radiusLg,
+    'radius.full': s.radiusFull,
+  }.entries) {
+    atMost(entry.key, entry.value, kMaxRadius);
+  }
 
   if (!(s.radiusSm <= s.radiusMd && s.radiusMd <= s.radiusLg)) {
     problems.add(
@@ -241,6 +316,13 @@ List<String> validateScale(DesignScale s) {
   nonNegative('elevation.card', s.elevationCard);
   nonNegative('elevation.dialog', s.elevationDialog);
   nonNegative('elevation.overlay', s.elevationOverlay);
+  for (final entry in {
+    'elevation.card': s.elevationCard,
+    'elevation.dialog': s.elevationDialog,
+    'elevation.overlay': s.elevationOverlay,
+  }.entries) {
+    atMost(entry.key, entry.value, kMaxElevation);
+  }
   if (!(s.elevationCard <= s.elevationDialog &&
       s.elevationDialog <= s.elevationOverlay)) {
     problems.add(
