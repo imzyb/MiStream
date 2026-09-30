@@ -25,6 +25,10 @@ Future<void> main() async {
   // 供路由器使用的全局装配
   setGlobalRouterAssembly(assembly);
 
+  // EPG 模板来自配置的 `lives[]`，而配置原文不入库 —— 单独存了一份，启动时
+  // 恢复进拉取器，否则重启后节目单永远是空的。
+  await assembly.restoreLiveEpgTemplates();
+
   runApp(
     MiStreamApp(
       assembly: assembly,

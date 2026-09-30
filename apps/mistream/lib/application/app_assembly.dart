@@ -12,6 +12,7 @@ import 'package:media_sniffer/media_sniffer.dart';
 import 'package:meta/meta.dart';
 import 'package:mistream/application/config_install_service.dart';
 import 'package:mistream/application/detail_use_case.dart';
+import 'package:mistream/application/live_epg_settings.dart';
 import 'package:mistream/application/live_source_fetcher.dart';
 import 'package:search_engine/search_engine.dart';
 import 'package:sniffer/sniffer.dart';
@@ -69,10 +70,15 @@ class AppAssembly {
       repository: liveRepository,
       fetcher: liveFetcher.call,
     );
-    // 配置安装要顺带导入 `lives`，所以 liveImporter 必须先就位。
+    // EPG 与直播源共用同一个 HttpClient：节目单也是「拉一份文本」，多建一个
+    // 客户端只是多一份连接池。模板先留空，等 `restoreLiveEpgTemplates()` 或
+    // 配置导入时填。
+    liveEpgFetcher = EpgFetcher(fetcher: liveFetcher.call);
+    // 配置安装要顺带导入 `lives` 并落库 `epg` 模板，所以两者必须先就位。
     configInstaller = ConfigInstallService(
       repositories,
       liveImporter: liveImporter,
+      epgFetcher: liveEpgFetcher,
     );
   }
 
@@ -116,6 +122,9 @@ class AppAssembly {
   /// 直播源 HTTP 拉取器。
   late final LiveSourceFetcher liveFetcher;
 
+  /// 直播 EPG 拉取器（按配置里的 `epg` 模板，单频道按需拉）。
+  late final EpgFetcher liveEpgFetcher;
+
   /// 源提供者。
   late final StorageSourceProvider sourceProvider;
 
@@ -124,6 +133,18 @@ class AppAssembly {
 
   /// 宿主 API。
   late final HostApi _hostApi;
+
+  /// 恢复上次导入配置时存下的 EPG 模板。
+  ///
+  /// 配置原文不入库，模板是单独存的一份；不恢复的话重启后节目单永远是空的。
+  /// 启动路径上 `await` 它，是因为播放页拿到频道时模板必须已经就位 ——
+  /// 这一条几乎不耗时（一次 KV 读），不值得为它引入「首次使用时再加载」的
+  /// 竞态。
+  Future<void> restoreLiveEpgTemplates() async {
+    liveEpgFetcher.updateTemplates(
+      await loadLiveEpgTemplates(repositories.settings),
+    );
+  }
 
   /// 关闭底层资源。
   Future<void> dispose() async {

@@ -8,6 +8,7 @@ library;
 import 'package:core_config/core_config.dart';
 import 'package:core_domain/core_domain.dart';
 import 'package:live/live.dart';
+import 'package:mistream/application/live_epg_settings.dart';
 import 'package:punycoder/punycoder.dart';
 import 'package:storage/storage.dart';
 
@@ -59,12 +60,17 @@ class ConfigInstallService {
   ///
   /// [liveImporter] 为 `null` 时**不导入直播源**（只装站点）。测试与不关心
   /// 直播的调用方走这条路。
+  ///
+  /// [epgFetcher] 用于把配置里的 `epg` 模板**当场**接进拉取器（不必等重启）。
+  /// 为 `null` 时模板仍然会落库，只是这一次会话不生效。
   ConfigInstallService(
     this._repositories, {
     ConfigFetcher? fetcher,
     LiveImporter? liveImporter,
+    EpgFetcher? epgFetcher,
   }) : _fetcher = fetcher,
-       _liveImporter = liveImporter;
+       _liveImporter = liveImporter,
+       _epgFetcher = epgFetcher;
 
   final Repositories _repositories;
 
@@ -73,6 +79,9 @@ class ConfigInstallService {
 
   /// 直播订阅导入器；为 `null` 时跳过 `lives`。
   final LiveImporter? _liveImporter;
+
+  /// 直播 EPG 拉取器；为 `null` 时只落库模板、不接线。
+  final EpgFetcher? _epgFetcher;
 
   /// 引导是否已完成。
   Future<bool> isOnboardingDone() =>
@@ -137,22 +146,36 @@ class ConfigInstallService {
     return result.config.sites.length;
   }
 
-  /// 顺带导入配置里的 `lives` 订阅。
+  /// 顺带导入配置里的 `lives` 订阅，并把 `epg` 模板落库。
   ///
   /// TVBox 配置的 `lives` 是一组直播订阅源，此前**解析了但零消费方** ——
   /// 「配置 → 频道列表」这一环是断的，用户在直播页只能看到一个空列表。
   ///
-  /// 两条约定：
+  /// 三条约定：
   /// - **失败不冒泡**。站点已经装好了，直播源拉不到（源站跑路、网络抖动）
   ///   不该让整份配置导入变成失败 —— 那是两件独立的事。
   /// - **`baseUrl` 传 [sourceUrl]**：真实配置里 `lives[].url` 可能是
   ///   `./list.txt` 这类相对路径，不解析就是一条永远 404 的地址。
+  /// - **EPG 模板与频道导入解耦**。模板先落库再接拉取器：源站今天挂了不代表
+  ///   明天还挂，模板留着下次还能用；而且配置原文不入库，不单独存一份的话
+  ///   重启后节目单就没了。
   Future<void> _installLives(
     List<LiveConfig> lives, {
     String? sourceUrl,
   }) async {
+    if (lives.isEmpty) return;
+
+    // 配置是模板的**唯一权威来源**：这次没有 `epg` 就写空，把上一份配置留下
+    // 的陈旧模板清掉，免得拉到一个早就换掉的接口。
+    final templates = <String>[
+      for (final live in lives)
+        if ((live.epg ?? '').trim().isNotEmpty) live.epg!.trim(),
+    ];
+    await saveLiveEpgTemplates(_repositories.settings, templates);
+    _epgFetcher?.updateTemplates(templates);
+
     final importer = _liveImporter;
-    if (importer == null || lives.isEmpty) return;
+    if (importer == null) return;
 
     final subscriptions = <LiveSubscription>[
       for (final live in lives)

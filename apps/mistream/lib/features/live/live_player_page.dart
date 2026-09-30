@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:live/live.dart';
 import 'package:media_kit_video/media_kit_video.dart' as mkv;
+import 'package:mistream/app/app.dart' show AppScope;
 import 'package:mistream/features/player/player_controller.dart';
 import 'package:mistream/features/player/player_page.dart';
 import 'package:player_engine/player_engine.dart';
@@ -34,10 +35,43 @@ class _LivePlayerPageState extends State<LivePlayerPage> {
   LiveSwitchResult? _result;
   String? _error;
 
+  /// 本频道的节目单（拉到才有）。
+  LiveEpg? _epg;
+  EpgFetcher? _epgFetcher;
+  bool _epgRequested = false;
+
   @override
   void initState() {
     super.initState();
     unawaited(_init());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_epgRequested) return;
+    _epgRequested = true;
+    _epgFetcher = AppScope.of(context).liveEpgFetcher;
+    unawaited(_loadEpg());
+  }
+
+  /// 拉本频道的节目单。
+  ///
+  /// 与播放**并行**，不阻塞起播：EPG 是锦上添花，源站不收录这个台、接口挂了、
+  /// 配置里根本没给 `epg` 都是常态，任何一种都不该让用户看不了电视。
+  Future<void> _loadEpg() async {
+    final fetcher = _epgFetcher;
+    if (fetcher == null || !fetcher.hasTemplates) return;
+    try {
+      final epg = await fetcher.loadFor(
+        widget.channel.id,
+        widget.channel.name,
+      );
+      if (!mounted || epg == null) return;
+      setState(() => _epg = epg);
+    } on Object {
+      // 见上。
+    }
   }
 
   Future<void> _init() async {
@@ -157,10 +191,16 @@ class _LivePlayerPageState extends State<LivePlayerPage> {
     );
   }
 
-  /// 标题带上当前线路 —— 出口标准要求「UI 显示当前线路」。
+  /// 标题带上当前线路与正在播的节目 —— 出口标准要求「UI 显示当前线路」，
+  /// 节目单则是 EPG 唯一的用户可见出口。
   String _title() {
-    final name = widget.channel.name;
+    final parts = <String>[widget.channel.name];
     final label = _result?.lineLabel ?? '';
-    return label.isEmpty ? name : '$name · $label';
+    if (label.isNotEmpty) parts.add(label);
+    final program = _epg?.currentProgram;
+    if (program != null && program.title.isNotEmpty) {
+      parts.add('正在播 ${program.title}');
+    }
+    return parts.join(' · ');
   }
 }
