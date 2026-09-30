@@ -2,7 +2,7 @@
 
 > 本文件只做一件事：对照 [ROADMAP.md](ROADMAP.md) 的**出口标准**报告真实状态。
 > 每个勾都指向可复现的证据（测试文件/命令/提交）。未验证的一律不勾。
-> 更新：2026-09-25
+> 更新：2026-09-30
 
 ## 总览
 
@@ -15,7 +15,7 @@
 | M4 JS 运行时 | 5/6 | 🟢 仅剩真实源 |
 | M5 主线 UI 闭环 | 6/7 | 🟢 仅剩真实配置源 |
 | M6 嗅探与解析 | 1/5 | 🟡 CDP 嗅探运行时已落地，缺真实 type=0 源 |
-| M7 直播 | 0/4 | 🟡 包已建，缺验收 |
+| M7 直播 | 2/4 | 🟡 配置→频道列表链路已通；缺真实网络与 UI 渲染验收 |
 | M8 下载与离线 | 0/5 | 🟡 真实实现已接入，缺验收 |
 | M9 插件系统与主题 | 6/6 | 🟢 出口标准全勾；交付物仍缺主题包安装链路/插件中心 UI |
 | M10 发布工程 | 0/6 | 🟡 发布链草稿已就位 |
@@ -108,7 +108,34 @@
 四个包已入工作区并全绿测试，但各自出口标准需要真实网络/真实源/长跑才能勾选：
 
 - **M6** `packages/media_sniffer`（66 测试）：规则引擎、直链验证、HLS 样本测试齐；`runtimes/sniffer` **已落地 CDP 嗅探运行时**（70 测试，含真实 Edge/Chrome 端到端启动验证）；缺真实 type=0 网页源验收
-- **M7** `packages/live`（17 测试）：m3u/txt 解析、drift 收藏、XMLTV EPG；缺换台/重试/长跑验收
+- **M7** `packages/live`（**89 测试**，2026-09-30 由 17 起）+ app 层
+  `live_import_e2e_test`（6 例）：m3u/txt 解析、drift 收藏、XMLTV EPG。
+  **2026-09-30 修掉 8 处解析缺陷并打通「配置 → 频道列表」**：
+  - `live_parser` 重写。用**真实源**（`live.zbds.top/tv/iptv4.txt` 前 11 行 +
+    常见 m3u）写探针 12 例，**修前 8 例不符**，其中「m3u 标准写法（名字在
+    `#EXTINF` 行末逗号之后）完全失效、只出 1/3 频道」是最严重的一处；其余为
+    `分组,#genre#` 标记行被当成频道、`#` 多地址不拆、尾随 `#`/`,` 产生死地址、
+    URL 里的 `&amp;` 被 `;` 拆成 4 段垃圾、`channelsByGroup` 丢未分组频道、
+    `favoriteChannels` 命名与实现不符（实现是「groupId 为空」，与收藏无关，
+    已改名 `ungroupedChannels`）。
+  - `DriftLiveRepository` 两处持久化缺陷：`groupId` 是 NOT NULL 而旧实现遇到
+    `groupId == null` 直接 `continue`，**未分组频道在「全部」里也一起消失**；
+    `urls_json` 只写主地址，**备用线路在落库这一步就断掉**（列名本就是复数，
+    设计意图是多地址）。改为 JSON 数组存储并兼容旧库的裸 URL 形态。
+  - 新增 `LiveSubscription` / `resolveLiveUrl`（真实配置里 `lives[].url` 有
+    `./list.txt` 这种相对路径）/ `LiveImporter`（多源串行、单源失败不中断、
+    全军覆没不写库）/ `LiveChannelSwitcher`（多线路按序重试 + 当前线路）。
+  - **接线**：`ConfigInstallService.install` 顺带导入 `lives`（此前
+    `LiveConfig` 解析了但零消费方，「配置 → 频道列表」是断的）；`LivePage`
+    改用 `AppScope` 里的 `DriftLiveRepository`（此前是 `InMemoryLiveRepository`，
+    永远是空的）。
+  - 反向验证 **20 项全部变红**（`.workbuddy-ai/scripts/rev_verify_live.py`）。
+  - ⚠️ **`type` 字段不可靠**：文档说 `0 = M3U / 1 = TXT`，但实测真实配置
+    `{"type": 0, "url": "./list.txt"}` 拉回来的是**纯 txt**。所以导入一律按
+    内容嗅探（`#EXTINF` 判定），`type` 只做诊断。这条是拉真实配置验出来的，
+    不是照文档写的。
+  - ⚠️ **未覆盖**：UI 渲染（本环境 widget 测试不可用）；GBK 编码的直播源
+    （只按 UTF-8 解码，非法字节替换）；换台 P50 与 50 次长跑（需真实网络）
 - **M8** `packages/download`（22 测试）：任务状态机、Range 断点续传、HLS 分片；**假实现已替换为真实实现**（提交 `720dad3`），缺真实网络断点/离线播放验收
 - **M9** `packages/plugin_host`（**90 测试**，2026-09-28 由 19 → 30 → 56，09-30 → 68 → 90）+ **`packages/theme_engine`**（**98 测试**，新增独立包，提交 `b113410`）：清单/权限/sha256、**路径穿越 guard**（2026-09-30 修掉两类真漏洞，见三续之后的四续）、**权限撤销的运行时降级**（2026-09-30 补通知链路与调用侧闸门，此前 `revoke` 只改账本、与 `PluginManager` 脱钩）、**畸形主题包的兜底**（2026-09-30 三：修掉「透明度绕过对比度校验」与「尺度越界原样生效」两处真漏洞）、对比度计算、**版本目录 + 指针切换的原子升级与回滚**（新增 `PluginStore`，26 例）。**生命周期状态机已补测**（提交 `68a163d`：`PluginState.error` 此前从未被赋值、属死状态，已让激活失败可进入 error 并补全迁移真值表）。仍缺**主题包的安装/启用链路**（从插件目录加载，现在只有解析与校验）
   - **记录更正（2026-09-30）**：此处原先写「isolate 沙箱」，**失实**。`PluginSandbox`
