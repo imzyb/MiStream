@@ -127,6 +127,19 @@ class DriftLiveRepository implements LiveRepository {
   @override
   Future<void> replaceAll(LiveParseResult result) async {
     await _db.transaction(() async {
+      // 收藏是**用户行为**，不该被一次「刷新订阅」抹掉。整体重建会让行主键
+      // 全变，所以只能靠业务键恢复 —— 用**频道名**而不是地址：用户收藏的是
+      // 「这个台」，源换了线路还是同一个台，按地址恢复等于每次换源都丢收藏。
+      //
+      // 代价是同名不同台会误判为同一个收藏。真实直播源里同名基本就是同一个
+      // 台（实测 CCTV1 在一个源里挂 3 条地址，在另一个源里是另一批地址）。
+      final favoriteNames = {
+        for (final row in await (_db.select(
+          _db.liveChannels,
+        )..where((t) => t.favorite.equals(true))).get())
+          row.name,
+      };
+
       await _db.delete(_db.liveChannels).go();
       await _db.delete(_db.liveGroups).go();
 
@@ -174,7 +187,7 @@ class DriftLiveRepository implements LiveRepository {
             // 只有一条线可试。
             urlsJson: encodeLiveUrls(channel.allUrls),
             epgId: Value(channel.id),
-            favorite: const Value(false),
+            favorite: Value(favoriteNames.contains(channel.name)),
           ),
         );
       }

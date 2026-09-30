@@ -38,8 +38,8 @@ abstract class LiveRepository {
   /// （[LiveImporter]）可以把多个订阅源合并成一份再落库，不必让仓库层
   /// 反复「清空 → 写入」。
   ///
-  /// ⚠️ 收藏状态**不会保留**：收藏是按行主键记的，整体重建后主键全变。
-  /// 这是既有行为，不是本次引入的；要修得先给频道一个跨重建稳定的业务键。
+  /// **收藏状态会保留**（按频道名恢复）：收藏是用户行为，不该被一次「刷新
+  /// 订阅」抹掉。
   Future<void> replaceAll(LiveParseResult result);
 
   /// 刷新数据源。
@@ -113,12 +113,21 @@ class InMemoryLiveRepository implements LiveRepository {
 
   @override
   Future<void> replaceAll(LiveParseResult result) async {
+    // 与 drift 实现保持同一语义：收藏按频道名恢复。
+    final favoriteNames = {for (final c in _favorites) c.name};
+
     _channels
       ..clear()
       ..addAll(result.channels);
     _groups
       ..clear()
       ..addAll(result.groups);
+
+    _favorites
+      ..clear()
+      ..addAll(
+        _channels.where((c) => favoriteNames.contains(c.name)),
+      );
   }
 
   @override
