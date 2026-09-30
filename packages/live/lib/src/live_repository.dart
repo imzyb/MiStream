@@ -32,6 +32,16 @@ abstract class LiveRepository {
   /// 导入M3U播放列表。
   Future<void> importM3u(String content, {String? sourceName});
 
+  /// 用一份解析结果**整体替换**频道与分组。
+  ///
+  /// 与 [importM3u] 的差别：这个入口吃的是已经解析好的结果，所以调用方
+  /// （[LiveImporter]）可以把多个订阅源合并成一份再落库，不必让仓库层
+  /// 反复「清空 → 写入」。
+  ///
+  /// ⚠️ 收藏状态**不会保留**：收藏是按行主键记的，整体重建后主键全变。
+  /// 这是既有行为，不是本次引入的；要修得先给频道一个跨重建稳定的业务键。
+  Future<void> replaceAll(LiveParseResult result);
+
   /// 刷新数据源。
   Future<void> refresh();
 }
@@ -51,12 +61,16 @@ class InMemoryLiveRepository implements LiveRepository {
 
   @override
   Future<Map<LiveGroup, List<LiveChannel>>> getChannelsByGroup() async {
+    // 与 [LiveParseResult.channelsByGroup] 保持同一语义：**含未分组桶**。
+    // 旧实现用 `firstOrNull` 过滤，未分组频道直接消失，分组视图的总数
+    // 对不上「全部」。
     final result = <LiveGroup, List<LiveChannel>>{};
+    final byId = {for (final g in _groups) g.id: g};
     for (final channel in _channels) {
-      final group = _groups.where((g) => g.id == channel.groupId).firstOrNull;
-      if (group != null) {
-        result.putIfAbsent(group, () => []).add(channel);
-      }
+      final group = channel.groupId == null
+          ? LiveParseResult.ungroupedGroup
+          : (byId[channel.groupId] ?? LiveParseResult.ungroupedGroup);
+      result.putIfAbsent(group, () => []).add(channel);
     }
     return result;
   }
@@ -94,13 +108,17 @@ class InMemoryLiveRepository implements LiveRepository {
 
   @override
   Future<void> importM3u(String content, {String? sourceName}) async {
-    final parser = LiveParser();
-    final result = parser.parse(content);
+    await replaceAll(LiveParser().parse(content));
+  }
 
-    _channels.clear();
-    _groups.clear();
-    _channels.addAll(result.channels);
-    _groups.addAll(result.groups);
+  @override
+  Future<void> replaceAll(LiveParseResult result) async {
+    _channels
+      ..clear()
+      ..addAll(result.channels);
+    _groups
+      ..clear()
+      ..addAll(result.groups);
   }
 
   @override
