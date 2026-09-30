@@ -123,7 +123,7 @@ void main() {
         _valid(tokens: _hexTokens(AppTheme.dark.tokens), brightness: 'light'),
       );
       expect(report.hasError, isFalse, reason: '对比度本身是过的');
-      expect(_messages(report).join(), contains('brightness 声明为 light'));
+      expect(_messages(report).join(), contains('声明 brightness=light'));
       expect(_hints(report).join(), contains('多半是 brightness 抄反了'));
     });
 
@@ -131,7 +131,7 @@ void main() {
       final report = linter.lint(
         _valid(tokens: _hexTokens(AppTheme.dark.tokens), brightness: 'dark'),
       );
-      expect(_messages(report).join(), isNot(contains('抄反')));
+      expect(_messages(report).join(), isNot(contains('brightness')));
     });
 
     test('未覆盖的令牌以 info 列出', () {
@@ -177,9 +177,10 @@ void main() {
       expect(_messages(report).join(), contains('超出规范区间'));
     });
 
-    /// 「不会导致被拒」和「按默认值使用」是两回事——包里写的值其实照原样
-    /// 生效，提示文案不能说反。
-    test('告警的提示不说「会按默认值使用」', () {
+    /// 「不会导致被拒」不等于「按默认值使用」——两者的区别要留在文案里。
+    /// 注意：越界值现在会在**解析阶段**被夹住（另有一条告警说明夹成了什么），
+    /// 所以这里只说「仍会加载」，不对生效值做「原样生效」的承诺。
+    test('告警的提示不承诺「按默认值使用」', () {
       final report = linter.lint(
         _valid(
           tokens: const {
@@ -190,7 +191,45 @@ void main() {
         ),
       );
       final hint = _hints(report).firstWhere((h) => h.contains('不会导致主题被拒'));
-      expect(hint, contains('照原样生效'));
+      expect(hint, isNot(contains('默认值')));
+      expect(hint, contains('夹进安全区间'));
+    });
+
+    /// 尺度越界值必须被夹住并说清夹成了什么，否则作者会反复调一个
+    /// 「改了没用」的数字。夹住发生在解析阶段，所以是 warning 而非 error。
+    test('尺度越界值被夹住并告警', () {
+      final report = linter.lint(
+        _valid(
+          tokens: const {
+            'color.outline': '#CBD5E1',
+            'spacing.unit': -5,
+            'radius.full': 1e300,
+          },
+        ),
+      );
+      expect(report.hasError, isFalse);
+      final messages = _messages(report).join();
+      expect(messages, contains('低于下限'));
+      expect(messages, contains('超过上限'));
+      expect(report.theme, isNotNull);
+      expect(report.theme!.scale.unit, 1);
+      expect(report.theme!.scale.radiusFull, kMaxRadius);
+    });
+
+    /// 带透明度的颜色会被解析阶段拒掉（对比度计算忽略 alpha，放行会让
+    /// 「不达标就回退」静默失效）。lint 与运行时都不把它当错误 —— 令牌被丢
+    /// 掉之后合成结果仍然合规。
+    test('带透明度的颜色被拒并告警，但不判为错误', () {
+      final report = linter.lint(
+        _valid(
+          tokens: const {
+            'color.outline': '#CBD5E1',
+            'color.background': '#00000000',
+          },
+        ),
+      );
+      expect(report.hasError, isFalse);
+      expect(_messages(report).join(), contains('带透明度'));
     });
   });
 
@@ -308,6 +347,10 @@ void main() {
         _valid(tokens: const {'motion.hover.curve': 'bounce'}),
         _valid(tokens: const {'motion.reduceMotion': true}),
         _valid(tokens: const {'motion.hover': 1e30}),
+        // 畸形但安全的输入：两边都只告警，不判错误、不回退。
+        _valid(tokens: const {'color.background': '#00000000'}), // 带透明度
+        _valid(tokens: const {'spacing.unit': -5}), // 尺度越界
+        _valid(tokens: const {'spacing.unit': 1e300}),
       ];
 
       for (final text in samples) {

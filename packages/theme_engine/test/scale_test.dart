@@ -131,5 +131,26 @@ void main() {
         expect(theme.typography.fallback, DesignTypography.defaultFallback);
       }
     });
+
+    /// 上界也要报：超界值会被 clampScale 夹住，但作者必须知道**自己写的值
+    /// 没生效**，否则会反复调试一个「改了没用」的数字。
+    test('尺度令牌超过上限会被告警', () {
+      final problems = validateScale(
+        const DesignScale(
+          unit: 100,
+          radiusSm: 4,
+          radiusMd: 8,
+          radiusLg: 20_000,
+          radiusFull: 20_000,
+          elevationCard: 1,
+          elevationDialog: 8,
+          elevationOverlay: 999,
+        ),
+      ).join();
+
+      expect(problems, contains('spacing.unit 超过上限 $kMaxSpacingUnit'));
+      expect(problems, contains('radius.lg 超过上限 $kMaxRadius'));
+      expect(problems, contains('elevation.overlay 超过上限 $kMaxElevation'));
+    });
   });
 }

@@ -31,7 +31,36 @@ void main() {
           ThemePackage.fromJson(_pkg({'color.primary': v})).tokens['primary']!;
       expect(parse('#F00'), 0xFFFF0000);
       expect(parse('#FF0000'), 0xFFFF0000);
-      expect(parse('#80FF0000'), 0x80FF0000);
+      // #AARRGGBB 里 alpha 必须是 FF —— 带透明度的会被拒，见下一条用例。
+      expect(parse('#FFFF0000'), 0xFFFF0000);
+    });
+
+    /// ⚠️ 这条用例原先写的是 `expect(parse('#80FF0000'), 0x80FF0000)`，
+    /// 等于把不安全行为**锁死**了：对比度计算只看 RGB、忽略 alpha，放行
+    /// 半透明/全透明颜色会让「不达标就回退」那道防线静默失效
+    /// （全透明黑底 + 全透明白字算出来 21:1，渲染出来什么都看不见）。
+    test('带透明度的颜色一律拒掉（对比度计算忽略 alpha）', () {
+      final warns = <String>[];
+      final pkg = ThemePackage.fromJson(
+        _pkg({
+          'color.background': '#00000000', // 全透明黑
+          'color.primaryText': '#00FFFFFF', // 全透明白
+          'color.surface': '#80FFFFFF', // 半透明白
+        }),
+        onWarn: warns.add,
+      );
+      expect(pkg.tokens, isEmpty, reason: '带 alpha 的颜色一个都不该进来');
+      expect(warns, hasLength(3), reason: '每行输入只报一条，不重复刷');
+      expect(warns.every((w) => w.contains('带透明度')), isTrue);
+
+      // 整数写法同样受约束
+      final fromInt = ThemePackage.fromJson(
+        _pkg({'color.primary': 0x80FF0000}),
+      );
+      expect(fromInt.tokens, isEmpty);
+      // 不透明整数照常采纳
+      final opaque = ThemePackage.fromJson(_pkg({'color.primary': 0xFF5B3FD6}));
+      expect(opaque.tokens['primary'], 0xFF5B3FD6);
     });
 
     test('非法颜色值忽略并告警', () {
@@ -171,6 +200,177 @@ void main() {
       );
       expect(result.fellBack, isTrue);
       expect(result.warnings.join(), contains('onPrimary/primary'));
+    });
+
+    /// ROADMAP M9 出口标准：**畸形主题包不导致白屏或不可读对比度**。
+    ///
+    /// 这条的原始缺陷是：对比度计算忽略 alpha，于是「全透明黑底 + 全透明白字」
+    /// 以 21:1 满分通过，渲染出来却什么都看不见 —— 等效白屏。修法是在解析阶段
+    /// 就把带 alpha 的颜色拒掉，让令牌集**恒为不透明**，对比度结论才等于渲染。
+    test('全透明配色不会生效（原先是能满分通过的）', () {
+      final result = loadThemePackage(
+        _pkg({
+          'color.background': '#00000000',
+          'color.primaryText': '#00FFFFFF',
+          'color.onSurface': '#00000000',
+        }),
+        base: AppTheme.dark,
+      );
+
+      // 三个透明令牌全被拒 → 合成结果就是基准主题，全部不透明
+      expect(
+        result.theme.tokens.toMap(),
+        AppTheme.dark.tokens.toMap(),
+        reason: '透明令牌一个都不能生效',
+      );
+      for (final entry in result.theme.tokens.toMap().entries) {
+        expect(
+          (entry.value >> 24) & 0xFF,
+          0xFF,
+          reason: '${entry.key} 必须不透明',
+        );
+      }
+      expect(result.warnings.join(), contains('带透明度'));
+    });
+
+    test('基准主题本身带透明度也会被拦住', () {
+      // 令牌集不透明这条不变量不能只在「主题包」这条路径上守：
+      // 合成结果要再查一遍，直接构造出来的畸形 AppTheme 同样过不去。
+      const translucentBase = AppTheme(
+        id: 'bad-base',
+        name: '畸形基准',
+        isDark: true,
+        tokens: DesignTokens(
+          primary: 0x80818CF8,
+          onPrimary: 0xFF0F172A,
+          primaryText: 0xFFA5B4FC,
+          background: 0xFF0F172A,
+          surface: 0xFF1E293B,
+          surfaceVariant: 0xFF2C3849,
+          onSurface: 0xFFE2E8F0,
+          onSurfaceMuted: 0xFF94A3B8,
+          outline: 0xFF2A303C,
+          outlineStrong: 0xFF7C8DA6,
+        ),
+      );
+
+      final result = loadThemePackage(_pkg({}), base: translucentBase);
+
+      expect(result.fellBack, isTrue);
+      expect(result.theme, translucentBase);
+      expect(result.warnings.join(), contains('primary 带透明度'));
+    });
+
+    test('尺度越界值被夹住，不会原样生效（否则布局崩/白屏）', () {
+      final result = loadThemePackage(
+        _pkg({
+          'spacing.unit': 1e300,
+          'radius.lg': -1,
+          'elevation.overlay': 1e300,
+        }),
+        base: AppTheme.dark,
+      );
+
+      final s = result.theme.scale;
+      expect(s.unit, kMaxSpacingUnit);
+      expect(s.radiusLg, 0);
+      expect(s.elevationOverlay, kMaxElevation);
+      expect(s.spacing(4).isFinite, isTrue);
+      // 夹住的同时必须告警，否则作者会反复调一个「改了没用」的数字。
+      // 告警基于**原始值**（1e+300 / -1），不是夹住后的值。
+      expect(result.warnings.join(), contains('超过上限'));
+      expect(result.warnings.join(), contains('低于下限'));
+      expect(result.warnings.join(), contains('1e+300'));
+    });
+
+    test('内置四套主题不受 clampScale 影响（上界留足了余量）', () {
+      for (final theme in AppTheme.builtIns) {
+        expect(
+          clampScale(theme.scale).toMap(),
+          theme.scale.toMap(),
+          reason: '${theme.id} 的尺度令牌不该被夹住',
+        );
+        expect(validateScale(theme.scale), isEmpty, reason: theme.id);
+        expect(findTranslucentTokens(theme.tokens), isEmpty, reason: theme.id);
+      }
+    });
+
+    /// brightness 决定**系统 UI**（状态栏图标、滚动条）按明还是按暗画，而配色
+    /// 由令牌决定。两者矛盾时系统 UI 那部分不可读 —— 且对比度断言查不出来
+    /// （断言只看令牌之间）。所以它必须是一条**独立**的告警。
+    test('声明 brightness 与实际底色矛盾时告警，但不回退', () {
+      // outline 不在任何对比度规则里，保证这条用例只测 brightness 这一件事。
+      final result = loadThemePackage(
+        _pkg({'color.outline': '#334155'}, brightness: 'light'),
+        base: AppTheme.dark,
+      );
+
+      expect(result.fellBack, isFalse, reason: '配色本身合规，不该回退');
+      expect(result.theme.isDark, isFalse, reason: '声明优先');
+      expect(result.warnings.join(), contains('brightness'));
+      expect(result.warnings.join(), contains('深色'));
+    });
+
+    test('brightness 与底色一致时不告警', () {
+      final result = loadThemePackage(
+        _pkg({'color.outline': '#E2E8F0'}, brightness: 'light'),
+        base: AppTheme.light,
+      );
+      expect(result.fellBack, isFalse);
+      expect(result.warnings.join(), isNot(contains('brightness')));
+    });
+
+    test('没声明 brightness 时不判断（无从判断就不猜）', () {
+      final result = loadThemePackage(
+        _pkg({'color.outline': '#334155'}),
+        base: AppTheme.dark,
+      );
+      expect(result.warnings.join(), isNot(contains('brightness')));
+    });
+  });
+
+  group('不透明性与尺度兜底（独立单测）', () {
+    test('findTranslucentTokens 按令牌名报出问题', () {
+      const t = DesignTokens(
+        primary: 0x80818CF8, // 半透明
+        onPrimary: 0xFF0F172A,
+        primaryText: 0xFFA5B4FC,
+        background: 0x000F172A, // 全透明
+        surface: 0xFF1E293B,
+        surfaceVariant: 0xFF2C3849,
+        onSurface: 0xFFE2E8F0,
+        onSurfaceMuted: 0xFF94A3B8,
+        outline: 0xFF2A303C,
+        outlineStrong: 0xFF7C8DA6,
+      );
+
+      final problems = findTranslucentTokens(t);
+      expect(problems, hasLength(2));
+      expect(problems.join(), contains('primary'));
+      expect(problems.join(), contains('background'));
+      expect(problems.join(), contains('alpha=0x80'));
+    });
+
+    test('clampScale 幂等，且非有限值回落到规范默认', () {
+      const s = DesignScale.standard;
+      expect(clampScale(s).toMap(), s.toMap());
+      expect(clampScale(clampScale(s)).toMap(), clampScale(s).toMap());
+
+      final nan = clampScale(
+        const DesignScale(unit: double.nan, radiusSm: double.infinity),
+      );
+      expect(nan.unit, s.unit);
+      expect(nan.radiusSm, s.radiusSm);
+    });
+
+    test('clampScale 只守安全边界，不纠正单调性（那是告警的职责）', () {
+      // 顺序反了不会崩也不会白屏，交给 validateScale 告警，不在这里改
+      final inverted = clampScale(
+        const DesignScale(radiusSm: 9999, radiusMd: 0, radiusLg: 0),
+      );
+      expect(inverted.radiusSm, 9999);
+      expect(inverted.radiusMd, 0);
+      expect(validateScale(inverted), isNotEmpty);
     });
   });
 
