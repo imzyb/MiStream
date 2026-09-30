@@ -112,4 +112,63 @@ void main() {
       expect(config.spiderMd5, isNull);
     });
   });
+
+  group('ConfigParser.parse lives 字段', () {
+    test('真实配置形态：数字 type + epg/logo/ua 一并解析', () {
+      // 取自实测的 `gaotianliuyun/gao` 0821.json，字段名与取值原样保留。
+      final config = ConfigParser.parse('''
+{"sites": [], "lives": [
+  {
+    "name": "初秋语•ipv4",
+    "type": 0,
+    "url": "./list.txt",
+    "playerType": 2,
+    "epg": "http://epg.112114.xyz/?ch={name}&date={date}",
+    "logo": "https://live.fanmingming.com/tv/{name}.png"
+  },
+  {
+    "name": "YanG•综合",
+    "type": 0,
+    "url": "https://tv.iill.top/m3u/Gather",
+    "ua": "okhttp/3.15"
+  }
+]}
+''');
+
+      final lives = config!.lives;
+      expect(lives.length, 2);
+
+      expect(lives[0].name, '初秋语•ipv4');
+      expect(lives[0].type, 0, reason: 'type 是数字，不能丢');
+      expect(lives[0].url, './list.txt');
+      expect(lives[0].epg, contains('{name}'));
+      expect(lives[0].logo, contains('{name}'));
+
+      expect(lives[1].ua, 'okhttp/3.15');
+      expect(lives[1].epg, isNull);
+    });
+
+    test('type 缺省是 null，不是 0', () {
+      // 0 是有效值（约定 0=M3U），用 0 兜缺省就分不出「没写」与「写了 0」。
+      final config = ConfigParser.parse(
+        '{"sites": [], "lives": [{"name": "x", "url": "http://x"}]}',
+      );
+
+      expect(config!.lives.single.type, isNull);
+    });
+
+    test('type 写成字符串也能解析', () {
+      final config = ConfigParser.parse(
+        '{"sites": [], "lives": [{"name": "x", "url": "http://x", "type": "1"}]}',
+      );
+
+      expect(config!.lives.single.type, 1);
+    });
+
+    test('lives 不是数组时不抛异常', () {
+      final config = ConfigParser.parse('{"sites": [], "lives": "oops"}');
+
+      expect(config!.lives, isEmpty);
+    });
+  });
 }
