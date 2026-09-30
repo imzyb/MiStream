@@ -50,6 +50,21 @@ abstract class PluginApi {
   /// Called when the plugin is about to be removed.
   Future<void> onDispose();
 
+  /// 插件**已被授予的权限被运行时撤销**时调用。
+  ///
+  /// 插件应停止使用这些能力并**优雅降级**：源插件失去 `network` 后应当回空
+  /// 列表 / 明确失败，而不是继续发起请求或抛出内部异常。降级到什么程度由插件
+  /// 自己决定 —— 宿主**不会**替它自动停用（见 `PluginManager.revokePermissions`）。
+  ///
+  /// [revoked] 只含**本次真正从「已授予」变为「未授予」**的项，不是调用方请求
+  /// 撤销的整份清单。
+  ///
+  /// ⚠️ 这里抛出的异常会被宿主**隔离**，不会影响其它插件或宿主进程；但插件
+  /// 自身的状态可能因此不一致，别把它当成兜底手段。
+  ///
+  /// 默认空实现：存量插件不实现也能编译、也能正常运行（只是不感知撤销）。
+  Future<void> onPermissionRevoked(List<PluginPermission> revoked) async {}
+
   /// Returns the plugin's manifest.
   PluginManifest get manifest;
 }

@@ -9,6 +9,11 @@ import 'package:plugin_host/plugin_host.dart'
     show PluginManager, PluginManifest;
 
 export 'src/permission_checker.dart' show PermissionChecker;
+export 'src/permission_revocation.dart'
+    show
+        PermissionRevocationOutcome,
+        PermissionRevocationResult,
+        PluginPermissionDenied;
 export 'src/plugin_api.dart'
     show PluginApi, PluginState, SnifferPluginApi, SourcePluginApi;
 export 'src/plugin_loader.dart'
