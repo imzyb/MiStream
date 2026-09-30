@@ -1,23 +1,28 @@
 """离线生成 GBK 码表 Dart 源文件。
 
-用途：`runtimes/spider_js/lib/src/drpy/gbk_table.dart`。
+用途：`packages/text_codec/lib/src/gbk_table.dart`。
 
 之所以用 Python 而不是 Dart 生成：Python 内置 `gbk` codec 基于 CPython 的
 稳定映射表，与浏览器 / 服务端处理 GBK 的权威来源一致；Dart SDK 没有内置
-GBK codec，靠第三方包会引入新的依赖与版本约束。生成物一次性入库，之后
+`GBK` codec，靠第三方包会引入新的依赖与版本约束。生成物一次性入库，之后
 不再需要 Python。
+
+码表落在 `packages/text_codec` 而不是某个消费方（`runtimes/spider_js` 或
+app）：drpy 宿主 API 与 HTTP 拉取层都要用它，放在任何一边都会让另一边为了
+一份纯数据去依赖 QuickJS FFI 或整个运行时。消费方通过
+`package:text_codec/text_codec.dart` 取用。
 
 用法：
     python tools/gen_gbk_table.py
 
 改动码表只在需要跟进 GB18030 扩展区时才发生。生成后请跑
-`dart test runtimes/spider_js` 确认 gbk_test.dart 全绿。
+`dart test` （在 `packages/text_codec` 下）确认 gbk_test.dart 全绿。
 """
 
 from pathlib import Path
 
 OUT = Path(__file__).resolve().parent.parent / (
-    'runtimes/spider_js/lib/src/drpy/gbk_table.dart'
+    'packages/text_codec/lib/src/gbk_table.dart'
 )
 
 LEAD_MIN, LEAD_MAX = 0x81, 0xFE
@@ -109,10 +114,15 @@ def main():
     )
 
     chunks = [chars[i:i + 100] for i in range(0, len(chars), 100)]
-    body = "''\n" + "\n".join("    '" + ''.join(c) + "'" for c in chunks) + ';\n'
+    # 首行也要缩进 4 格：它是相邻字符串字面量拼接的第一段，缩进与后面一致
+    # 才能让重跑输出与仓库里那份逐字节相同（否则每次重跑都多出一行假 diff）。
+    body = "    ''\n" + "\n".join("    '" + ''.join(c) + "'" for c in chunks) + ';\n'
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(header + body, encoding='utf-8')
+    # ⚠️ 必须显式 newline='\n'：`write_text` 在 Windows 上会把 '\n' 翻成
+    # '\r\n'，生成物与仓库里那份（LF）差出 700 多个字节，每次重跑都产生
+    # 一整文件的假 diff。生成器是可重复执行的，输出就不该随平台变。
+    OUT.write_text(header + body, encoding='utf-8', newline='\n')
 
     print(f'写出 {OUT}')
     print(f'  映射数 {len(chars)}，空洞 {holes}，行宽 {row_width}')
