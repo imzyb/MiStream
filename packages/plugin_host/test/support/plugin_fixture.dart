@@ -50,6 +50,12 @@ class RecordingPluginApi implements PluginApi {
   /// [onDispose] 被调用的次数。
   int disposeCount = 0;
 
+  /// 每次 [onPermissionRevoked] 收到的撤销清单（按调用顺序）。
+  final List<List<PluginPermission>> revocations = [];
+
+  /// 置 `true` 后 [onPermissionRevoked] 抛异常，模拟「插件降级处理写崩了」。
+  bool failRevokeHandler = false;
+
   @override
   Future<void> onActivate() async {
     activateCount++;
@@ -64,5 +70,11 @@ class RecordingPluginApi implements PluginApi {
   @override
   Future<void> onDispose() async {
     disposeCount++;
+  }
+
+  @override
+  Future<void> onPermissionRevoked(List<PluginPermission> revoked) async {
+    revocations.add(List.of(revoked));
+    if (failRevokeHandler) throw StateError('注入的降级处理失败');
   }
 }

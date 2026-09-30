@@ -449,6 +449,12 @@ class _FakePluginApi implements SourcePluginApi {
   bool deactivated = false;
   bool disposed = false;
 
+  /// 每次 [onPermissionRevoked] 收到的撤销清单。
+  final List<List<PluginPermission>> revocations = [];
+
+  /// 置 `true` 后 [onPermissionRevoked] 抛异常。
+  bool failRevokeHandler = false;
+
   /// 置 `true` 后对应的生命周期回调抛异常。
   /// 用来驱动 [PluginState.error] 与「单个插件清理失败」这两条路径。
   bool failActivate;
@@ -474,6 +480,12 @@ class _FakePluginApi implements SourcePluginApi {
   Future<void> onDispose() async {
     if (failDispose) throw StateError('${_manifest.id} 释放失败');
     disposed = true;
+  }
+
+  @override
+  Future<void> onPermissionRevoked(List<PluginPermission> revoked) async {
+    revocations.add(List.of(revoked));
+    if (failRevokeHandler) throw StateError('${_manifest.id} 降级处理失败');
   }
 
   @override
