@@ -7,10 +7,12 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:live/live.dart';
 import 'package:media_sniffer/media_sniffer.dart';
 import 'package:meta/meta.dart';
 import 'package:mistream/application/config_install_service.dart';
 import 'package:mistream/application/detail_use_case.dart';
+import 'package:mistream/application/live_source_fetcher.dart';
 import 'package:search_engine/search_engine.dart';
 import 'package:sniffer/sniffer.dart';
 import 'package:source_adapter/source_adapter.dart';
@@ -59,7 +61,19 @@ class AppAssembly {
       repositories.sites,
       runtimeFactory: _runtimeFactory,
     );
-    configInstaller = ConfigInstallService(repositories);
+    // 直播：仓储直连同一个数据库；拉取器持有复用的 HttpClient，一次导入
+    // 会串行拉十几个订阅源，不该每个源各建一个客户端。
+    liveRepository = DriftLiveRepository(database);
+    liveFetcher = LiveSourceFetcher();
+    liveImporter = LiveImporter(
+      repository: liveRepository,
+      fetcher: liveFetcher.call,
+    );
+    // 配置安装要顺带导入 `lives`，所以 liveImporter 必须先就位。
+    configInstaller = ConfigInstallService(
+      repositories,
+      liveImporter: liveImporter,
+    );
   }
 
   /// 底层数据库。
@@ -93,6 +107,15 @@ class AppAssembly {
   /// 配置导入与引导状态。
   late final ConfigInstallService configInstaller;
 
+  /// 直播仓储（drift 落库）。
+  late final LiveRepository liveRepository;
+
+  /// 直播订阅导入编排（拉取 → 解析 → 合并 → 落库）。
+  late final LiveImporter liveImporter;
+
+  /// 直播源 HTTP 拉取器。
+  late final LiveSourceFetcher liveFetcher;
+
   /// 源提供者。
   late final StorageSourceProvider sourceProvider;
 
@@ -103,7 +126,10 @@ class AppAssembly {
   late final HostApi _hostApi;
 
   /// 关闭底层资源。
-  Future<void> dispose() => database.close();
+  Future<void> dispose() async {
+    liveFetcher.close();
+    await database.close();
+  }
 
   /// 诊断：当前解析到的 JS 运行时路径。
   static String debugSpiderJsPath() => _resolveSpiderJsPath();

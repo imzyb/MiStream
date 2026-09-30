@@ -7,6 +7,7 @@ library;
 
 import 'package:core_config/core_config.dart';
 import 'package:core_domain/core_domain.dart';
+import 'package:live/live.dart';
 import 'package:punycoder/punycoder.dart';
 import 'package:storage/storage.dart';
 
@@ -55,13 +56,23 @@ class ConfigInstallService {
   ///
   /// [fetcher] 可注入，便于测试替换传输层；不传时每次拉取临时建一个并在
   /// 结束时关闭。
-  ConfigInstallService(this._repositories, {ConfigFetcher? fetcher})
-    : _fetcher = fetcher;
+  ///
+  /// [liveImporter] 为 `null` 时**不导入直播源**（只装站点）。测试与不关心
+  /// 直播的调用方走这条路。
+  ConfigInstallService(
+    this._repositories, {
+    ConfigFetcher? fetcher,
+    LiveImporter? liveImporter,
+  }) : _fetcher = fetcher,
+       _liveImporter = liveImporter;
 
   final Repositories _repositories;
 
   /// 注入的拉取器；为 `null` 时按次创建。
   final ConfigFetcher? _fetcher;
+
+  /// 直播订阅导入器；为 `null` 时跳过 `lives`。
+  final LiveImporter? _liveImporter;
 
   /// 引导是否已完成。
   Future<bool> isOnboardingDone() =>
@@ -73,7 +84,8 @@ class ConfigInstallService {
 
   /// 把 [result] 中的站点写入库，并置引导完成标记。
   ///
-  /// [sourceUrl] 配置源 URL（用于 type=3 站点解析相对脚本路径）。
+  /// [sourceUrl] 配置源 URL（用于 type=3 站点解析相对脚本路径，也用于解析
+  /// `lives[].url` 里的相对地址）。
   /// 返回写入的站点数。
   Future<int> install(
     ConfigImportResult result, {
@@ -120,8 +132,48 @@ class ConfigInstallService {
       );
     }
 
+    await _installLives(result.config.lives, sourceUrl: sourceUrl);
     await markOnboardingDone();
     return result.config.sites.length;
+  }
+
+  /// 顺带导入配置里的 `lives` 订阅。
+  ///
+  /// TVBox 配置的 `lives` 是一组直播订阅源，此前**解析了但零消费方** ——
+  /// 「配置 → 频道列表」这一环是断的，用户在直播页只能看到一个空列表。
+  ///
+  /// 两条约定：
+  /// - **失败不冒泡**。站点已经装好了，直播源拉不到（源站跑路、网络抖动）
+  ///   不该让整份配置导入变成失败 —— 那是两件独立的事。
+  /// - **`baseUrl` 传 [sourceUrl]**：真实配置里 `lives[].url` 可能是
+  ///   `./list.txt` 这类相对路径，不解析就是一条永远 404 的地址。
+  Future<void> _installLives(
+    List<LiveConfig> lives, {
+    String? sourceUrl,
+  }) async {
+    final importer = _liveImporter;
+    if (importer == null || lives.isEmpty) return;
+
+    final subscriptions = <LiveSubscription>[
+      for (final live in lives)
+        if ((live.url ?? '').trim().isNotEmpty)
+          LiveSubscription(
+            url: live.url!,
+            name: live.name,
+            type: live.type,
+            userAgent: live.ua,
+            epgTemplate: live.epg,
+            logoTemplate: live.logo,
+          ),
+    ];
+    if (subscriptions.isEmpty) return;
+
+    try {
+      await importer.import(subscriptions, baseUrl: sourceUrl);
+    } on Object {
+      // 见上：直播是附加项，不该拖垮配置导入。单源失败已由 LiveImporter
+      // 内部逐条隔离，这里兜的是落库层面的异常。
+    }
   }
 
   /// 从 URL 拉取并安装配置，`replace` 为真时先清空旧订阅。

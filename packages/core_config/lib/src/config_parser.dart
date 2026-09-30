@@ -163,7 +163,10 @@ class ConfigParser {
       return LiveConfig(
         name: map['name'] as String?,
         url: map['url'] as String?,
-        type: '${map['type'] ?? ''}',
+        type: _toIntOrNull(map['type']),
+        epg: map['epg'] as String?,
+        logo: map['logo'] as String?,
+        ua: map['ua'] as String?,
       );
     }).toList();
   }
@@ -212,6 +215,17 @@ class ConfigParser {
     if (value is num) return value.toInt();
     if (value is String) return int.tryParse(value) ?? 0;
     return 0;
+  }
+
+  /// 将值转为 int?：缺省或无法解析时返回 `null`。
+  ///
+  /// 与 [_toIntOrZero] 的差别在**缺省语义**。直播源的 `type` 里 `0` 是有效值
+  /// （约定 0=M3U），用 0 兜缺省就分不出「没写这个字段」和「明确写了 0」——
+  /// 而这两件事在诊断「配置为什么不对」时完全是两码事。
+  static int? _toIntOrNull(Object? value) {
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value.trim());
+    return null;
   }
 
   /// 将 TVBox 中常见的数字、字符串或布尔开关转为 bool。

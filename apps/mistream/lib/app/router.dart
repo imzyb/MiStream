@@ -7,6 +7,7 @@ import 'package:core_domain/core_domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:live/live.dart';
 import 'package:media_kit_video/media_kit_video.dart' as mkv;
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
 import 'package:mistream/application/resume_policy.dart';
@@ -163,10 +164,15 @@ List<RouteBase> get _routes => [
     name: 'live_player',
     builder: (context, state) {
       final extra = state.extra as Map<String, Object?>?;
-      return LivePlayerPage(
-        url: extra?['url'] as String? ?? '',
-        title: extra?['title'] as String?,
-      );
+      final channel = extra?['channel'];
+      if (channel is! LiveChannel) {
+        // 直播播放页没有「单 URL」形态了：它要按序试多条线路，必须有完整的
+        // 频道对象。少传就是路由调用点写错了，明确报出来而不是播一个空地址。
+        return const Scaffold(
+          body: Center(child: Text('缺少频道信息，无法播放')),
+        );
+      }
+      return LivePlayerPage(channel: channel);
     },
   ),
   GoRoute(

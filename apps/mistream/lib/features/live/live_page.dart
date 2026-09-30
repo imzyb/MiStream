@@ -1,4 +1,4 @@
-/// 直播页：分组筛选 + 频道列表 + 导入 M3U。
+/// 直播页：分组筛选 + 频道列表 + 导入订阅。
 library;
 
 import 'dart:async' show unawaited;
@@ -6,7 +6,7 @@ import 'dart:async' show unawaited;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:live/live.dart';
-
+import 'package:mistream/app/app.dart' show AppScope;
 import 'package:mistream/features/common/common.dart'
     show EmptyView, ErrorView, LoadingView;
 
@@ -20,17 +20,26 @@ class LivePage extends StatefulWidget {
 }
 
 class _LivePageState extends State<LivePage> {
-  final LiveRepository _repository = InMemoryLiveRepository();
+  late LiveRepository _repository;
+  late LiveImporter _importer;
+  bool _depsReady = false;
+
   List<LiveChannel> _channels = [];
   List<LiveGroup> _groups = [];
+  Map<String, String> _groupNameById = {};
   Set<String> _favoriteIds = {};
   LiveGroup? _selectedGroup;
   bool _isLoading = true;
   String? _error;
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_depsReady) return;
+    _depsReady = true;
+    final assembly = AppScope.of(context);
+    _repository = assembly.liveRepository;
+    _importer = assembly.liveImporter;
     unawaited(_loadData());
   }
 
@@ -43,9 +52,17 @@ class _LivePageState extends State<LivePage> {
 
       _channels = await _repository.getChannels();
       _groups = await _repository.getGroups();
+      _groupNameById = {for (final g in _groups) g.id: g.name};
       _favoriteIds = (await _repository.getFavorites())
           .map((c) => c.id)
           .toSet();
+
+      // 选中的分组可能已经不存在了（重新导入后分组 id 全变），要清掉，
+      // 否则会停在一个空列表上，看起来像「导入把频道弄没了」。
+      if (_selectedGroup != null &&
+          !_groups.any((g) => g.id == _selectedGroup!.id)) {
+        _selectedGroup = null;
+      }
 
       if (mounted) {
         setState(() => _isLoading = false);
@@ -72,6 +89,11 @@ class _LivePageState extends State<LivePage> {
         title: const Text('直播'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.playlist_add),
+            tooltip: '导入订阅',
+            onPressed: _importPlaylist,
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: '刷新',
             onPressed: _loadData,
@@ -93,11 +115,11 @@ class _LivePageState extends State<LivePage> {
       return EmptyView(
         icon: Icons.tv,
         title: '暂无直播源',
-        subtitle: '导入 M3U 播放列表即可开始收看',
+        subtitle: '导入订阅地址或 M3U 播放列表即可开始收看',
         action: FilledButton.icon(
           onPressed: _importPlaylist,
           icon: const Icon(Icons.add),
-          label: const Text('导入播放列表'),
+          label: const Text('导入订阅'),
         ),
       );
     }
@@ -120,7 +142,7 @@ class _LivePageState extends State<LivePage> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             child: FilterChip(
-              label: const Text('全部'),
+              label: Text('全部 (${_channels.length})'),
               selected: _selectedGroup == null,
               onSelected: (_) => setState(() => _selectedGroup = null),
             ),
@@ -151,10 +173,7 @@ class _LivePageState extends State<LivePage> {
 
     return ListView.builder(
       itemCount: channels.length,
-      itemBuilder: (context, index) {
-        final channel = channels[index];
-        return _buildChannelTile(channel);
-      },
+      itemBuilder: (context, index) => _buildChannelTile(channels[index]),
     );
   }
 
@@ -162,7 +181,7 @@ class _LivePageState extends State<LivePage> {
     return ListTile(
       leading: _buildChannelLogo(channel),
       title: Text(channel.name),
-      subtitle: Text(channel.groupId ?? ''),
+      subtitle: Text(_subtitleFor(channel)),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -185,10 +204,25 @@ class _LivePageState extends State<LivePage> {
     );
   }
 
+  /// 副标题：分组名 + 线路数。
+  ///
+  /// 显示**分组名**而不是 `groupId`：落库后 groupId 是数据库自增主键，
+  /// 直接显示出来是一串数字。多线路时把线路数也带上，用户才知道这个台有
+  /// 备用源（播放页会自动按序重试）。
+  String _subtitleFor(LiveChannel channel) {
+    final id = channel.groupId;
+    final group = id == null ? null : _groupNameById[id];
+    final parts = <String>[group ?? '未分组'];
+    final lineCount = channel.allUrls.length;
+    if (lineCount > 1) parts.add('$lineCount 条线路');
+    return parts.join(' · ');
+  }
+
   Widget _buildChannelLogo(LiveChannel channel) {
-    if (channel.logo != null && channel.logo!.isNotEmpty) {
+    final logo = channel.logo;
+    if (logo != null && logo.isNotEmpty) {
       return CircleAvatar(
-        backgroundImage: NetworkImage(channel.logo!),
+        backgroundImage: NetworkImage(logo),
         onBackgroundImageError: (_, _) {},
         child: Text(channel.name.substring(0, 1)),
       );
@@ -209,9 +243,9 @@ class _LivePageState extends State<LivePage> {
       if (mounted) setState(() => _favoriteIds = ids);
     } on Object catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('收藏操作失败: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('收藏操作失败: $e')));
       }
     }
   }
@@ -220,7 +254,7 @@ class _LivePageState extends State<LivePage> {
     unawaited(
       context.pushNamed(
         'live_player',
-        extra: <String, Object?>{'url': channel.url, 'title': channel.name},
+        extra: <String, Object?>{'channel': channel},
       ),
     );
   }
@@ -230,13 +264,13 @@ class _LivePageState extends State<LivePage> {
     final imported = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('导入播放列表'),
+        title: const Text('导入直播源'),
         content: TextField(
           controller: controller,
           autofocus: true,
           maxLines: 6,
           decoration: const InputDecoration(
-            hintText: '粘贴 M3U 内容或 URL',
+            hintText: '粘贴订阅地址（http/https）或 M3U/txt 内容',
             border: OutlineInputBorder(),
           ),
         ),
@@ -260,21 +294,36 @@ class _LivePageState extends State<LivePage> {
 
     try {
       if (text.startsWith('http://') || text.startsWith('https://')) {
-        // TODO(M7): 从 URL 拉取 M3U 内容；当前仅支持粘贴内容。
-        _showMessage('暂不支持从 URL 导入，请粘贴 M3U 内容');
+        final report = await _importer.import([LiveSubscription(url: text)]);
+        if (!mounted) return;
+        await _loadData();
+        if (mounted) _showMessage(_describe(report));
         return;
       }
       await _repository.importM3u(text);
       await _loadData();
-      _showMessage('导入成功');
+      if (mounted) _showMessage('导入成功');
     } on Object catch (e) {
-      _showMessage('导入失败: $e');
+      if (mounted) _showMessage('导入失败: $e');
     }
   }
 
+  /// 把导入报告说成人话。
+  String _describe(LiveImportReport report) {
+    if (report.allFailed) {
+      final failed = report.outcomes.firstWhere((o) => !o.isOk);
+      return '导入失败：${failed.error}';
+    }
+    final parts = <String>['已导入 ${report.channelCount} 个频道'];
+    if (report.hasFailure) {
+      parts.add('${report.failedCount} 个源失败');
+    }
+    return parts.join('，');
+  }
+
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 }
