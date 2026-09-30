@@ -19,6 +19,7 @@ import 'dart:typed_data';
 import 'package:core_config/core_config.dart';
 import 'package:live/live.dart';
 import 'package:mistream/application/config_install_service.dart';
+import 'package:mistream/application/live_epg_settings.dart';
 import 'package:storage/storage.dart' as db;
 import 'package:test/test.dart';
 
@@ -54,6 +55,12 @@ const _satelliteTxt = '''
 湖南卫视,http://b/1.m3u8
 ''';
 
+/// 一份 EPG 接口响应（字段抄自 `epg.51zmt.top` 实测）。
+const _epgJson = '''
+{"channel_name": "CCTV-1综合", "date": "2026-10-01",
+ "epg_data": [{"start": "01:03", "end": "01:47", "title": "新闻30分"}]}
+''';
+
 void main() {
   late db.AppDatabase database;
   late db.Repositories repositories;
@@ -78,9 +85,10 @@ void main() {
     return body;
   }
 
-  ConfigInstallService build() => ConfigInstallService(
+  ConfigInstallService build({EpgFetcher? epgFetcher}) => ConfigInstallService(
     repositories,
     liveImporter: LiveImporter(repository: liveRepository, fetcher: fetcher),
+    epgFetcher: epgFetcher,
   );
 
   Future<ConfigImportResult> parseConfig() async {
@@ -128,6 +136,24 @@ void main() {
       (c) => c.name == 'CCTV1',
     );
     expect(cctv1.allUrls, ['http://a/1.m3u8', 'http://a/2.m3u8']);
+  });
+
+  test('订阅的 logo 模板展开到频道图标', () async {
+    bodies['https://cfg.example/d/cctv.txt'] = _cctvTxt;
+    bodies['https://b.example/satellite.txt'] = _satelliteTxt;
+
+    await build().install(
+      await parseConfig(),
+      sourceUrl: 'https://cfg.example/d/0821.json',
+    );
+
+    final channels = await liveRepository.getChannels();
+    final cctv1 = channels.firstWhere((c) => c.name == 'CCTV1');
+    expect(cctv1.logo, 'https://logo.example/tv/CCTV1.png');
+
+    // 卫视组那份订阅没写 logo 模板，不该凭空长出图标。
+    final hunan = channels.firstWhere((c) => c.name == '湖南卫视');
+    expect(hunan.logo, isNull);
   });
 
   test('站点照样落库（直播是附加项，不替代站点）', () async {
@@ -182,5 +208,79 @@ void main() {
 
     expect(installed, 1);
     expect(requested, isEmpty, reason: '没配 importer 就不该去拉直播源');
+  });
+
+  test('导入配置时 EPG 模板当场接进拉取器', () async {
+    bodies['https://cfg.example/d/cctv.txt'] = _cctvTxt;
+    bodies['https://b.example/satellite.txt'] = _satelliteTxt;
+    bodies['http://epg.example/?ch=CCTV1'] = _epgJson;
+
+    final epgFetcher = EpgFetcher(fetcher: (url) => fetcher(url));
+    expect(epgFetcher.hasTemplates, isFalse, reason: '装配时还没有模板');
+
+    await build(epgFetcher: epgFetcher).install(
+      await parseConfig(),
+      sourceUrl: 'https://cfg.example/d/0821.json',
+    );
+
+    // 配置里的 `epg` 是含 `{name}` 的模板，不是能直接请求的地址。
+    expect(epgFetcher.templates, ['http://epg.example/?ch={name}']);
+
+    final epg = await epgFetcher.loadFor('1', 'CCTV1');
+    expect(epg, isNotNull);
+    expect(epg!.programs.single.title, '新闻30分');
+  });
+
+  test('重启后从设置恢复 EPG 模板，节目单仍能拉到', () async {
+    bodies['https://cfg.example/d/cctv.txt'] = _cctvTxt;
+    bodies['https://b.example/satellite.txt'] = _satelliteTxt;
+    bodies['http://epg.example/?ch=CCTV1'] = _epgJson;
+
+    await build().install(
+      await parseConfig(),
+      sourceUrl: 'https://cfg.example/d/0821.json',
+    );
+
+    // 配置原文不入库，模板是单独存的一份 —— 不存的话重启后 EPG 就没了。
+    expect(await loadLiveEpgTemplates(repositories.settings), [
+      'http://epg.example/?ch={name}',
+    ]);
+
+    // 模拟重启：全新的拉取器 + 从设置恢复的模板。
+    final restarted = EpgFetcher(
+      fetcher: (url) => fetcher(url),
+      templates: await loadLiveEpgTemplates(repositories.settings),
+    );
+    final epg = await restarted.loadFor('1', 'CCTV1');
+    expect(epg, isNotNull);
+    expect(epg!.programs, hasLength(1));
+  });
+
+  test('配置里没有 epg 时清掉上一份配置留下的模板', () async {
+    bodies['https://cfg.example/d/cctv.txt'] = _cctvTxt;
+    bodies['https://b.example/satellite.txt'] = _satelliteTxt;
+
+    await build().install(
+      await parseConfig(),
+      sourceUrl: 'https://cfg.example/d/0821.json',
+    );
+    expect(await loadLiveEpgTemplates(repositories.settings), isNotEmpty);
+
+    // 第二份配置有 lives，但没写 epg。
+    final second = ConfigImportService.import(
+      Uint8List.fromList(
+        utf8.encode(
+          '{"sites":[{"key":"s","name":"S","type":1,"api":"http://x/"}],'
+          '"lives":[{"name":"卫视组","url":"https://b.example/satellite.txt"}]}',
+        ),
+      ),
+    );
+    await build().install(
+      second.valueOrNull!,
+      sourceUrl: 'https://cfg.example/d/2.json',
+    );
+
+    // 配置是模板的唯一权威来源：留着上一份的模板会去拉一个早就换掉的接口。
+    expect(await loadLiveEpgTemplates(repositories.settings), isEmpty);
   });
 }

@@ -134,5 +134,60 @@ void main() {
       expect(channels.length, 1);
       expect(channels.single.name, '唯一频道');
     });
+
+    test('重新导入后收藏按频道名保留', () async {
+      await repo.replaceAll(_sample());
+      final cctv1 = (await repo.getChannels()).firstWhere(
+        (c) => c.name == 'CCTV1',
+      );
+      await repo.addFavorite(cctv1.id);
+      expect((await repo.getFavorites()).map((c) => c.name), ['CCTV1']);
+
+      // 新结果里地址与主键全变，但「这个台」还在。
+      await repo.replaceAll(
+        const LiveParseResult(
+          groups: [LiveGroup(id: '央视', name: '央视', order: 0)],
+          channels: [
+            LiveChannel(
+              id: 'brand-new',
+              name: 'CCTV1',
+              url: 'http://new/1.m3u8',
+              groupId: '央视',
+            ),
+          ],
+        ),
+      );
+
+      final favorites = await repo.getFavorites();
+      expect(favorites.map((c) => c.name), ['CCTV1'], reason: '收藏不该被刷新抹掉');
+      expect(
+        favorites.single.url,
+        'http://new/1.m3u8',
+        reason: '保留的是「收藏了哪个台」，不是旧地址',
+      );
+    });
+
+    test('频道在新结果里消失时收藏也随之消失', () async {
+      await repo.replaceAll(_sample());
+      final hunan = (await repo.getChannels()).firstWhere(
+        (c) => c.name == '湖南卫视',
+      );
+      await repo.addFavorite(hunan.id);
+
+      await repo.replaceAll(
+        const LiveParseResult(
+          groups: [],
+          channels: [LiveChannel(id: 'z', name: '别的台', url: 'http://z')],
+        ),
+      );
+
+      expect(await repo.getFavorites(), isEmpty);
+    });
+
+    test('未被收藏的频道不会被误标为收藏', () async {
+      await repo.replaceAll(_sample());
+
+      expect(await repo.getFavorites(), isEmpty);
+    });
   });
 }

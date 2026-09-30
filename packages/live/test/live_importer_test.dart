@@ -267,5 +267,49 @@ void main() {
         'second',
       ]);
     });
+
+    test('logo 模板展开给没有图标的频道', () async {
+      fetcher.bodies['http://a/live.txt'] = _txtA;
+
+      final report = await build().import([
+        const LiveSubscription(
+          url: 'http://a/live.txt',
+          logoTemplate: 'https://logo/{name}.png',
+        ),
+      ]);
+
+      expect(report.result.channels.single.logo, 'https://logo/CCTV1.png');
+      expect((await repo.getChannels()).single.logo, 'https://logo/CCTV1.png');
+    });
+
+    test('自带 tvg-logo 的频道不被模板覆盖', () async {
+      fetcher.bodies['http://a/m.m3u'] =
+          '#EXTM3U\n'
+          '#EXTINF:-1 tvg-logo="http://own/1.png",CCTV1\n'
+          'http://a/1.m3u8\n';
+
+      final report = await build().import([
+        const LiveSubscription(
+          url: 'http://a/m.m3u',
+          logoTemplate: 'https://logo/{name}.png',
+        ),
+      ]);
+
+      expect(
+        report.result.channels.single.logo,
+        'http://own/1.png',
+        reason: '源站给的具体图标比按名字猜的准',
+      );
+    });
+
+    test('没有 logo 模板时不动频道图标', () async {
+      fetcher.bodies['http://a/live.txt'] = _txtA;
+
+      final report = await build().import([
+        const LiveSubscription(url: 'http://a/live.txt'),
+      ]);
+
+      expect(report.result.channels.single.logo, isNull);
+    });
   });
 }
