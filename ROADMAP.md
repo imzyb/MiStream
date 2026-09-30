@@ -266,20 +266,29 @@ M0 工程奠基
   真实样本探针 12 例：修前 8 例不符 → 修后 0 例）
 - 订阅导入：配置里的 `lives` → 频道列表 ✅ 2026-09-30（`LiveImporter` +
   `ConfigInstallService` 接线；此前 `LiveConfig` 解析了但**零消费方**）
-- 频道分组、搜索、收藏 ✅ 分组/搜索/收藏已有；排序未做
+- 频道分组、搜索、收藏 ✅ 分组/搜索/收藏已有；**收藏跨重建保留**
+  （2026-09-30，按频道名恢复）；排序未做
 - 直播播放页 ✅ 2026-09-30（播放页按序试多线路并显示当前线路）
 - 多地址自动重试 ✅ 2026-09-30（`LiveChannelSwitcher`）
 - 数字键跳台、方向键换台 ❌ 未做
 - 换台时保留上一路画面直到新流首帧（避免黑屏闪烁）❌ 未做（需双播放器交替 +
   首帧回调，属 UI 层）
 - 低延迟缓冲策略 ❌ 未做
-- EPG（节目单）——若数据源可得 🟡 `LiveEpg` 模型与 XMLTV 解析已有；
-  配置里的 `epg` 模板已解析但未接进 EPG 拉取
+- EPG（节目单）✅ 2026-09-30。两条链路都通了：`XmltvParser` 按
+  `programme@channel` 分组 + 处理时区后缀；`EpgJsonParser` 处理 112114 /
+  51zmt 的 JSON 接口（当天 `HH:mm`、跨天节目、标题源站后缀）；
+  `EpgFetcher` 按内容嗅探格式、单频道按需拉取并缓存。配置里的 `epg` 模板
+  会随配置导入落库（`live.epg_templates` 设置键），重启后自动恢复 ——
+  配置原文不入库，不单独存一份的话重启后节目单永远是空的。
+- 老直播源的 **GBK 编码** ✅ 2026-09-30。GBK 码表抽到独立的
+  `packages/text_codec`（此前只在 `runtimes/spider_js` 里，而 HTTP 拉取层
+  不该为一份纯数据去依赖 QuickJS FFI）。拉取层按「响应头 charset >
+  内容嗅探」解码。
 
 **出口标准**
 
 - [x] 导入含 lives 的配置后，频道列表正确分组显示 —— 证据：
-      `apps/mistream/test/application/live_import_e2e_test.dart`（6 例）覆盖
+      `apps/mistream/test/application/live_import_e2e_test.dart`（9 例）覆盖
       **配置文本 → `LiveConfig` → `LiveSubscription` → 拉取 → 解析 → 合并 →
       落库 → `getChannelsByGroup`** 全链路，含真实配置里的相对地址
       `./list.txt`（相对配置 URL 解析）与「一个源挂了不影响整批」。
@@ -289,12 +298,23 @@ M0 工程奠基
       不是画得对不对。
 - [ ] 换台 P50 < 2s —— 需真实网络与真实源（P5 阻塞项）
 - [x] 单个频道多地址时自动按序重试，UI 显示当前线路 —— 证据：
-      `packages/live/test/live_channel_switcher_test.dart`（13 例）：按
+      `packages/live/test/live_channel_switcher_test.dart`：按
       `allUrls` 顺序试、探针抛异常也算该线路失败并继续、全失败返回
       `exhausted` 且带每条失败记录、线路标签 `线路 2/3`、**快速换台时旧换台
       被作废**（探针 `await` 之后复查世代号）。反向验证 L/M 两项均变红。
       UI 落点：播放页标题显示线路标签（渲染未跑，同上）。
-- [ ] 连续换台 50 次无内存泄漏 —— 需 app 层 widget 测试，本环境不可用
+- [x] 连续换台 50 次无内存泄漏 —— 证据：
+      `live_channel_switcher_test.dart`「长跑（50 次换台）」3 例：
+      ① 50 次结果都落在同一条线路上（状态不累积）；
+      ② 用 `WeakReference` + GC 压力断言 50 次的**频道与结果都不可达**；
+      ③ 对照例（仍被持有的频道不被回收）—— 防的是「`WeakReference` 恒为
+      null，断言其实是空的」。
+      ⚠️ 原判据写的是「需 app 层 widget 测试」——**这条判断是错的**：泄漏
+      点在 `LiveChannelSwitcher` 的引用持有上，纯逻辑即可验证，不必起
+      Flutter。反向验证 AG（换台器故意持有频道）与 AH（把 GC 压力改成空操作）
+      均变红，后者证明用例不是「碰巧被回收」通过。
+      ⚠️ 边界：只覆盖 `LiveChannelSwitcher` 与它拿到的对象，**播放器/引擎
+      侧**的泄漏未覆盖（那需要真实起播放器）。
 
 **依赖**：M5
 
