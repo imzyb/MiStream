@@ -6,12 +6,24 @@
 /// 「源挂了」拖成两倍等待时间。
 library;
 
-import 'dart:convert';
 import 'dart:io';
 // `BytesBuilder` 从 `dart:io` 拿是间接导入，已标记废弃 —— 显式写出来。
 import 'dart:typed_data';
 
 import 'package:core_config/core_config.dart';
+import 'package:text_codec/text_codec.dart';
+
+/// 从响应头与响应体解码出直播源文本。
+///
+/// 单独抽成函数是为了**可测**：真实 `HttpClient` 要起连接，而本项目的沙箱
+/// 禁止本地回环，整条 [LiveSourceFetcher.call] 路径在测试里跑不到 —— 把
+/// 「响应头 → 字符集 → 文本」这三步留在这个纯函数里，它才可能被盯住。
+///
+/// 优先级：响应头里明确的 charset > 内容嗅探（见 `decodeText`）。
+/// **响应头优先**是刻意的 —— 源站说自己是 GBK 就按 GBK 解，不因为「这串字节
+/// 恰好也能按 UTF-8 解通」就改口。
+String decodeSourceBody({required List<int> bytes, String? contentType}) =>
+    decodeText(bytes, charset: charsetFromContentType(contentType));
 
 /// 直播源拉取器。
 ///
@@ -41,10 +53,10 @@ class LiveSourceFetcher {
   /// [userAgent] 为空时用 [kConfigFetchUserAgent]（`okhttp/3.15.0`）—— 实测
   /// 直播源站与配置站点的 UA 策略一致，非 okhttp 的 UA 常被 302 踢到首页。
   ///
-  /// ⚠️ **只按 UTF-8 解码**（非法字节替换成 U+FFFD，不抛异常）。少数老直播
-  /// 源是 GBK 编码，那些源的频道名会出现乱码 —— 已知缺口，不在本层解决：
-  /// 需要 GBK 解码能力（仓库里目前只有 drpy 宿主侧的 `gbkDecode`，是 JS
-  /// 运行时的 API，不能直接拿来做这件事）。
+  /// 解码走 [decodeText]：响应头给了 charset 就按它，没给就按内容猜（UTF-8
+  /// 严格解失败退回 GBK）。少数老直播源是 GBK，只按 UTF-8 解会整篇乱码，
+  /// 而且**宽容模式也救不回来** —— GBK 汉字两字节都落在 `0x81`~`0xFE`，
+  /// UTF-8 解码器会把它们判为非法起始字节。
   Future<String> call(String url, {String? userAgent}) async {
     final uri = Uri.parse(url);
     final override = userAgent?.trim() ?? '';
@@ -63,7 +75,10 @@ class LiveSourceFetcher {
     }
 
     final bytes = await _readCapped(response).timeout(timeout);
-    return utf8.decode(bytes, allowMalformed: true);
+    return decodeSourceBody(
+      bytes: bytes,
+      contentType: response.headers.value(HttpHeaders.contentTypeHeader),
+    );
   }
 
   /// 释放底层连接池。
