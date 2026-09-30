@@ -151,7 +151,10 @@ class LiveImporter {
       final url = resolveLiveUrl(subscription.url, baseUrl: baseUrl);
       try {
         final content = await _fetcher(url, userAgent: subscription.userAgent);
-        final result = _parser.parse(content);
+        final result = _withLogoTemplate(
+          _parser.parse(content),
+          subscription,
+        );
         outcomes.add(
           LiveImportOutcome(
             subscription: subscription,
@@ -184,6 +187,31 @@ class LiveImporter {
       outcomes: outcomes,
       result: merged,
       written: written,
+    );
+  }
+
+  /// 用订阅的 `logo` 模板给**没有图标**的频道补图标。
+  ///
+  /// 真实配置里 `lives[].logo` 是含 `{name}` 的**模板**
+  /// （如 `https://live.fanmingming.com/tv/{name}.png`），不是图标地址 ——
+  /// 直接拿去请求会拿到一个 404 的模板串。
+  ///
+  /// 自带 `tvg-logo` 的频道（m3u 常见）不覆盖：那是源站给的具体图标，比按
+  /// 名字猜的准。
+  static LiveParseResult _withLogoTemplate(
+    LiveParseResult result,
+    LiveSubscription subscription,
+  ) {
+    if ((subscription.logoTemplate ?? '').trim().isEmpty) return result;
+    return LiveParseResult(
+      groups: result.groups,
+      channels: [
+        for (final channel in result.channels)
+          if ((channel.logo ?? '').isNotEmpty)
+            channel
+          else
+            channel.copyWith(logo: subscription.logoFor(channel.name)),
+      ],
     );
   }
 }
