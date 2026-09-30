@@ -51,6 +51,10 @@ dependencies:
   # 设计令牌、外观选择解析、主题包加载与对比度兜底（纯 Dart，见 docs/09-UI规范.md）。
   theme_engine:
     path: ../../packages/theme_engine
+  # GBK 码表与「字节 → 文本」的编码探测：老直播源站仍有 GBK 输出，只按
+  # UTF-8 解会整篇乱码。纯 Dart，无第三方依赖。
+  text_codec:
+    path: ../../packages/text_codec
 
 dev_dependencies:
   flutter_test:

@@ -1,4 +1,4 @@
-import 'package:spider_js/src/drpy/gbk.dart';
+import 'package:text_codec/text_codec.dart';
 import 'package:test/test.dart';
 
 /// `gbkDecode` 的回归测试。

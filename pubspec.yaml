@@ -33,6 +33,7 @@ workspace:
   - packages/media_sniffer
   - packages/live
   - packages/download
+  - packages/text_codec
   - runtimes/spider_js
   - runtimes/spider_python
   - runtimes/spider_jvm

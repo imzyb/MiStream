@@ -25,6 +25,10 @@ dependencies:
   pointycastle: ^3.9.1
   spider_host:
     path: ../../packages/spider_host
+  # GBK 码表已移到 text_codec（HTTP 拉取层也要用同一份），本包只做转出口，
+  # 见 lib/src/drpy/gbk.dart。
+  text_codec:
+    path: ../../packages/text_codec
 
 dev_dependencies:
   mock_source_server:
