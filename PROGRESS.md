@@ -17,7 +17,7 @@
 | M6 嗅探与解析 | 1/5 | 🟡 CDP 嗅探运行时已落地，缺真实 type=0 源 |
 | M7 直播 | 0/4 | 🟡 包已建，缺验收 |
 | M8 下载与离线 | 0/5 | 🟡 真实实现已接入，缺验收 |
-| M9 插件系统与主题 | 1/6 | 🟡 原子升级/回滚已落地；缺主题包安装链路 |
+| M9 插件系统与主题 | 2/6 | 🟡 沙箱逃逸与升级回滚已落地；缺主题包安装链路 |
 | M10 发布工程 | 0/6 | 🟡 发布链草稿已就位 |
 | M11-M15 | — | 🔴 未启动 |
 
@@ -110,7 +110,11 @@
 - **M6** `packages/media_sniffer`（66 测试）：规则引擎、直链验证、HLS 样本测试齐；`runtimes/sniffer` **已落地 CDP 嗅探运行时**（70 测试，含真实 Edge/Chrome 端到端启动验证）；缺真实 type=0 网页源验收
 - **M7** `packages/live`（17 测试）：m3u/txt 解析、drift 收藏、XMLTV EPG；缺换台/重试/长跑验收
 - **M8** `packages/download`（22 测试）：任务状态机、Range 断点续传、HLS 分片；**假实现已替换为真实实现**（提交 `720dad3`），缺真实网络断点/离线播放验收
-- **M9** `packages/plugin_host`（**56 测试**，2026-09-28 由 19 → 30 → 56）+ **`packages/theme_engine`**（新增独立包，提交 `b113410`）：清单/权限/sha256/isolate 沙箱、对比度计算、**版本目录 + 指针切换的原子升级与回滚**（新增 `PluginStore`，26 例 + 反向验证 7 项，见 2026-09-28 三续）。**生命周期状态机已补测**（提交 `68a163d`：`PluginState.error` 此前从未被赋值、属死状态，已让激活失败可进入 error 并补全迁移真值表）。仍缺**主题包的安装/启用链路**（从插件目录加载，现在只有解析与校验）
+- **M9** `packages/plugin_host`（**68 测试**，2026-09-28 由 19 → 30 → 56，09-30 → 68）+ **`packages/theme_engine`**（新增独立包，提交 `b113410`）：清单/权限/sha256、**路径穿越 guard**（2026-09-30 修掉两类真漏洞，见三续之后的四续）、对比度计算、**版本目录 + 指针切换的原子升级与回滚**（新增 `PluginStore`，26 例）。**生命周期状态机已补测**（提交 `68a163d`：`PluginState.error` 此前从未被赋值、属死状态，已让激活失败可进入 error 并补全迁移真值表）。仍缺**主题包的安装/启用链路**（从插件目录加载，现在只有解析与校验）
+  - **记录更正（2026-09-30）**：此处原先写「isolate 沙箱」，**失实**。`PluginSandbox`
+    从未 spawn 过 isolate（`_isolates` 表只在 `terminate` 里被读、从没写入，
+    `isRunning` 因此恒为 false），已如实化为「并发闸门与登记表」并修掉计数 bug。
+    真正的隔离在 `spider_host` 子进程（进程级）与嗅探 isolate，不在这个类。
 
 
 > 注：`DownloadManager.startDownload()` 已完成真实实现（提交 `720dad3`）。`runtimes/sniffer` 的占位已由 CDP 实现替换（提交 `bb00635`）。
@@ -1148,6 +1152,78 @@ MISTREAM_SOAK_SECONDS=7200 dart run test/host_soak_test.dart
 （多 2500 轮）且零报错 —— 桩搬出 I: 盘确实消除了那个故障。**M5 出口标准最后一条
 据此勾选**。
 
+## 本次会话（2026-09-30）：沙箱逃逸——修掉两类真漏洞 + 一处记录失真
+
+M9 出口标准第一条是「沙箱逃逸测试全部被拦截（越权网络、SSRF、路径穿越、配额
+超限）」。核账时发现这条既**没被验过**，实现里也**真有洞**。
+
+### 一、路径穿越 guard：两个真漏洞（探针实测）
+
+先写探针 `.workbuddy-ai/scripts/probe_path_guard.dart` 把各种形态跑一遍
+（21 例，只 import `src/path_guard.dart`，避开 `plugin_host.dart` 导出面连带
+的 `storage` native）。**修前 6 例不符**：
+
+| 形态 | 输入 | 修前 | 应该 |
+| --- | --- | --- | --- |
+| **兄弟目录** | root=`/sandbox/plugin1`，req=`/sandbox/plugin10/secret` | 放行 | 拦 |
+| 同上（相对） | req=`../plugin10/secret` | 放行 | 拦 |
+| **绝对路径里的 `..`** | req=`/sandbox/plugin1/../../etc/passwd` | 放行 | 拦 |
+| 同上 | req=`/sandbox/plugin1/../plugin2/x` | 放行 | 拦 |
+| **Windows 盘符** | root=`C:\sandbox\plugin1`，req=`C:\sandbox\plugin1\data.json` | 拦 | 放行 |
+| 同上（相对） | req=`data/file.json` | 拦 | 放行 |
+
+两个根因：
+
+1. **用字符串前缀比较判「在不在根下」**。`'/sandbox/plugin1'` 确实是
+   `'/sandbox/plugin10'` 的字符串前缀，于是**去兄弟目录被判成在沙箱内** ——
+   插件能读写同级插件的文件。
+2. **绝对路径直接早退，`..` 从未被解析**。`/sandbox/p1/../../etc/passwd` 以根
+   开头就放行，实际解析后是 `/etc/passwd`。
+3. 附带一个**反向**的：root 不以 `/` 开头时（Windows 盘符），解析结果总以 `/`
+   开头，`startsWith` 恒 false → **恒判逃逸**，Windows 上沙箱完全不可用。
+
+修法：`path_guard.dart` 重写为**逐段解析 + 逐段比较**，真正消解 `..`，识别盘符，
+`\` 与 `/` 同等对待，无法解析的输入一律拒绝。大小写语义按平台（Windows 不敏感），
+并开一个 `caseSensitive` 参数让两种语义在任一平台都能测。修后 21 例全过。
+
+同时把类文档写清边界：**这是字符串层防线，看不出符号链接**，真实 IO 前仍应
+`resolveSymbolicLinks` 二次校验。
+
+### 二、`PluginSandbox` 是空壳（记录失真）
+
+`PROGRESS` 一直记着 `plugin_host` 有「isolate 沙箱」，但：
+
+- 类文档写着「Runs plugin code in isolated Dart isolates」，而 `execute()` 里
+  **根本没有 spawn isolate**，直接 `await task()` 在当前 isolate 跑
+- `_isolates` 表**只在 `terminate` 里被读、从来没被写入** → `isRunning` 恒为
+  false
+- `execute` 里那个 `ReceivePort` 建了就扔、从未被监听
+- `terminate` 无条件 `_activeIsolates--` → 计数可减成负数，限额彻底失效
+- 全仓**无任何调用方**（只在导出面里）
+
+处理：**如实化**，不假装。类文档改为「并发闸门与登记表」，写明「不是隔离执行器」
+并指向真正的隔离（`spider_host` 子进程 / 嗅探 isolate）；实现改为按插件集合登记，
+修掉计数与 port 泄漏；`terminate` 明确标注「只摘登记，不中断任务」。
+
+**没有真实现 isolate 隔离**，理由：它无调用方、不在主链路、ROADMAP 出口标准不含
+它，而真实架构里插件是 JS 脚本（跑在 `spider_host` 子进程，已有进程级隔离）。
+与其留一个假的隔离器，不如留一个说明白了的限额器 —— 记为已知缺口而非完成。
+
+### 三、验证
+
+| 项 | 结果 |
+| --- | --- |
+| 探针 `probe_path_guard.dart` | 21 例，修前 **6 例不符** → 修后 **0 例不符** |
+| `plugin_escape_test.dart` | 4 → **16 例**（路径穿越 8 + 权限闸门 4 + 并发限额 4） |
+| `plugin_host` 包 | 56 → **68 例** |
+| 反向验证 `rev_verify_escape.py` | **5 项全部变红**（退回前缀比较 / 不消解 `..` / 不识别盘符 / 忽略大小写参数 / 不清登记） |
+| `analyze_inproc` | 320 文件 **0 error / 0 warning / 0 info** |
+| `dart format` / `arch_check` | 0 changed / 分层纪律检查通过 |
+
+**M9 出口标准第一条据此勾选**（M9 总览 1/6 → **2/6**）。四类逃逸的证据位置写在
+ROADMAP 该条下面 —— 其中 SSRF 不在本包，由
+`spider_host/test/host_api_redirect_test.dart` 9 例覆盖。
+
 ## 下一步（按优先级，2026-09-19 续）
 
 1. **P0 仓库健康** ✅ **已定位并交付守卫脚本**；根因属 I: 盘文件系统语义，
@@ -1168,9 +1244,10 @@ MISTREAM_SOAK_SECONDS=7200 dart run test/host_soak_test.dart
    4 态的全部迁移**（2026-09-28，提交 `68a163d`）、M5 长跑稳定性
    - ~~M9 升级/回滚~~ ✅ **已完成**（2026-09-28 三续：新增 `PluginStore`，
      26 例 + 反向验证 7 项全红；**M9 总览 0/6 → 1/6**）
+   - ~~M9 沙箱逃逸测试~~ ✅ **已完成**（2026-09-30：修掉路径穿越两类真漏洞 +
+     `PluginSandbox` 空壳如实化；16 例 + 反向验证 5 项全红；**M9 总览 1/6 → 2/6**）
    - **M9 剩余**：主题包的安装/启用链路（从插件目录加载，现在只有解析与校验）、
-     沙箱逃逸测试（其中 SSRF 一条实际由
-     `spider_host/test/host_api_redirect_test.dart` 9 例覆盖，不在 plugin_host）
+     插件中心 UI、`tool` 类插件的宿主 API
 5. **P4 债务** `libs/*.jar` 改 `tools/jvm_dist` 按需拉取、契约/长跑测试、
    播放页/首页之外的页面去 `globalRouterAssembly`（播放页与首页已完成注入化）
 6. **P5 阻塞** 网络方案（代理 / 可访问机器）——所有「真实源」类出口标准都卡在此
