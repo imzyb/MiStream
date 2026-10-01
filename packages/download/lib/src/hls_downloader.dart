@@ -36,9 +36,10 @@ typedef HlsSegmentDone = void Function(int seq, String url, int bytes);
 
 /// HLS下载器：下载m3u8播放列表及其分片。
 ///
-/// **传输层可注入**（[fetchText] / [fetchBytes]）：分片续传、master 选流、
-/// 取消这些是本类真正要保证的逻辑，它们一条都不该依赖真实网络。默认实现走
-/// [HttpClient]，测试传入假函数即可覆盖全部分支。
+/// **传输层可注入**（[fetchText] / [fetchBytes] 是网络那一半，`writeBytes` 是
+/// 磁盘那一半）：分片续传、master 选流、取消、原子写这些是本类真正要保证的逻辑，
+/// 它们一条都不该依赖真实网络或真实写盘。默认实现走 [HttpClient] 与
+/// `File.writeAsBytes`，测试传入假函数即可覆盖全部分支。
 class HlsDownloader {
   HlsDownloader({
     HttpClient? client,
