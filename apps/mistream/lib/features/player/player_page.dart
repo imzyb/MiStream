@@ -34,6 +34,7 @@ class PlayerPage extends StatefulWidget {
     this.onToggleFullscreen,
     this.onScreenshot,
     this.title,
+    this.onKey,
   });
 
   /// 播放控制器。
@@ -50,6 +51,15 @@ class PlayerPage extends StatefulWidget {
 
   /// 正在播放的媒体标题。
   final String? title;
+
+  /// 按键钩子：在默认快捷键表**之前**调用，返回 `true` 表示该键已被接管。
+  ///
+  /// 直播页用它把 `↑`/`↓` 解释成「上/下台」（默认表里这两个键是音量）。返回
+  /// `false` 的键继续走默认表 —— 所以直播下 `Shift+↑/↓` 仍然是调音量，这是
+  /// 换台键占了方向键之后留给音量的退路。
+  ///
+  /// 只在 `KeyDownEvent` 时被调用；返回 `true` 时该事件被吞掉。
+  final bool Function(KeyEvent event)? onKey;
 
   @override
   State<PlayerPage> createState() => _PlayerPageState();
@@ -230,6 +240,8 @@ class _PlayerPageState extends State<PlayerPage> {
       autofocus: true,
       onKeyEvent: (node, event) {
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        // 页面级钩子先问一遍（直播页的换台键走这里）。
+        if (widget.onKey?.call(event) ?? false) return KeyEventResult.handled;
         final logical = event.logicalKey;
         final shift = HardwareKeyboard.instance.isShiftPressed;
         final ctrl = HardwareKeyboard.instance.isControlPressed;

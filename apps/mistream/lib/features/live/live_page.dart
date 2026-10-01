@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:live/live.dart';
 import 'package:mistream/app/app.dart' show AppScope;
+import 'package:mistream/application/live_sort_settings.dart';
 import 'package:mistream/features/common/common.dart'
     show EmptyView, ErrorView, LoadingView;
 
@@ -22,6 +23,7 @@ class LivePage extends StatefulWidget {
 class _LivePageState extends State<LivePage> {
   late LiveRepository _repository;
   late LiveImporter _importer;
+  late LiveSortPreference _sortPreference;
   bool _depsReady = false;
 
   List<LiveChannel> _channels = [];
@@ -29,6 +31,7 @@ class _LivePageState extends State<LivePage> {
   Map<String, String> _groupNameById = {};
   Set<String> _favoriteIds = {};
   LiveGroup? _selectedGroup;
+  LiveChannelSortOrder _sort = LiveChannelSortOrder.source;
   bool _isLoading = true;
   String? _error;
 
@@ -40,7 +43,23 @@ class _LivePageState extends State<LivePage> {
     final assembly = AppScope.of(context);
     _repository = assembly.liveRepository;
     _importer = assembly.liveImporter;
+    _sortPreference = assembly.liveSortPreference;
+    unawaited(_restoreSort());
     unawaited(_loadData());
+  }
+
+  /// 恢复上次选的排序方式。
+  ///
+  /// 与频道数据**并行**读：它只是一次 KV 读，不值得为它把首屏拖成串行。
+  Future<void> _restoreSort() async {
+    final order = await _sortPreference.load();
+    if (!mounted || order == _sort) return;
+    setState(() => _sort = order);
+  }
+
+  Future<void> _setSort(LiveChannelSortOrder order) async {
+    setState(() => _sort = order);
+    await _sortPreference.save(order);
   }
 
   Future<void> _loadData() async {
@@ -77,9 +96,15 @@ class _LivePageState extends State<LivePage> {
     }
   }
 
+  /// 当前可见的频道列表：先按分组筛，再按用户选的档位排序。
+  ///
+  /// 这份列表就是播放页拿到的换台列表 —— 所见即所切，换台不会跳到被筛掉的
+  /// 台上。
   List<LiveChannel> get _filteredChannels {
-    if (_selectedGroup == null) return _channels;
-    return _channels.where((c) => c.groupId == _selectedGroup!.id).toList();
+    final list = _selectedGroup == null
+        ? _channels
+        : _channels.where((c) => c.groupId == _selectedGroup!.id).toList();
+    return sortLiveChannels(list, _sort, favorites: _favoriteIds);
   }
 
   @override
@@ -88,6 +113,7 @@ class _LivePageState extends State<LivePage> {
       appBar: AppBar(
         title: const Text('直播'),
         actions: [
+          if (_channels.isNotEmpty) _buildSortMenu(),
           IconButton(
             icon: const Icon(Icons.playlist_add),
             tooltip: '导入订阅',
@@ -101,6 +127,23 @@ class _LivePageState extends State<LivePage> {
         ],
       ),
       body: _buildBody(),
+    );
+  }
+
+  Widget _buildSortMenu() {
+    return PopupMenuButton<LiveChannelSortOrder>(
+      icon: const Icon(Icons.sort),
+      tooltip: '排序：${_sort.label}',
+      initialValue: _sort,
+      onSelected: (order) => unawaited(_setSort(order)),
+      itemBuilder: (context) => [
+        for (final order in LiveChannelSortOrder.values)
+          CheckedPopupMenuItem<LiveChannelSortOrder>(
+            value: order,
+            checked: order == _sort,
+            child: Text(order.label),
+          ),
+      ],
     );
   }
 
@@ -254,7 +297,12 @@ class _LivePageState extends State<LivePage> {
     unawaited(
       context.pushNamed(
         'live_player',
-        extra: <String, Object?>{'channel': channel},
+        extra: <String, Object?>{
+          'channel': channel,
+          // 把当前可见列表一起带过去：播放页的 ↑/↓ 换台、数字键跳台都在
+          // 这份列表上定位。
+          'channels': _filteredChannels,
+        },
       ),
     );
   }

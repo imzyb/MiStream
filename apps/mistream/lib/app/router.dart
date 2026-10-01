@@ -172,7 +172,13 @@ List<RouteBase> get _routes => [
           body: Center(child: Text('缺少频道信息，无法播放')),
         );
       }
-      return LivePlayerPage(channel: channel);
+      final channels = extra?['channels'];
+      return LivePlayerPage(
+        channel: channel,
+        // 用户当前可见的频道列表：换台键在**这份**列表上走（所见即所切）。
+        // 没传就当单台播放，换台键不生效。
+        channels: channels is List<LiveChannel> ? channels : const [],
+      );
     },
   ),
   GoRoute(
