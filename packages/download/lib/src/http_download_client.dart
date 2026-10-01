@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:download/src/download_cancel.dart';
+
 /// HTTP download client with support for Range requests (resume from breakpoint).
 class HttpDownloadClient {
   HttpDownloadClient({HttpClient? httpClient, this.maxRetries = 3})
@@ -18,6 +20,7 @@ class HttpDownloadClient {
     required String url,
     required String savePath,
     Map<String, String>? headers,
+    CancelToken? cancelToken,
     void Function(int received, int? total)? onProgress,
   }) async {
     final saveFile = File(savePath);
@@ -31,6 +34,17 @@ class HttpDownloadClient {
 
     var retries = 0;
     while (retries <= maxRetries) {
+      // 取消检查放在重试循环顶部：暂停之后不该再为这个任务发新请求。
+      if (cancelToken?.isCancelled == true) {
+        return HttpDownloadResult(
+          url: url,
+          savePath: savePath,
+          totalBytes: totalBytes,
+          downloadedBytes: downloadedBytes,
+          success: false,
+          error: '已取消',
+        );
+      }
       try {
         final uri = Uri.parse(url);
         final request = await _client.getUrl(uri);
@@ -76,7 +90,12 @@ class HttpDownloadClient {
         // Append to existing file
         final sink = saveFile.openWrite(mode: FileMode.append);
 
+        var cancelled = false;
         await for (final chunk in response) {
+          if (cancelToken?.isCancelled == true) {
+            cancelled = true;
+            break;
+          }
           sink.add(chunk);
           downloadedBytes += chunk.length;
           onProgress?.call(downloadedBytes, totalBytes > 0 ? totalBytes : null);
@@ -84,6 +103,19 @@ class HttpDownloadClient {
 
         await sink.flush();
         await sink.close();
+
+        if (cancelled) {
+          // 已写入的部分**故意保留**：`savePath` 就是续传的锚点，删掉它下次
+          // 只能从 0 开始，「暂停后继续」就退化成「重新下载」。
+          return HttpDownloadResult(
+            url: url,
+            savePath: savePath,
+            totalBytes: totalBytes,
+            downloadedBytes: downloadedBytes,
+            success: false,
+            error: '已取消',
+          );
+        }
 
         return HttpDownloadResult(
           url: url,

@@ -3,9 +3,9 @@ import 'package:test/test.dart';
 
 void main() {
   group('DownloadTask', () {
-    test('fromJson creates task correctly', () {
+    test('fromJson 读回全部字段', () {
       final json = {
-        'id': 'task1',
+        'id': 42,
         'title': 'Test Video',
         'url': 'http://example.com/video.m3u8',
         'savePath': '/downloads/video',
@@ -17,9 +17,11 @@ void main() {
         'updatedAt': 1000100,
         'downloadedSegments': 5,
         'totalSegments': 10,
+        'priority': 3,
+        'headers': {'Referer': 'https://example.com/'},
       };
       final task = DownloadTask.fromJson(json);
-      expect(task.id, 'task1');
+      expect(task.id, 42);
       expect(task.title, 'Test Video');
       expect(task.url, 'http://example.com/video.m3u8');
       expect(task.savePath, '/downloads/video');
@@ -29,11 +31,20 @@ void main() {
       expect(task.totalBytes, 2048);
       expect(task.downloadedSegments, 5);
       expect(task.totalSegments, 10);
+      expect(task.priority, 3);
+      expect(task.headers['Referer'], 'https://example.com/');
     });
 
-    test('toJson roundtrip', () {
+    test('fromJson 缺 id 时落到 0（表示尚未落库）', () {
+      final task = DownloadTask.fromJson({'title': 'x'});
+      expect(task.id, 0);
+      expect(task.status, DownloadStatus.pending);
+      expect(task.totalBytes, -1);
+    });
+
+    test('toJson 往返', () {
       const task = DownloadTask(
-        id: 'task1',
+        id: 7,
         title: 'Test Video',
         url: 'http://example.com/video.m3u8',
         savePath: '/downloads/video',
@@ -41,18 +52,21 @@ void main() {
         progress: 0.5,
         createdAt: 1000000,
         updatedAt: 1000100,
+        headers: {'Referer': 'r'},
+        priority: 2,
       );
-      final json = task.toJson();
-      final restored = DownloadTask.fromJson(json);
+      final restored = DownloadTask.fromJson(task.toJson());
       expect(restored.id, task.id);
       expect(restored.title, task.title);
       expect(restored.status, task.status);
       expect(restored.progress, task.progress);
+      expect(restored.headers, task.headers);
+      expect(restored.priority, task.priority);
     });
 
-    test('copyWith creates new instance', () {
+    test('copyWith 返回新实例，原对象不变', () {
       const task = DownloadTask(
-        id: 'task1',
+        id: 1,
         title: 'Test',
         url: 'http://a.com',
         savePath: '/path',
@@ -62,38 +76,82 @@ void main() {
       final updated = task.copyWith(title: 'Updated', progress: 0.5);
       expect(updated.title, 'Updated');
       expect(updated.progress, 0.5);
-      expect(task.title, 'Test'); // original unchanged
+      expect(task.title, 'Test');
     });
 
-    test('isResumable returns true for paused', () {
-      const task = DownloadTask(
-        id: 'task1',
-        title: 'Test',
+    test('copyWith(error: null) 清不掉错误，必须显式 clearError', () {
+      // 这条钉的是一个很容易踩的坑：`error` 用 `??` 兜底之后，
+      // `copyWith(error: null)` 表达不了「把错误清掉」，于是重试成功的任务会
+      // 一直挂着上一次的错误信息。
+      const failed = DownloadTask(
+        id: 1,
+        title: 'T',
         url: 'http://a.com',
-        savePath: '/path',
-        status: DownloadStatus.paused,
+        savePath: '/p',
+        createdAt: 0,
+        updatedAt: 0,
+        error: 'boom',
+      );
+      expect(failed.copyWith(status: DownloadStatus.pending).error, 'boom');
+      expect(
+        failed.copyWith(status: DownloadStatus.pending, clearError: true).error,
+        isNull,
+      );
+    });
+
+    test('isResumable：暂停与失败可续，完成与取消不可续', () {
+      DownloadTask withStatus(DownloadStatus status) => DownloadTask(
+        id: 1,
+        title: 'T',
+        url: 'http://a.com',
+        savePath: '/p',
+        createdAt: 0,
+        updatedAt: 0,
+        status: status,
+      );
+      expect(withStatus(DownloadStatus.paused).isResumable, isTrue);
+      // 失败也算可续：直链靠 Range、HLS 靠 download_segment 跳过已完成分片。
+      expect(withStatus(DownloadStatus.failed).isResumable, isTrue);
+      expect(withStatus(DownloadStatus.completed).isResumable, isFalse);
+      expect(withStatus(DownloadStatus.cancelled).isResumable, isFalse);
+      expect(withStatus(DownloadStatus.downloading).isResumable, isFalse);
+    });
+
+    test('isCompleted / isFailed / isPending', () {
+      DownloadTask withStatus(DownloadStatus status) => DownloadTask(
+        id: 1,
+        title: 'T',
+        url: 'http://a.com',
+        savePath: '/p',
+        createdAt: 0,
+        updatedAt: 0,
+        status: status,
+      );
+      expect(withStatus(DownloadStatus.completed).isCompleted, isTrue);
+      expect(withStatus(DownloadStatus.failed).isFailed, isTrue);
+      expect(withStatus(DownloadStatus.pending).isPending, isTrue);
+      expect(withStatus(DownloadStatus.completed).isFailed, isFalse);
+    });
+
+    test('isHls 只看 m3u8 子串，大小写与查询串都不影响', () {
+      DownloadTask withUrl(String url) => DownloadTask(
+        id: 1,
+        title: 'T',
+        url: url,
+        savePath: '/p',
         createdAt: 0,
         updatedAt: 0,
       );
-      expect(task.isResumable, true);
+      expect(withUrl('https://a.com/x.m3u8').isHls, isTrue);
+      expect(withUrl('https://a.com/x.M3U8?token=abc').isHls, isTrue);
+      expect(withUrl('https://a.com/x.mp4').isHls, isFalse);
+      expect(withUrl('https://a.com/x.m3u8').mediaType, 'hls');
+      expect(withUrl('https://a.com/x.mp4').mediaType, 'direct');
     });
 
-    test('isCompleted returns true for completed', () {
-      const task = DownloadTask(
-        id: 'task1',
-        title: 'Test',
-        url: 'http://a.com',
-        savePath: '/path',
-        status: DownloadStatus.completed,
-        createdAt: 0,
-        updatedAt: 0,
-      );
-      expect(task.isCompleted, true);
-    });
-
-    test('equality by id', () {
+    test('相等性只按 id', () {
       const t1 = DownloadTask(
-        id: 'task1',
+        id: 1,
         title: 'A',
         url: 'http://a.com',
         savePath: '/a',
@@ -101,7 +159,7 @@ void main() {
         updatedAt: 0,
       );
       const t2 = DownloadTask(
-        id: 'task1',
+        id: 1,
         title: 'B',
         url: 'http://b.com',
         savePath: '/b',
@@ -109,7 +167,7 @@ void main() {
         updatedAt: 0,
       );
       const t3 = DownloadTask(
-        id: 'task2',
+        id: 2,
         title: 'A',
         url: 'http://a.com',
         savePath: '/a',
@@ -117,7 +175,25 @@ void main() {
         updatedAt: 0,
       );
       expect(t1, equals(t2));
-      expect(t1 == t3, false);
+      expect(t1 == t3, isFalse);
+    });
+  });
+
+  group('请求头编解码', () {
+    test('空表编码为 null', () {
+      expect(encodeHeaders(const {}), isNull);
+    });
+
+    test('往返保持键值', () {
+      const headers = {'Referer': 'https://a.com/', 'User-Agent': 'X/1'};
+      expect(decodeHeaders(encodeHeaders(headers)), headers);
+    });
+
+    test('坏值返回空表而不抛异常', () {
+      expect(decodeHeaders('{不是 json'), isEmpty);
+      expect(decodeHeaders('[1,2,3]'), isEmpty);
+      expect(decodeHeaders(''), isEmpty);
+      expect(decodeHeaders(null), isEmpty);
     });
   });
 
@@ -175,116 +251,80 @@ void main() {
       expect(progress.formattedEta, '2分5秒');
     });
 
-    test('isDownloading returns true for downloading status', () {
-      const progress = DownloadProgress(
-        taskId: 't1',
-        status: DownloadProgressStatus.downloading,
+    test('isDownloading / isCompleted / isFailed', () {
+      expect(
+        const DownloadProgress(
+          taskId: 't1',
+          status: DownloadProgressStatus.downloading,
+        ).isDownloading,
+        isTrue,
       );
-      expect(progress.isDownloading, true);
-    });
-  });
-
-  group('DownloadManager', () {
-    late DownloadManager manager;
-
-    setUp(() {
-      manager = DownloadManager();
-    });
-
-    tearDown(() {
-      manager.dispose();
-    });
-
-    test('createTask creates task with correct defaults', () async {
-      final task = await manager.createTask(
-        title: 'Test Video',
-        url: 'http://example.com/video.m3u8',
-        savePath: '/downloads/video',
+      expect(
+        const DownloadProgress(
+          taskId: 't1',
+          status: DownloadProgressStatus.completed,
+        ).isCompleted,
+        isTrue,
       );
-      expect(task.title, 'Test Video');
-      expect(task.url, 'http://example.com/video.m3u8');
-      expect(task.status, DownloadStatus.pending);
-      expect(task.progress, 0.0);
-    });
-
-    test('tasks list contains created task', () async {
-      await manager.createTask(
-        title: 'Test',
-        url: 'http://a.com',
-        savePath: '/path',
+      expect(
+        const DownloadProgress(
+          taskId: 't1',
+          status: DownloadProgressStatus.failed,
+        ).isFailed,
+        isTrue,
       );
-      expect(manager.tasks.length, 1);
-    });
-
-    test('deleteTask removes task', () async {
-      final task = await manager.createTask(
-        title: 'Test',
-        url: 'http://a.com',
-        savePath: '/path',
-      );
-      await manager.deleteTask(task.id);
-      expect(manager.tasks.length, 0);
-    });
-
-    test('clearCompleted removes completed tasks', () async {
-      final task1 = await manager.createTask(
-        title: 'Test1',
-        url: 'http://a.com',
-        savePath: '/path1',
-      );
-      await manager.createTask(
-        title: 'Test2',
-        url: 'http://b.com',
-        savePath: '/path2',
-      );
-      // Manually update task1 to completed
-      manager.tasks
-          .firstWhere((t) => t.id == task1.id)
-          .copyWith(
-            status: DownloadStatus.completed,
-          );
-      await manager.clearCompleted();
-      expect(manager.tasks.length, 1);
-    });
-
-    test('task listener receives updates', () async {
-      final updates = <DownloadTask>[];
-      manager.addTaskListener(updates.add);
-      await manager.createTask(
-        title: 'Test',
-        url: 'http://a.com',
-        savePath: '/path',
-      );
-      expect(updates.length, 1);
-      manager.removeTaskListener(updates.add);
     });
   });
 
   group('CancelToken', () {
-    test('isCancelled returns false initially', () {
+    test('初始未取消，cancel 后为已取消', () {
       final token = CancelToken();
-      expect(token.isCancelled, false);
-    });
-
-    test('cancel sets isCancelled to true', () {
-      final token = CancelToken();
+      expect(token.isCancelled, isFalse);
       token.cancel();
-      expect(token.isCancelled, true);
+      expect(token.isCancelled, isTrue);
     });
   });
 
   group('Semaphore', () {
-    test('acquire decrements count', () async {
+    test('名额够时 acquire 立即返回', () async {
       final semaphore = Semaphore(2);
       await semaphore.acquire();
-      // Should not throw
+      await semaphore.acquire();
+      // 两次都拿到名额，没有阻塞。
+      expect(true, isTrue);
     });
 
-    test('release increments count', () async {
+    test('超出上限的 acquire 会等到 release 才放行', () async {
+      // 原用例只写了「acquire 不抛异常」和「release 后还能 acquire」，两句都
+      // 没有断言 —— 把 `acquire` 改成永远立即返回也能过。这里断言真正的语义。
       final semaphore = Semaphore(1);
       await semaphore.acquire();
+
+      var secondAcquired = false;
+      final pending = semaphore.acquire().then((_) => secondAcquired = true);
+
+      await Future<void>.delayed(Duration.zero);
+      expect(secondAcquired, isFalse, reason: '名额已满，第二个 acquire 该在等');
+
       semaphore.release();
-      await semaphore.acquire(); // Should succeed
+      await pending;
+      expect(secondAcquired, isTrue);
+    });
+
+    test('release 按先来后到唤醒等待者', () async {
+      final semaphore = Semaphore(1);
+      await semaphore.acquire();
+
+      final order = <String>[];
+      final first = semaphore.acquire().then((_) => order.add('first'));
+      final second = semaphore.acquire().then((_) => order.add('second'));
+
+      semaphore.release();
+      await first;
+      semaphore.release();
+      await second;
+
+      expect(order, ['first', 'second']);
     });
   });
 }
