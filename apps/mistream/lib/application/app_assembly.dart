@@ -7,6 +7,7 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:download/download.dart';
 import 'package:live/live.dart';
 import 'package:media_sniffer/media_sniffer.dart';
 import 'package:meta/meta.dart';
@@ -15,6 +16,7 @@ import 'package:mistream/application/detail_use_case.dart';
 import 'package:mistream/application/live_epg_settings.dart';
 import 'package:mistream/application/live_sort_settings.dart';
 import 'package:mistream/application/live_source_fetcher.dart';
+import 'package:path/path.dart' as p;
 import 'package:search_engine/search_engine.dart';
 import 'package:sniffer/sniffer.dart';
 import 'package:source_adapter/source_adapter.dart';
@@ -24,7 +26,11 @@ import 'package:storage/storage.dart';
 /// 应用层装配。
 class AppAssembly {
   /// 构造并装配。
-  AppAssembly(this.database, this.repositories) {
+  ///
+  /// [downloadsRoot] 是下载根目录的绝对路径（`main.dart` 解析后传进来）。
+  /// 为 `null` 时下载管理器不设删除边界 —— 只该出现在测试里，产品路径上
+  /// 必须给值，否则「删除下载」会递归删掉应用目录之外的东西。
+  AppAssembly(this.database, this.repositories, {this.downloadsRoot}) {
     // Spider JS 运行时：优先使用编译后的 exe，fallback 到 dart run
     final exePath = _resolveSpiderJsPath();
     _hostApi = HostApi();
@@ -84,6 +90,14 @@ class AppAssembly {
       liveImporter: liveImporter,
       epgFetcher: liveEpgFetcher,
     );
+    // 下载：任务与分片进度落 `download` / `download_segment` 两张表。
+    // 此前这两张表建了却零使用，任务只活在内存 `Map` 里 —— 「杀进程后重启
+    // 状态恢复」与「断点续传」两条出口标准因此不可能成立。
+    downloadRepository = DriftDownloadRepository(database);
+    downloadManager = DownloadManager(
+      repository: downloadRepository,
+      downloadRoot: downloadsRoot,
+    );
   }
 
   /// 底层数据库。
@@ -91,6 +105,9 @@ class AppAssembly {
 
   /// 仓储集合。
   final Repositories repositories;
+
+  /// 下载根目录；`null` 表示未配置（仅测试）。
+  final String? downloadsRoot;
 
   /// 聚合搜索用例。
   late final SearchUseCase searchUseCase;
@@ -132,6 +149,12 @@ class AppAssembly {
   /// 直播频道排序偏好的读写入口。
   late final LiveSortPreference liveSortPreference;
 
+  /// 下载任务与分片进度的持久化仓储。
+  late final DownloadRepository downloadRepository;
+
+  /// 下载管理器（排队、限流、状态落库）。
+  late final DownloadManager downloadManager;
+
   /// 源提供者。
   late final StorageSourceProvider sourceProvider;
 
@@ -153,8 +176,29 @@ class AppAssembly {
     );
   }
 
+  /// 从库里恢复下载任务。
+  ///
+  /// 启动路径上 `await` 它：恢复过程会把上次残留的「下载中」统一降级为
+  /// 「已暂停」（崩溃/强杀之后没有任务真的在下），并写回库。不 await 的话，
+  /// 用户可能在降级完成前就点了「继续」，两边同时改同一行。
+  ///
+  /// **恢复不自动续传**：这一步只把状态读回来，是否接着下由用户决定。
+  Future<void> restoreDownloads() => downloadManager.restore();
+
+  /// 由媒体标题生成下载保存路径。
+  ///
+  /// 路径拼装收在应用层，UI 只传标题 —— 否则「下载根目录在哪」这件事会散落到
+  /// 每个调 `createTask` 的地方（旧实现就是每个调用点各写一遍硬编码的
+  /// `/downloads/<标题>`）。
+  String downloadSavePathFor(String title) {
+    final name = sanitizeDownloadName(title);
+    final root = downloadsRoot;
+    return root == null ? name : p.join(root, name);
+  }
+
   /// 关闭底层资源。
   Future<void> dispose() async {
+    downloadManager.dispose();
     liveFetcher.close();
     await database.close();
   }

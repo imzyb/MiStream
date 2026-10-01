@@ -19,7 +19,11 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final database = AppDatabase.open(await resolveDatabasePath());
-  final assembly = AppAssembly(database, Repositories(database));
+  final assembly = AppAssembly(
+    database,
+    Repositories(database),
+    downloadsRoot: await resolveDownloadsPath(),
+  );
   final settings = assembly.repositories.settings;
 
   // 供路由器使用的全局装配
@@ -28,6 +32,10 @@ Future<void> main() async {
   // EPG 模板来自配置的 `lives[]`，而配置原文不入库 —— 单独存了一份，启动时
   // 恢复进拉取器，否则重启后节目单永远是空的。
   await assembly.restoreLiveEpgTemplates();
+
+  // 下载任务同样不入内存就完事：上次未完成的任务要能重新出现在列表里
+  // （残留的「下载中」会降级成「已暂停」，等用户点继续）。
+  await assembly.restoreDownloads();
 
   runApp(
     MiStreamApp(

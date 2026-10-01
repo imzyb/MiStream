@@ -10,7 +10,10 @@ library;
 
 import 'dart:io';
 
+import 'package:download/download.dart';
 import 'package:mistream/application/app_assembly.dart';
+import 'package:path/path.dart' as p;
+import 'package:storage/storage.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -185,6 +188,70 @@ void main() {
       // 同名文件交给子进程。
       final dir = pathDirWithJava('jdk');
       expect(AppAssembly.findExecutableOnPath(dir, otherName), isNull);
+    });
+  });
+
+  group('下载路径与恢复', () {
+    late AppDatabase db;
+
+    setUp(() => db = AppDatabase.inMemory());
+    tearDown(() => db.close());
+
+    AppAssembly assemble({String? downloadsRoot}) =>
+        AppAssembly(db, Repositories(db), downloadsRoot: downloadsRoot);
+
+    test('downloadSavePathFor 拼在下载根目录之下', () {
+      final assembly = assemble(downloadsRoot: p.join('root', 'downloads'));
+      expect(
+        assembly.downloadSavePathFor('庆余年 第二季'),
+        p.join('root', 'downloads', '庆余年 第二季'),
+      );
+    });
+
+    test('downloadSavePathFor 清理掉标题里的非法字符', () {
+      // 旧实现在 UI 里直接写 `/downloads/<标题>`：Windows 上既会落到**当前盘
+      // 根目录**，又会被标题里的 `:` `/` 直接搞坏。
+      final assembly = assemble(downloadsRoot: p.join('root', 'downloads'));
+      expect(
+        assembly.downloadSavePathFor(r'第1集/上: 下'),
+        p.join('root', 'downloads', '第1集_上_ 下'),
+      );
+    });
+
+    test('未配置根目录时只返回清理后的名字', () {
+      expect(assemble().downloadSavePathFor('甲'), '甲');
+    });
+
+    test('restoreDownloads 走的是数据库仓储，不是内存', () async {
+      // 装配层最容易出的错是「建了仓储但管理器还在用默认的内存实现」——
+      // 那样用例全绿，而杀进程重启后任务全没了。这条用例钉的就是它。
+      final repository = DriftDownloadRepository(db);
+      final id = await repository.insertTask(
+        DownloadTask(
+          id: 0,
+          title: '上次没下完的',
+          url: 'https://a.com/v.m3u8',
+          savePath: p.join('root', 'downloads', '上次没下完的'),
+          status: DownloadStatus.downloading,
+          createdAt: 1000,
+          updatedAt: 1000,
+        ),
+      );
+
+      final assembly = assemble(downloadsRoot: p.join('root', 'downloads'));
+      await assembly.restoreDownloads();
+
+      expect(assembly.downloadManager.tasks, hasLength(1));
+      expect(
+        assembly.downloadManager.taskById(id)!.status,
+        DownloadStatus.paused,
+        reason: '上次残留的「下载中」重启后要降级成「已暂停」',
+      );
+      // 降级结果也写回了库。
+      expect(
+        (await repository.listTasks()).single.status,
+        DownloadStatus.paused,
+      );
     });
   });
 }

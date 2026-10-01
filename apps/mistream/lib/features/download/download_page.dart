@@ -5,10 +5,16 @@ import 'dart:async' show unawaited;
 
 import 'package:download/download.dart';
 import 'package:flutter/material.dart';
+import 'package:mistream/app/app.dart' show AppScope;
+import 'package:mistream/application/app_assembly.dart';
 
 import 'package:mistream/features/common/common.dart' show EmptyView;
 
 /// 下载页。
+///
+/// 管理器**不在这里创建**：它是进程级单例，由 [AppAssembly] 持有。旧实现是
+/// `DownloadPage` 自己 `new DownloadManager()` —— 于是「进下载页」和「杀进程
+/// 重启」看到的是两份互不相干的内存状态，落库了也读不到。
 class DownloadPage extends StatefulWidget {
   /// 构造下载页。
   const DownloadPage({super.key});
@@ -18,45 +24,44 @@ class DownloadPage extends StatefulWidget {
 }
 
 class _DownloadPageState extends State<DownloadPage> {
-  final DownloadManager _manager = DownloadManager();
-  List<DownloadTask> _tasks = [];
+  late final AppAssembly _assembly;
+  late final DownloadManager _manager;
+  bool _depsReady = false;
   int _selectedTab = 0;
 
   static const _tabLabels = ['进行中', '等待中', '已完成', '失败'];
 
   @override
-  void initState() {
-    super.initState();
-    _loadTasks();
-    _manager.addTaskListener(_onTaskUpdate);
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_depsReady) return;
+    _depsReady = true;
+    _assembly = AppScope.of(context);
+    _manager = _assembly.downloadManager;
+    _manager.addListener(_onChanged);
   }
 
   @override
   void dispose() {
-    _manager.removeTaskListener(_onTaskUpdate);
-    _manager.dispose();
+    // 只退订，**不 dispose**：管理器归装配层所有，页签切走再切回来不该把
+    // 正在下载的任务一起干掉。
+    _manager.removeListener(_onChanged);
     super.dispose();
   }
 
-  void _onTaskUpdate(DownloadTask task) {
-    setState(() => _tasks = _manager.tasks);
+  void _onChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
-  void _loadTasks() {
-    setState(() => _tasks = _manager.tasks);
-  }
+  List<DownloadTask> get _activeTasks => _manager.activeTasks;
 
-  List<DownloadTask> get _activeTasks =>
-      _tasks.where((t) => t.status == DownloadStatus.downloading).toList();
+  /// 「等待中」按**调度顺序**（优先级降序、同级按创建时间），而不是创建顺序。
+  List<DownloadTask> get _pendingTasks => _manager.pendingTasks;
 
-  List<DownloadTask> get _pendingTasks =>
-      _tasks.where((t) => t.status == DownloadStatus.pending).toList();
+  List<DownloadTask> get _completedTasks => _manager.completedTasks;
 
-  List<DownloadTask> get _completedTasks =>
-      _tasks.where((t) => t.status == DownloadStatus.completed).toList();
-
-  List<DownloadTask> get _failedTasks =>
-      _tasks.where((t) => t.status == DownloadStatus.failed).toList();
+  List<DownloadTask> get _failedTasks => _manager.failedTasks;
 
   List<DownloadTask> get _currentTasks => switch (_selectedTab) {
     0 => _activeTasks,
@@ -421,17 +426,20 @@ class _DownloadPageState extends State<DownloadPage> {
             ),
             FilledButton(
               onPressed: () async {
-                if (urlController.text.isNotEmpty &&
-                    titleController.text.isNotEmpty) {
-                  await _manager.createTask(
-                    title: titleController.text,
-                    url: urlController.text,
-                    savePath: '/downloads/${titleController.text}',
-                  );
-                  await _manager.startDownload(_manager.tasks.last.id);
-                  if (!ctx.mounted) return;
-                  Navigator.pop(ctx);
-                }
+                final title = titleController.text.trim();
+                final url = urlController.text.trim();
+                if (url.isEmpty || title.isEmpty) return;
+                final task = await _manager.createTask(
+                  title: title,
+                  url: url,
+                  // 保存路径由应用层按下载根目录拼，UI 不自己拼 ——
+                  // 旧实现写的是 `/downloads/<标题>`，在 Windows 上会落到
+                  // **当前盘根目录**下，越出应用的数据目录。
+                  savePath: _assembly.downloadSavePathFor(title),
+                );
+                await _manager.startDownload(task.id);
+                if (!ctx.mounted) return;
+                Navigator.pop(ctx);
               },
               child: const Text('下载'),
             ),
