@@ -2,7 +2,7 @@
 
 > 本文件只做一件事：对照 [ROADMAP.md](ROADMAP.md) 的**出口标准**报告真实状态。
 > 每个勾都指向可复现的证据（测试文件/命令/提交）。未验证的一律不勾。
-> 更新：2026-09-30
+> 更新：2026-10-01
 
 ## 总览
 
@@ -108,10 +108,11 @@
 四个包已入工作区并全绿测试，但各自出口标准需要真实网络/真实源/长跑才能勾选：
 
 - **M6** `packages/media_sniffer`（66 测试）：规则引擎、直链验证、HLS 样本测试齐；`runtimes/sniffer` **已落地 CDP 嗅探运行时**（70 测试，含真实 Edge/Chrome 端到端启动验证）；缺真实 type=0 网页源验收
-- **M7** `packages/live`（**144 测试**，2026-09-30 由 17 → 89 → 144）+ app 层
-  `live_import_e2e_test`（9 例）+ `live_source_fetcher_test`（4 例）：
+- **M7** `packages/live`（**206 测试**，2026-10-01 由 17 → 89 → 144 → 206）+
+  app 层 `live_import_e2e_test`（9 例）+ `live_source_fetcher_test`（4 例）+
+  `live_sort_settings_test`（6 例）：
   m3u/txt 解析、drift 收藏、EPG（XMLTV + JSON 两条链路）、多线路换台、
-  编码探测。
+  编码探测、频道排序、数字键跳台与方向键换台。
   **2026-09-30 修掉 8 处解析缺陷并打通「配置 → 频道列表」**：
   - `live_parser` 重写。用**真实源**（`live.zbds.top/tv/iptv4.txt` 前 11 行 +
     常见 m3u）写探针 12 例，**修前 8 例不符**，其中「m3u 标准写法（名字在
@@ -162,6 +163,17 @@
       在 `LiveChannelSwitcher` 的引用持有上，纯逻辑即可验证。用
       `WeakReference` + GC 压力断言 50 次的频道与结果都不可达，并带一条对照例
       防「`WeakReference` 恒为 null、断言其实是空的」。
+  - **2026-10-01：M7 交付物收尾**
+    - **频道排序**：`LiveChannelSortOrder`（源顺序 / 名称自然序 / 收藏优先），
+      稳定排序、不改动入参，偏好落库 `live.channel_sort`。刻意不做「按频道号」
+      —— 那条链路上没有生产者，档位会永远退化成源顺序。
+    - **数字键跳台与方向键换台**：定位（`LiveChannelNavigator` + 数字缓冲）、
+      规则（`resolveLiveKey`，`LiveKey` 与 Flutter 解耦）、翻译（app 层对照表）
+      三层切开，前两层是纯 Dart 因而有用例。↑/↓ 换台（环绕）、数字键超时或
+      Enter 跳台、`Esc` 仅在缓冲非空时接管、组合键让位给播放器（音量退路）。
+    - 详见本文件末尾「本次会话（2026-10-01）」。
+  - ⚠️ **仍未做**：换台时保留上一路画面直到新流首帧（需双播放器 + 首帧回调）、
+    低延迟缓冲策略 —— 两者都要真实播放器/真实流才能验证；换台 P50 需真实网络。
 - **M8** `packages/download`（22 测试）：任务状态机、Range 断点续传、HLS 分片；**假实现已替换为真实实现**（提交 `720dad3`），缺真实网络断点/离线播放验收
 - **M9** `packages/plugin_host`（**90 测试**，2026-09-28 由 19 → 30 → 56，09-30 → 68 → 90）+ **`packages/theme_engine`**（**98 测试**，新增独立包，提交 `b113410`）：清单/权限/sha256、**路径穿越 guard**（2026-09-30 修掉两类真漏洞，见三续之后的四续）、**权限撤销的运行时降级**（2026-09-30 补通知链路与调用侧闸门，此前 `revoke` 只改账本、与 `PluginManager` 脱钩）、**畸形主题包的兜底**（2026-09-30 三：修掉「透明度绕过对比度校验」与「尺度越界原样生效」两处真漏洞）、对比度计算、**版本目录 + 指针切换的原子升级与回滚**（新增 `PluginStore`，26 例）。**生命周期状态机已补测**（提交 `68a163d`：`PluginState.error` 此前从未被赋值、属死状态，已让激活失败可进入 error 并补全迁移真值表）。仍缺**主题包的安装/启用链路**（从插件目录加载，现在只有解析与校验）
   - **记录更正（2026-09-30）**：此处原先写「isolate 沙箱」，**失实**。`PluginSandbox`
@@ -1393,6 +1405,100 @@ M9 出口标准最后一条。核账时发现两处**能绕过对比度校验**�
 
 > 教训：总览数字与 ROADMAP 的复选框是**两份数据**，改一处必须对另一处核账。
 > 计数类字段应该用 `grep -c "^- \[x\]"` 现场数，不要手写。
+
+## 本次会话（2026-10-01）：M7 收尾——频道排序 + 数字键跳台/方向键换台
+
+M7 出口标准停在 3/4（剩「换台 P50 < 2s」卡真实网络），但**交付物**还差两项
+纯本地能做的：频道排序、数字键跳台与方向键换台。这一轮把这两项做完。
+
+### 一、频道排序（`packages/live/lib/src/live_channel_sort.dart`）
+
+- `LiveChannelSortOrder`：`source`（源顺序，默认）/ `byName`（名称自然序）/
+  `favoritesFirst`（收藏优先）。
+- **自然序**而不是 `String.compareTo`：逐码点比较会把 `CCTV10` 排在 `CCTV2`
+  前面（`'1' < '2'`），而 `CCTV1`…`CCTV17` 正是真实源里最常见的一类台名。
+  实现上先比「去掉前导零后的位数」再比字典序，因此不必把数字串转成 `int`
+  （真实台名不会溢出，但没必要留这个坑）。中文名走码点序**不是**拼音序，
+  这一点写进了代码文档 —— 拼音序要一份拼音表，收益与成本不成正比。
+- **刻意不做「按频道号」档**：`LiveChannel.channelNumber` 在本项目整条链路里
+  没有生产者（`LiveParser` 不产出、真实 txt/m3u 也没有该字段）。提供一个永远
+  退化成源顺序的档位，只会让用户以为排序坏了。
+- **稳定排序**：Dart 的 `List.sort` 不保证稳定，所以显式用「原始下标」做兜底
+  比较键 —— 否则同键频道每次排序的相对位置都可能变，列表看起来在随机抖动。
+- **不改动入参**：`source` 档也返回副本，避免调用方拿到的视图与仓库那份共用
+  同一个可变对象。
+- 偏好落库 `live.channel_sort`（存**枚举名**而不是序号：序号在增删档位后会
+  静默错位），走 `apps/mistream/lib/application/live_sort_settings.dart`。
+
+### 二、数字键跳台与方向键换台
+
+分三层，按可测性切开：
+
+| 层 | 文件 | 内容 | 覆盖 |
+| --- | --- | --- | --- |
+| 定位 | `packages/live/lib/src/live_channel_navigator.dart` | `LiveChannelNavigator`（上/下台环绕、按号定位）+ `ChannelNumberBuffer`（攒数字） | 用例 25 例 |
+| 规则 | `packages/live/lib/src/live_shortcuts.dart` | `LiveKey` + `LiveCommand` + `resolveLiveKey` | 用例 13 例 |
+| 翻译 | `apps/mistream/lib/features/live/live_shortcuts.dart` | Flutter 按键 → `LiveKey`（只有对照表，没有规则） | 类型检查 |
+| 接线 | `apps/mistream/lib/features/live/live_player_page.dart` | 键盘钩子、换台、数字浮层 | 类型检查 |
+
+- **为什么按键要用 `LiveKey` 而不是直接写 `LogicalKeyboardKey`**：
+  `package:flutter/services.dart` 在纯 Dart 测试里编不了（本环境 widget 测试
+  跑不起来），规则表若直接写在 Flutter 类型上就只能靠人工点一遍验证 —— 而
+  「Esc 无条件接管会让直播下退不出全屏」「Shift 不让位则直播下没有音量键」
+  这两条是真会出错的判断。拆开之后规则表是纯 Dart，能被用例盯住。
+- **`Esc` 只在数字缓冲非空时接管**，空缓冲让给播放器默认表（那里是退出全屏）。
+- **`Shift` / `Ctrl` 组合键一律让位**：↑/↓ 被换台占了之后，`Shift+↑/↓` 是
+  直播下仅剩的音量入口。
+- **上/下台环绕**而不是夹在两端：按到底回到第一个台；夹住会让用户以为遥控器
+  失灵。**按号越界返回 `null`** 而不是回退到第一个台，UI 明确提示「没有 N 号
+  频道」——按了 999 却跳到 CCTV1 更让人困惑。
+- 数字键**超时（1200ms）自动确认**，`Enter` 立即确认。遥控器没有输入框，
+  这是必然的取舍，写在代码文档里。
+- **换台在用户眼前那份列表上走**（已筛选 + 已排序）：`LivePage` 把
+  `_filteredChannels` 随路由 extra 传给播放页，所见即所切。
+- 换台失败**不夺走画面与键盘**：整页错误视图只用于首次起播失败；换台失败走
+  浮层提示，用户还能接着按 ↑/↓ 换回去。
+- 顺带给 `PlayerPage` 加了 `onKey` 钩子（在默认快捷键表**之前**询问，
+  返回 `false` 则继续走默认表）。这是直播页能接管 ↑/↓ 又保留 `Shift+↑/↓`
+  音量的前提。
+
+### 三、踩到的两个坑
+
+1. **`dart run` 下断言不生效**：给 `ChannelNumberBuffer` 写了
+   `assert(maxDigits > 0)` 并配了 `throwsA(isA<AssertionError>())` 的用例，
+   实测**不抛**（垫片是 `dart run`，非 assert 模式）——那是一条永远绿的假用例。
+   已换成「`maxDigits: 1` 时只留最新一位」这种真实行为用例，并在用例注释里
+   写明原因。
+2. **Presentation 层不许 import `storage`**（`tools/arch_check` 抓到）：
+   直播页为了存排序偏好直接引了 `SettingsDao`。改为在 application 层包一个
+   `LiveSortPreference`（`AppAssembly.liveSortPreference`），页面只见应用层
+   类型。
+
+### 四、验证
+
+| 项 | 结果 |
+| --- | --- |
+| `packages/live` + app 直播链路（`run_tests_live.dart`） | 144 → **206 例**全绿 |
+| 全量垫片（`run_tests_shim.dart`） | **200 例**全绿 |
+| 反向验证 `rev_verify_live.py` | **55 项全部变红**（新增 AM–BC 共 17 项） |
+| `analyze_inproc`（live + app） | 81 文件 **0 error / 0 warning / 0 info** |
+| `dart format` / `arch_check` | 0 changed / 分层纪律检查通过 |
+
+反向验证新增项：自然序退化 / 前导零不剥 / 等值不同长度不比较 / 收藏优先写反 /
+`source` 档返回同一对象 / 按序号解析 / 落库写序号 / 缓冲满时保留最旧 / 空缓冲
+当 0 / 不环绕 / 越界回退第一个台 / 忽略 `channelNumber` / 找不到返回 0 /
+`Esc` 无条件接管 / 组合键不让位 / 上写反 / 数字键一律当 0。
+
+### 五、仍未做（如实记）
+
+- **换台时保留上一路画面直到新流首帧**：需要双播放器交替 + 首帧回调，属 UI 层，
+  且验证需要真实播放器 —— 本环境起不了。**没有实现，不是遗漏**。
+- **低延迟缓冲策略**：同上，需真实直播流才能调参验证。
+- **换台 P50 < 2s**：需真实网络与真实源（P5 阻塞项）。
+- 换台与数字浮层的**渲染**未覆盖（widget 测试跑不起来），验证的是数据与规则，
+  不是画得对不对。
+- `apps/mistream/lib/features/live/live_shortcuts.dart` 那张按键对照表只有类型
+  检查 —— 规则已经搬走，剩下的是机械翻译；漏认小键盘之类的错误仍只能人工发现。
 
 ## 下一步（按优先级，2026-09-19 续）
 
