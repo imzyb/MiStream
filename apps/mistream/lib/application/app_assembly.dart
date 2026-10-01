@@ -13,6 +13,7 @@ import 'package:meta/meta.dart';
 import 'package:mistream/application/config_install_service.dart';
 import 'package:mistream/application/detail_use_case.dart';
 import 'package:mistream/application/live_epg_settings.dart';
+import 'package:mistream/application/live_sort_settings.dart';
 import 'package:mistream/application/live_source_fetcher.dart';
 import 'package:search_engine/search_engine.dart';
 import 'package:sniffer/sniffer.dart';
@@ -74,6 +75,9 @@ class AppAssembly {
     // 客户端只是多一份连接池。模板先留空，等 `restoreLiveEpgTemplates()` 或
     // 配置导入时填。
     liveEpgFetcher = EpgFetcher(fetcher: liveFetcher.call);
+    // 直播频道排序偏好。包一层是为了不让直播页直接依赖 `storage`
+    // （Presentation 层不得 import 基础设施包，`docs/10` §3.3）。
+    liveSortPreference = LiveSortPreference(repositories.settings);
     // 配置安装要顺带导入 `lives` 并落库 `epg` 模板，所以两者必须先就位。
     configInstaller = ConfigInstallService(
       repositories,
@@ -124,6 +128,9 @@ class AppAssembly {
 
   /// 直播 EPG 拉取器（按配置里的 `epg` 模板，单频道按需拉）。
   late final EpgFetcher liveEpgFetcher;
+
+  /// 直播频道排序偏好的读写入口。
+  late final LiveSortPreference liveSortPreference;
 
   /// 源提供者。
   late final StorageSourceProvider sourceProvider;
