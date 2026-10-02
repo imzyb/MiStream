@@ -118,9 +118,19 @@ melos:
 
     generate:
       description: 生成 drift 代码（ADR-008：产物不提交，CI 与本地都走 build_runner）
-      run: dart run build_runner build --delete-conflicting-outputs
-      packageFilters:
-        dependsOn: build_runner
+      # ⚠️ 必须带 --workspace，且**不能**写 packageFilters。
+      #
+      # 原写法是 `dart run build_runner build --delete-conflicting-outputs` 配
+      # `packageFilters: dependsOn: build_runner`：melos 会 cd 进 packages/storage
+      # 跑一次**单包构建**。在 pub workspace 下这次构建实测写 **0 个输出**
+      # （CI 日志 `Built with build_runner/aot in 13s; wrote 0 outputs.`），
+      # database.g.dart 于是永远生成不出来，只能靠入库解封发布链。
+      #
+      # `--workspace` 是「构建当前 workspace 内的全部包」，由仓库根跑一次，
+      # 因此必须去掉 packageFilters（没有它 melos 才在根目录执行；format:check /
+      # analyze 都是这么跑的）。`--delete-conflicting-outputs` 自 build_runner
+      # 2.15 起已列入 removedOptions，只会打一句警告，顺手删掉。
+      run: dart run build_runner build --workspace
 
     schema:update:
       description: 刷新 drift schema 快照并重生成迁移验证代码（改表后跑一次）

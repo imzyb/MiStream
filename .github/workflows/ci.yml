@@ -27,7 +27,17 @@ jobs:
       - run: dart pub global activate melos
       - run: melos bootstrap
       - name: 生成 drift 产物（database.g.dart 等）
-        run: melos run generate
+        # 先删掉入库的 database.g.dart 再生成，然后断言它回来了。
+        #
+        # 为什么非删不可：ADR-008 说「产物不提交」，但这条纪律一度是假的 ——
+        # `melos run generate` 在 pub workspace 下写 0 个输出，产物只能靠入库
+        # 解封发布链，而「写 0 个输出」这件事本身**不会报错**（exit 0）。删掉之后
+        # 再生成，才能把「生成器没工作」从静默变成响亮：它一旦不产出，
+        # 下面的 analyze 会立刻报 database.g.dart 未定义。
+        run: |
+          rm -f packages/storage/lib/src/database/database.g.dart
+          melos run generate
+          test -f packages/storage/lib/src/database/database.g.dart
       - name: 格式一致性
         run: melos run format:check
       - name: 零告警才算通过
