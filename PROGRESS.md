@@ -16,7 +16,7 @@
 | M5 主线 UI 闭环 | 6/7 | 🟢 仅剩真实配置源 |
 | M6 嗅探与解析 | 1/5 | 🟡 CDP 嗅探运行时已落地，缺真实 type=0 源 |
 | M7 直播 | 3/4 | 🟡 配置→频道列表、多线路重试、50 次长跑均已验；缺真实网络（换台 P50） |
-| M8 下载与离线 | 0/5 | 🟡 真实实现已接入，缺验收 |
+| M8 下载与离线 | 1/5 | 🟡 持久化/恢复/续传已接入并有证据，其余卡真实网络与播放器 |
 | M9 插件系统与主题 | 6/6 | 🟢 出口标准全勾；交付物仍缺主题包安装链路/插件中心 UI |
 | M10 发布工程 | 0/6 | 🟡 发布链草稿已就位 |
 | M11-M15 | — | 🔴 未启动 |
@@ -174,7 +174,7 @@
     - 详见本文件末尾「本次会话（2026-10-01）」。
   - ⚠️ **仍未做**：换台时保留上一路画面直到新流首帧（需双播放器 + 首帧回调）、
     低延迟缓冲策略 —— 两者都要真实播放器/真实流才能验证；换台 P50 需真实网络。
-- **M8** `packages/download`（**109 测试**，2026-10-01 由 22 → 104 → 109）：
+- **M8** `packages/download`（**126 测试**，2026-10-01 由 22 → 104 → 109 → 126）：
   任务状态机、Range 断点续传、HLS 分片解析/并发/合并，**外加 2026-10-01 补上的
   持久化与恢复**：
   - `download` / `download_segment` 两张表此前**建了却零使用**，任务只活在
@@ -197,6 +197,14 @@
     应用数据目录下的 `downloads/`，并给删除操作加了「不得越出下载根目录」的边界。
   - 删掉 `DownloadService`（~122 行、**零调用方**的假实现：`// Simulate download
     progress` + `Future.delayed`）。
+  - **下载接进主流程**（2026-10-01 三）：详情页剧集卡片右键/长按 → 「下载本集」。
+    此前下载只有**一个入口**（下载页手动粘贴 URL），于是 `download` 表的
+    `site_id` / `vod_id` / `episode_name` 三列**没有任何写入方** —— 下载列表分不清
+    「同一部剧的第几集」，「已加入下载」也无从判断。新增应用层 `DownloadUseCase`
+    收拢四件必须按序发生的事：解析真实地址（`vod_play_url` 可能是网页播放页）、
+    透传反盗链头（播放有 mpv 帮忙设，下载器没有）、按「影片 / 集」两级分目录
+    （HLS 分片名固定，多集共目录会互相覆盖）、落库后立即发车。同一集连点两次
+    只建一条且**不再解析地址**；`cancelled` 不算已存在。
   - ⚠️ **仍未做**：直链多线程分段下载、速度/剩余时间统计、离线播放（需播放器）、
     真实网络下的断点续传端到端验收。
 - **M9** `packages/plugin_host`（**90 测试**，2026-09-28 由 19 → 30 → 56，09-30 → 68 → 90）+ **`packages/theme_engine`**（**98 测试**，新增独立包，提交 `b113410`）：清单/权限/sha256、**路径穿越 guard**（2026-09-30 修掉两类真漏洞，见三续之后的四续）、**权限撤销的运行时降级**（2026-09-30 补通知链路与调用侧闸门，此前 `revoke` 只改账本、与 `PluginManager` 脱钩）、**畸形主题包的兜底**（2026-09-30 三：修掉「透明度绕过对比度校验」与「尺度越界原样生效」两处真漏洞）、对比度计算、**版本目录 + 指针切换的原子升级与回滚**（新增 `PluginStore`，26 例）。**生命周期状态机已补测**（提交 `68a163d`：`PluginState.error` 此前从未被赋值、属死状态，已让激活失败可进入 error 并补全迁移真值表）。仍缺**主题包的安装/启用链路**（从插件目录加载，现在只有解析与校验）
@@ -1670,6 +1678,102 @@ M7 出口标准停在 3/4（剩「换台 P50 < 2s」卡真实网络），但**�
 > `startDownload` 里的 `_updateTask(task.copyWith(...));` 被折成三行，`D3` 的锚点
 > 归零（脚本会打 `[SKIP] anchor not found` 并判失败，不会静默通过）。**先格式化，
 > 再跑反向验证。**
+
+
+---
+
+## 本次会话（2026-10-01）· 三：把下载接进主流程
+
+这一轮做的不是「加功能」，是**给一个只有半条链路的功能补上另外半条**。
+
+### 查出的缺口：三列零写入方
+
+下载此前只有**一个入口** —— 下载页手动粘贴 URL。后果是 `download` 表的
+`site_id` / `vod_id` / `episode_name` 三列**没有任何写入方**：
+
+- 下载列表分不清「同一部剧的第几集」（`vod_name` 是影片名，多集长得一模一样）；
+- 「已加入下载」这个状态无从判断，用户连点两次会建两条各下一半。
+
+### 新增 `DownloadUseCase`（应用层编排）
+
+`apps/mistream/lib/application/download_use_case.dart`。收拢四件必须按序发生、
+且各有失败模式的事：
+
+1. **解析真实地址** —— `vod_play_url` 可能是**网页播放页**（`share/xxx` 形态的
+   线路全是这样），必须经 `PlayUseCase` 解析，否则下回来是个 HTML。
+2. **透传反盗链头** —— `MediaSource.headers` 里的 `Referer` / `User-Agent` 是源站
+   判盗链的依据。播放有 mpv 帮忙设，**下载器没有**，丢了就是一路 403。
+3. **按「影片 / 集」两级分目录** —— HLS 分片名是固定的 `segment_000000.ts`，
+   多集共用一个目录会**互相覆盖**，两份任务各自以为下完了，合出来两集混在一起。
+4. 落库后**立即发车**（用户点的是「下载」，不是「放进待办」）。
+
+**依赖收窄成函数类型**：不依赖 `PlayUseCase`，而收一个 `PlayableSourceResolver`
+函数类型。`PlayUseCase` 背后是 Spider 运行时 + 静态/CDP 两级嗅探器一整套 ——
+直接依赖意味着「测去重与请求头透传」也得把那一整套起起来，于是这些分支最终
+不会有人测。装配层用 `_resolvePlayableSource`（8 行）适配。
+
+**幂等键是 `(siteId, vodId, episodeName)` 三件套**：`vodId` 只在单个源内唯一，
+两个采集站可能给同一部片同一个 `vod_id`；只看 `vodId` 则同站的两部片互相顶掉；
+不看 `episodeName` 则整部剧只留得下一条。已存在则**不再解析地址**；失败的任务
+**也算已存在**（重试入口在下载列表的「继续」）；`cancelled` **不算**。
+
+### 配套改动
+
+- `DownloadTask` 加 `siteId` / `vodId` / `episodeName`（`fromJson` / `toJson` /
+  `copyWith` 全通）+ `displayName`（`影片名 · 集名`）。**集名单独存，不拼进
+  `title`** —— `title` 对应 `download.vod_name`，拼进去它就不再是影片名了，
+  而「同一部片的多集」要靠 `vod_id` + `episode_name` 判断。
+- `DriftDownloadRepository` 的 `_toCompanion` / `_toTask` 接通三列。
+- `DownloadManager.createTask` 加三个可选命名参数。
+- `AppAssembly.downloadSavePathFor(vodName, [episodeName])` 改两级分目录
+  （`episodeName` 是**可选位置参数** —— 加它时打断了三处既有调用，改可选后不必
+  逐个改）。`AppAssembly` 新增 `downloadUseCase` 字段与适配函数。
+- `DetailPage` 剧集卡片加 `onMenu`：桌面右键（`onSecondaryTapDown`）与触屏长按
+  （外层 `GestureDetector`，因为 **`InkWell` 没有带坐标的 `onLongPressStart`**）
+  都通到同一个菜单。「已在下载列表」做成**禁用项**而不是隐藏 —— 用户第二次点
+  时要看到「为什么点不动」。
+- 下载页列表标题与删除确认框改用 `displayName`。
+
+### 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `dart format`（363 文件） | 2 changed（已格式化） |
+| `tools/arch_check` | 分层纪律检查通过 |
+| `analyze_inproc.dart`（全仓 358 文件） | 0 error / 0 warning / 0 info |
+| `run_tests_download.dart` | 109 → **126 例**全绿 |
+| `run_tests_shim.dart`（全量） | 204 → **216 例**全绿 |
+
+新增用例分布：`download_use_case_test.dart` **10 例**（新建文件）、
+`download_test.dart` +2、`download_repository_test.dart` +2、
+`download_manager_test.dart` +1、`app_assembly_test.dart` +2。
+
+`download_use_case_test.dart` **同时登记进两个垫片** —— 与 `live_*` 的既有约定
+一致：全量垫片收全部 app 层用例，专项垫片用于快速迭代。
+
+### 反向验证新增 H 组（14 项）
+
+`rev_verify_download.py` 从 53 项增到 **67 项**。H 组覆盖这一批的每处保障：
+
+| 标签 | 摘掉的保障 |
+| --- | --- |
+| H1 | `displayName` 忽略集名 |
+| H2 / H3 / H4 | drift 不写 `site_id` / `vod_id` / `episode_name` |
+| H5 | drift 读回时不带来源三列 |
+| H6 | `addEpisode` 不去重 |
+| H7 | `addEpisode` 丢掉反盗链请求头 |
+| H8 | `addEpisode` 建完不发车 |
+| H9 | `addEpisode` 不把来源三列交给管理器 |
+| H10 / H11 / H12 | `findExisting` 不看集名 / 影片 ID / 站点 ID |
+| H13 | `findExisting` 把 `cancelled` 也算已存在 |
+| H14 | `downloadSavePathFor` 不按集分目录（runner 走全量垫片） |
+
+其中 H10–H12 一开始只有 H10 有判据：原用例只变化了 `episodeName`，另外两处
+`continue` 摘掉也不会红 —— 补了「同一站点下的不同影片互不算已存在」与
+「不同站点上的同名影片互不算已存在」两条用例才有判据。
+
+按门禁顺序执行：**先 `dart format`，再跑反向验证**（上一批踩过格式化打断锚点的
+坑），并在格式化后重跑了一次锚点唯一性检查（67/67 锚点均恰好命中一次）。
 
 
 > **测试运行方式（重要）**：含夹具或 native 依赖的包，必须 `cd` 进包目录再跑
