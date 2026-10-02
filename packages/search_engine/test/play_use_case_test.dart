@@ -26,10 +26,13 @@ class _FakeRuntime implements SpiderRuntime {
   final AppError? detailError;
 
   /// 非空时 `detail` 直接抛这个异常，用来验证「异常路径也要回收运行时」。
-  final Object? detailThrow;
+  ///
+  /// 类型是 [Error] 而非 `Object`：`only_throw_errors` 只允许抛 [Error] /
+  /// [Exception] 子类，`Object?` 会让 `throw` 那两行判为告警。
+  final Error? detailThrow;
 
   /// 非空时 `dispose` 抛这个异常，用来验证回收失败不掩盖业务结果。
-  final Object? disposeThrow;
+  final Error? disposeThrow;
 
   int detailCalls = 0;
 

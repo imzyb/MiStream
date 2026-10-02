@@ -332,9 +332,9 @@ class _SettingsPageState extends State<SettingsPage> {
       leading: const Icon(Icons.animation),
       trailing: Switch(
         value: on,
-        onChanged: (value) => unawaited(controller.set(value)),
+        onChanged: (value) => unawaited(controller.set(value: value)),
       ),
-      onTap: () => unawaited(controller.set(!on)),
+      onTap: () => unawaited(controller.set(value: !on)),
     );
   }
 

@@ -31,11 +31,11 @@ final class EpisodeIndex {
   /// [EpisodeIndex.of]，它们会把负数归一成 [first]。
   const EpisodeIndex(this.value);
 
-  /// 第一集，也是「没指定哪一集」时的兜底值。
-  static const EpisodeIndex first = EpisodeIndex(0);
-
-  /// 序号，0-based。
-  final int value;
+  /// 以整数序号构造；负数归一成 [first]。
+  ///
+  /// 主要用于把 `History.episodeIndex` 这类落库字段还原成值对象——库里存的是
+  /// 裸整数，可能被旧版本或异常路径写成负数。
+  factory EpisodeIndex.of(int raw) => raw < 0 ? first : EpisodeIndex(raw);
 
   /// 解析详情页传来的剧集 id（[EpisodeIndex] 的字符串形态）。
   ///
@@ -47,11 +47,11 @@ final class EpisodeIndex {
     return EpisodeIndex.of(int.tryParse(raw) ?? 0);
   }
 
-  /// 以整数序号构造；负数归一成 [first]。
-  ///
-  /// 主要用于把 `History.episodeIndex` 这类落库字段还原成值对象——库里存的是
-  /// 裸整数，可能被旧版本或异常路径写成负数。
-  factory EpisodeIndex.of(int raw) => raw < 0 ? first : EpisodeIndex(raw);
+  /// 第一集，也是「没指定哪一集」时的兜底值。
+  static const EpisodeIndex first = EpisodeIndex(0);
+
+  /// 序号，0-based。
+  final int value;
 
   /// 编码回详情页使用的字符串 id。
   String get asId => '$value';

@@ -35,9 +35,9 @@ void main() {
   String pathOf(String id, [String? a, String? b, String? c]) => [
     root.path,
     id,
-    if (a != null) a,
-    if (b != null) b,
-    if (c != null) c,
+    ?a,
+    ?b,
+    ?c,
   ].join(sep);
 
   /// 把 [version] 的产物写进版本库。
@@ -118,8 +118,8 @@ void main() {
     test('清掉上次没跑完留下的 staging/backup 残留，且不把它们当版本', () async {
       await write('app', '1.0.0');
       final versions = pathOf('app', 'versions');
-      Directory('$versions${sep}.staging_2.0.0').createSync(recursive: true);
-      Directory('$versions${sep}.backup_1.0.0').createSync(recursive: true);
+      Directory('$versions$sep.staging_2.0.0').createSync(recursive: true);
+      Directory('$versions$sep.backup_1.0.0').createSync(recursive: true);
 
       await store.init();
 

@@ -239,7 +239,7 @@ const double kMaxElevation = 64;
 DesignScale clampScale(DesignScale s) {
   double fix(double v, double fallback, double lower, double upper) {
     if (!v.isFinite) return fallback;
-    return v.clamp(lower, upper).toDouble();
+    return v.clamp(lower, upper);
   }
 
   const std = DesignScale.standard;

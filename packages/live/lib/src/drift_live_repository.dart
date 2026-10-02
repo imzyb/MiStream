@@ -160,7 +160,7 @@ class DriftLiveRepository implements LiveRepository {
       // 这些频道在「全部」列表里也一起消失了 —— 用户看到的是「导入了但少了
       // 一半频道」，而且分组视图与总数的差刚好等于未分组数，很难往这里想。
       final hasUngrouped = result.channels.any((c) => c.groupId == null);
-      final int? ungroupedId = hasUngrouped
+      final ungroupedId = hasUngrouped
           ? await _db
                 .into(_db.liveGroups)
                 .insert(

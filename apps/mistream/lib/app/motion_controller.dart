@@ -37,7 +37,10 @@ class MotionController extends ValueNotifier<bool> {
   }
 
   /// 开关：先改内存让 UI 这一帧就跟上，再落库。
-  Future<void> set(bool value) async {
+  ///
+  /// 参数写成具名：位置 `bool` 会被 `avoid_positional_boolean_parameters` 判为
+  /// 告警，而且 `set(value: true)` 在调用点也比裸 `set(true)` 说得清。
+  Future<void> set({required bool value}) async {
     if (value == this.value) return;
     this.value = value;
     await _settings.write(reduceMotionKey, value);

@@ -252,7 +252,7 @@ void main() {
       ], requested: requested);
 
       final page = results.single;
-      expect((page['list']! as List), hasLength(2));
+      expect(page['list']! as List, hasLength(2));
       expect(page['page'], 1);
       // 页面里有「下一页」→ 报 page+1，界面才能继续翻。
       expect(page['pagecount'], 2);
@@ -268,7 +268,7 @@ void main() {
         }),
       ], requested: requested);
 
-      expect((results.single['list']! as List), hasLength(2));
+      expect(results.single['list']! as List, hasLength(2));
       // 中文关键词必须 encodeURIComponent，直接拼进 URL 会被服务端拒。
       expect(
         requested,

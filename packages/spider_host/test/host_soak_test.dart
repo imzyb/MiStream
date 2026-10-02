@@ -155,7 +155,7 @@ void main() {
         // ignore: avoid_print - 长跑护栏要打出实测值供人工/真机核对
         print(
           '宿主 RSS: 基线 ${mb(baseline)} → 结束 ${mb(end)}'
-          '（增长 ${growthMb.toStringAsFixed(1)}MB，共 $cycle 轮，'
+          '（增长 ${growthMb.toStringAsFixed(1)}MB，共 $cycle 轮， '
           '耗时 ${stopwatch.elapsed.inSeconds}s）',
         );
         // 护栏不是精确基准：挡的是「每轮崩溃都泄漏」这类无界增长。
@@ -168,71 +168,77 @@ void main() {
         // 样本不够就明说，别装作验过了 —— 静默跳过是本项目反复踩过的坑。
         // ignore: avoid_print - 同上
         print(
-          '宿主内存护栏未生效：只有 ${rssSamples.length} 轮样本'
-          '（需要 > $warmupSamples 轮）。'
+          '宿主内存护栏未生效：只有 ${rssSamples.length} 轮样本 '
+          '（需要 > $warmupSamples 轮）。 '
           '想验内存请把 MISTREAM_SOAK_CYCLES 提到 3 以上。',
         );
       }
     }, timeout: soakTimeout(maxCycles, maxSeconds));
 
-    test('持续崩溃触发熔断：主进程不崩，call 明确失败，reset 能重新尝试', () async {
-      const maxRestart = 3;
-      final crashScript = stubPath('rpc_child_crash.dart');
+    test(
+      '持续崩溃触发熔断：主进程不崩，call 明确失败，reset 能重新尝试',
+      () async {
+        const maxRestart = 3;
+        final crashScript = stubPath('rpc_child_crash.dart');
 
-      final host = SpiderHost(
-        executable: Platform.resolvedExecutable,
-        arguments: ['run', crashScript],
-        maxRestartAttempts: maxRestart,
-        backoffFor: (_) => Duration.zero,
-        launcher: tcpProcessLauncher(children: children),
-        hostApi: HostApi(),
-      );
-      addTearDown(host.dispose);
+        final host = SpiderHost(
+          executable: Platform.resolvedExecutable,
+          arguments: ['run', crashScript],
+          maxRestartAttempts: maxRestart,
+          backoffFor: (_) => Duration.zero,
+          launcher: tcpProcessLauncher(children: children),
+          hostApi: HostApi(),
+        );
+        addTearDown(host.dispose);
 
-      // 首次启动必然失败：子进程连上就崩，握手拿不到应答。
-      final first = await host.start().timeout(const Duration(seconds: 30));
-      expect(first.isErr, isTrue, reason: '子进程连上就崩，握手应当失败');
+        // 首次启动必然失败：子进程连上就崩，握手拿不到应答。
+        final first = await host.start().timeout(const Duration(seconds: 30));
+        expect(first.isErr, isTrue, reason: '子进程连上就崩，握手应当失败');
 
-      // 之后由宿主自己重启，一直试到超过上限：总共 maxRestart + 1 个进程。
-      final spawned = await waitFor(
-        () => children.length >= maxRestart + 1,
-        timeout: const Duration(seconds: 60),
-      );
-      expect(spawned, isTrue, reason: '应当一路重启到上限');
+        // 之后由宿主自己重启，一直试到超过上限：总共 maxRestart + 1 个进程。
+        final spawned = await waitFor(
+          () => children.length >= maxRestart + 1,
+          timeout: const Duration(seconds: 60),
+        );
+        expect(spawned, isTrue, reason: '应当一路重启到上限');
 
-      // 熔断后再等一会儿，不该再冒新进程。
-      await Future<void>.delayed(const Duration(seconds: 1));
-      expect(
-        children,
-        hasLength(maxRestart + 1),
-        reason: '熔断后不该继续自动重启',
-      );
-      expect(host.isReady, isFalse);
+        // 熔断后再等一会儿，不该再冒新进程。
+        await Future<void>.delayed(const Duration(seconds: 1));
+        expect(
+          children,
+          hasLength(maxRestart + 1),
+          reason: '熔断后不该继续自动重启',
+        );
+        expect(host.isReady, isFalse);
 
-      // 关键：宿主不可用时，调用方拿到的是**明确错误**，而不是异常或挂死。
-      final call = await host
-          .call('spider.create')
-          .timeout(const Duration(seconds: 10));
-      expect(call.isErr, isTrue);
-      expect(
-        call.errorOrNull?.code,
-        ErrorCode.runtimeNotReady,
-        reason: '不可用时要给出可读错误码，让上层能降级而不是崩',
-      );
+        // 关键：宿主不可用时，调用方拿到的是**明确错误**，而不是异常或挂死。
+        final call = await host
+            .call('spider.create')
+            .timeout(const Duration(seconds: 10));
+        expect(call.isErr, isTrue);
+        expect(
+          call.errorOrNull?.code,
+          ErrorCode.runtimeNotReady,
+          reason: '不可用时要给出可读错误码，让上层能降级而不是崩',
+        );
 
-      // 等待者立刻拿到 false，不必空等满超时。
-      final ready = await host.waitReady(timeout: const Duration(seconds: 10));
-      expect(ready, isFalse);
+        // 等待者立刻拿到 false，不必空等满超时。
+        final ready = await host.waitReady(
+          timeout: const Duration(seconds: 10),
+        );
+        expect(ready, isFalse);
 
-      // reset 复位熔断并重新尝试。
-      final before = children.length;
-      await host.reset().timeout(const Duration(seconds: 30));
-      final respawned = await waitFor(
-        () => children.length > before,
-        timeout: const Duration(seconds: 30),
-      );
-      expect(respawned, isTrue, reason: 'reset 后应当重新尝试拉起子进程');
-    }, timeout: const Timeout(Duration(seconds: 180)));
+        // reset 复位熔断并重新尝试。
+        final before = children.length;
+        await host.reset().timeout(const Duration(seconds: 30));
+        final respawned = await waitFor(
+          () => children.length > before,
+          timeout: const Duration(seconds: 30),
+        );
+        expect(respawned, isTrue, reason: 'reset 后应当重新尝试拉起子进程');
+      },
+      timeout: const Timeout(Duration(seconds: 180)),
+    );
 
     test('启动阶段就抛异常时也会退避重试，直到熔断', () async {
       // 这条路径此前完全没有覆盖：launcher 自己抛异常（exe 不存在、权限被拒、

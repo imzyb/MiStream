@@ -13,7 +13,7 @@ Map<String, Object?> _pkg(
   'theme':
       theme ??
       {
-        if (brightness != null) 'brightness': brightness,
+        'brightness': ?brightness,
         'tokens': tokens,
       },
 };

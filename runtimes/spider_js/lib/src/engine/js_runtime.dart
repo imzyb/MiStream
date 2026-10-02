@@ -444,7 +444,7 @@ class JsRuntime {
       'return JSON.stringify(__g.__qs_u?{k:"u"}:{k:"v",d:String(__g.__qs_d)}); '
       '} '
       'if(__a===2){ '
-      'return JSON.stringify({k:"e",d:String(__g.__qs_d),'
+      'return JSON.stringify({k:"e",d:String(__g.__qs_d), '
       's:__g.__qs_s?String(__g.__qs_s):""}); '
       '} '
       'return JSON.stringify({k:"a"}); '

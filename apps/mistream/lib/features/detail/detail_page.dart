@@ -473,7 +473,8 @@ class _DetailPageState extends State<DetailPage> {
     );
     final existing = useCase.findExisting(request);
 
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
     final action = await showMenu<String>(
       context: context,
       position: RelativeRect.fromRect(

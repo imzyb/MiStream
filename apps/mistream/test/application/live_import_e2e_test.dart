@@ -2,7 +2,7 @@
 ///
 /// 覆盖从**配置文本**到**分组视图**的完整链路：
 ///
-/// ```
+/// ```text
 /// ConfigParser.parse → LiveConfig
 ///   → LiveSubscription → LiveImporter（拉取 → 解析 → 合并）
 ///   → DriftLiveRepository → getChannelsByGroup
@@ -215,7 +215,7 @@ void main() {
     bodies['https://b.example/satellite.txt'] = _satelliteTxt;
     bodies['http://epg.example/?ch=CCTV1'] = _epgJson;
 
-    final epgFetcher = EpgFetcher(fetcher: (url) => fetcher(url));
+    final epgFetcher = EpgFetcher(fetcher: fetcher);
     expect(epgFetcher.hasTemplates, isFalse, reason: '装配时还没有模板');
 
     await build(epgFetcher: epgFetcher).install(
@@ -248,7 +248,7 @@ void main() {
 
     // 模拟重启：全新的拉取器 + 从设置恢复的模板。
     final restarted = EpgFetcher(
-      fetcher: (url) => fetcher(url),
+      fetcher: fetcher,
       templates: await loadLiveEpgTemplates(repositories.settings),
     );
     final epg = await restarted.loadFor('1', 'CCTV1');

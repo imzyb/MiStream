@@ -416,14 +416,14 @@ class ConfigFetcher {
 /// 用 `switch` 重建而不是 `copyWith`，是因为 [AppError] 是 `sealed`，新增
 /// 子类时这里会编译不过——正好提醒把新类型一起处理掉。
 AppError _withNote(AppError base, String note) => switch (base) {
-  LocalError e => LocalError(
+  final LocalError e => LocalError(
     code: e.code,
     message: '${e.message}（$note）',
     detail: e.detail,
     cause: e.cause,
     stackTrace: e.stackTrace,
   ),
-  RemoteError e => RemoteError(
+  final RemoteError e => RemoteError(
     code: e.code,
     message: '${e.message}（$note）',
     instanceId: e.instanceId,

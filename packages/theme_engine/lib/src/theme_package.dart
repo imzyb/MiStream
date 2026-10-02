@@ -3,9 +3,9 @@ library;
 
 import 'package:meta/meta.dart';
 
-import 'motion.dart';
-import 'scale.dart';
-import 'theme.dart';
+import 'package:theme_engine/src/motion.dart';
+import 'package:theme_engine/src/scale.dart';
+import 'package:theme_engine/src/theme.dart';
 
 /// 主题包里 `color.*` 键名到 [DesignTokens] 字段的映射。
 ///
@@ -83,30 +83,6 @@ class ThemePackage {
     this.id,
     this.isDark,
   });
-
-  /// 颜色令牌（键是 [DesignTokens] 的字段名）。
-  final Map<String, int> tokens;
-
-  /// 数值令牌（键是 [DesignScale] / [DesignTypography] 的字段名）。
-  final Map<String, double> numbers;
-
-  /// 字符串令牌（目前只有 `font.family`）。
-  final Map<String, String> strings;
-
-  /// 动效时长，毫秒（键是 [DesignMotion] 的字段名）。
-  final Map<String, double> motionDurations;
-
-  /// 动效曲线（键是 [DesignMotion] 的字段名）。
-  final Map<String, MotionCurve> motionCurves;
-
-  /// 主题包 id，缺失时为 `null`。
-  final String? id;
-
-  /// 主题包声明的明暗；缺失或非法时为 `null`。
-  final bool? isDark;
-
-  /// 空包：没有任何可覆盖的令牌。
-  static const empty = ThemePackage();
 
   /// 从插件清单解析主题包。
   ///
@@ -215,7 +191,7 @@ class ThemePackage {
         final curve = value is String ? MotionCurve.fromName(value) : null;
         if (curve == null) {
           warn(
-            '令牌 $key 不是已知曲线（$value），已忽略。'
+            '令牌 $key 不是已知曲线（$value），已忽略。 '
             '可用：${MotionCurve.values.map((c) => c.name).join('、')}',
           );
         } else {
@@ -241,6 +217,30 @@ class ThemePackage {
       isDark: isDark,
     );
   }
+
+  /// 颜色令牌（键是 [DesignTokens] 的字段名）。
+  final Map<String, int> tokens;
+
+  /// 数值令牌（键是 [DesignScale] / [DesignTypography] 的字段名）。
+  final Map<String, double> numbers;
+
+  /// 字符串令牌（目前只有 `font.family`）。
+  final Map<String, String> strings;
+
+  /// 动效时长，毫秒（键是 [DesignMotion] 的字段名）。
+  final Map<String, double> motionDurations;
+
+  /// 动效曲线（键是 [DesignMotion] 的字段名）。
+  final Map<String, MotionCurve> motionCurves;
+
+  /// 主题包 id，缺失时为 `null`。
+  final String? id;
+
+  /// 主题包声明的明暗；缺失或非法时为 `null`。
+  final bool? isDark;
+
+  /// 空包：没有任何可覆盖的令牌。
+  static const empty = ThemePackage();
 
   /// 覆盖到 [base] 上：包里有就用包里的，没有就取 [base] 的。
   ///
@@ -365,7 +365,10 @@ ThemeLoadResult loadThemePackage(
     // 明暗声明与配色矛盾时**只告警、不回退**：配色本身是合规的（对比度过了），
     // 不可读的只有系统 UI 那部分。回退整包反而会让用户失去想要的配色。
     for (final problem in <String>[
-      ...checkBrightnessConsistency(pkg.isDark, merged.tokens),
+      ...checkBrightnessConsistency(
+        declaredDark: pkg.isDark,
+        t: merged.tokens,
+      ),
       ...validateTheme(merged),
     ]) {
       warn('主题包的非致命问题（主题仍会加载）：$problem');
@@ -426,7 +429,7 @@ double _clampScaleToken(
 
   if (value >= lower && value <= upper) return value;
 
-  final clamped = value.clamp(lower, upper).toDouble();
+  final clamped = value.clamp(lower, upper);
   warn(
     value < lower
         ? '令牌 $key = $value 低于下限 $lower，已按 $clamped 使用'

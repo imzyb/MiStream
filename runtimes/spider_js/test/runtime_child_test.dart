@@ -239,7 +239,7 @@ void main() {
         pipe.written.single.containsKey('error'),
         isFalse,
         reason:
-            'type=0 的 api 是站点地址而非脚本路径，宿主无从加载脚本，'
+            'type=0 的 api 是站点地址而非脚本路径，宿主无从加载脚本， '
             '必须由子进程用内置脚本兜底',
       );
       expect(
@@ -286,7 +286,7 @@ void main() {
       );
     });
 
-    test("builtin 是不认识的值时仍然报 SCRIPT_LOAD_FAILED", () {
+    test('builtin 是不认识的值时仍然报 SCRIPT_LOAD_FAILED', () {
       final pipe = _Pipe([
         _req(1, 'spider.create', <String, Object?>{
           'instanceId': 'site:1',
@@ -703,8 +703,10 @@ void main() {
   ///
   /// 用真 [JsRuntime]，但把宿主函数换成空实现（不装 `req`，脚本也不调它），
   /// 所以不需要回环端口，在本沙箱能跑。
-  group('真实运行时下的调用表达式（同步 drpy 脚本回归）', () {
-    const script = '''
+  group(
+    '真实运行时下的调用表达式（同步 drpy 脚本回归）',
+    () {
+      const script = '''
 function home() {
   return JSON.stringify({
     class: [{ type_id: "1", type_name: "电影" }],
@@ -716,99 +718,101 @@ function detail(ids) { return JSON.stringify({ list: [{ vod_id: ids }] }); }
 function homeVod() { return JSON.stringify({ list: [{ vod_id: "hv", vod_name: "推荐" }] }); }
 ''';
 
-    List<Object?> run(List<Map<String, Object?>> calls) {
-      final pipe = _Pipe(<Map<String, Object?>>[
-        _req(1, 'spider.create', <String, Object?>{
-          'instanceId': 'site:1',
-          'script': script,
-        }),
-        for (var i = 0; i < calls.length; i++)
-          Map<String, Object?>.from(calls[i])..['id'] = i + 2,
-      ]);
-      final child = RuntimeChild(
-        codec: pipe.codec,
-        installHostFunctions: (_, _, _) {},
-      );
-      child.run();
-      // 不释放的话 HostBridge 的 NativeCallable 会把进程钉住不退出。
-      child.dispose();
-      return pipe.written.map((m) => m['result']).skip(1).toList();
-    }
-
-    /// 把一次调用的结果归一成 Map。
-    ///
-    /// `_invokeSpider` 会 `jsonDecode` 脚本返回值一次：脚本返回 JSON 字符串时
-    /// 拿到的是那个**字符串**（表达式里已经 stringify 过一遍），返回对象时拿到
-    /// Map。两种约定在下游 `parseSpiderResult._encodeBody` 会收敛到同一个 body
-    /// （`String` 原样透出、`Map` 才 `jsonEncode`），所以断言前统一一次。
-    Map<String, Object?> asMap(Object? value) {
-      if (value is Map) return value.cast<String, Object?>();
-      if (value is String) {
-        return (jsonDecode(value) as Map).cast<String, Object?>();
+      List<Object?> run(List<Map<String, Object?>> calls) {
+        final pipe = _Pipe(<Map<String, Object?>>[
+          _req(1, 'spider.create', <String, Object?>{
+            'instanceId': 'site:1',
+            'script': script,
+          }),
+          for (var i = 0; i < calls.length; i++)
+            Map<String, Object?>.from(calls[i])..['id'] = i + 2,
+        ]);
+        final child = RuntimeChild(
+          codec: pipe.codec,
+          installHostFunctions: (_, _, _) {},
+        );
+        child.run();
+        // 不释放的话 HostBridge 的 NativeCallable 会把进程钉住不退出。
+        child.dispose();
+        return pipe.written.map((m) => m['result']).skip(1).toList();
       }
-      throw StateError('既不是 Map 也不是 JSON 字符串: $value');
-    }
 
-    test('home 合并 homeVod 后返回 {class, list}', () {
-      final result = asMap(
-        run(<Map<String, Object?>>[
-          _req(0, 'spider.home', <String, Object?>{'instanceId': 'site:1'}),
-        ]).single,
-      );
+      /// 把一次调用的结果归一成 Map。
+      ///
+      /// `_invokeSpider` 会 `jsonDecode` 脚本返回值一次：脚本返回 JSON 字符串时
+      /// 拿到的是那个**字符串**（表达式里已经 stringify 过一遍），返回对象时拿到
+      /// Map。两种约定在下游 `parseSpiderResult._encodeBody` 会收敛到同一个 body
+      /// （`String` 原样透出、`Map` 才 `jsonEncode`），所以断言前统一一次。
+      Map<String, Object?> asMap(Object? value) {
+        if (value is Map) return value.cast<String, Object?>();
+        if (value is String) {
+          return (jsonDecode(value) as Map).cast<String, Object?>();
+        }
+        throw StateError('既不是 Map 也不是 JSON 字符串: $value');
+      }
 
-      expect((result['class']! as List), hasLength(1));
-      // homeVod 在后、覆盖 list —— 这是宿主的约定，别改顺序。
-      final list = (result['list']! as List).cast<Map<String, Object?>>();
-      expect(list.single['vod_id'], 'hv');
-    });
+      test('home 合并 homeVod 后返回 {class, list}', () {
+        final result = asMap(
+          run(<Map<String, Object?>>[
+            _req(0, 'spider.home', <String, Object?>{'instanceId': 'site:1'}),
+          ]).single,
+        );
 
-    test('search 的参数按位置传到脚本', () {
-      final result = asMap(
-        run(<Map<String, Object?>>[
-          _req(0, 'spider.search', <String, Object?>{
+        expect(result['class']! as List, hasLength(1));
+        // homeVod 在后、覆盖 list —— 这是宿主的约定，别改顺序。
+        final list = (result['list']! as List).cast<Map<String, Object?>>();
+        expect(list.single['vod_id'], 'hv');
+      });
+
+      test('search 的参数按位置传到脚本', () {
+        final result = asMap(
+          run(<Map<String, Object?>>[
+            _req(0, 'spider.search', <String, Object?>{
+              'instanceId': 'site:1',
+              'args': <Object?>['海贼王', false, 1],
+            }),
+          ]).single,
+        );
+
+        final list = (result['list']! as List).cast<Map<String, Object?>>();
+        expect(list.single['vod_name'], '海贼王');
+      });
+
+      test('detail 的字符串 ids 原样传给脚本', () {
+        final result = asMap(
+          run(<Map<String, Object?>>[
+            _req(0, 'spider.detail', <String, Object?>{
+              'instanceId': 'site:1',
+              'args': <Object?>['1001'],
+            }),
+          ]).single,
+        );
+
+        final list = (result['list']! as List).cast<Map<String, Object?>>();
+        // 曾经按数组取 `ids[0]`，字符串会退化成首字符。
+        expect(list.single['vod_id'], '1001');
+      });
+
+      test('脚本抛异常时如实上报，不退化成空结果', () {
+        final pipe = _Pipe(<Map<String, Object?>>[
+          _req(1, 'spider.create', <String, Object?>{
             'instanceId': 'site:1',
-            'args': <Object?>['海贼王', false, 1],
+            'script': 'function search() { throw new Error("炸了"); }',
           }),
-        ]).single,
-      );
+          _req(2, 'spider.search', <String, Object?>{'instanceId': 'site:1'}),
+        ]);
+        final child = RuntimeChild(
+          codec: pipe.codec,
+          installHostFunctions: (_, _, _) {},
+        );
+        child.run();
+        child.dispose();
 
-      final list = (result['list']! as List).cast<Map<String, Object?>>();
-      expect(list.single['vod_name'], '海贼王');
-    });
-
-    test('detail 的字符串 ids 原样传给脚本', () {
-      final result = asMap(
-        run(<Map<String, Object?>>[
-          _req(0, 'spider.detail', <String, Object?>{
-            'instanceId': 'site:1',
-            'args': <Object?>['1001'],
-          }),
-        ]).single,
-      );
-
-      final list = (result['list']! as List).cast<Map<String, Object?>>();
-      // 曾经按数组取 `ids[0]`，字符串会退化成首字符。
-      expect(list.single['vod_id'], '1001');
-    });
-
-    test('脚本抛异常时如实上报，不退化成空结果', () {
-      final pipe = _Pipe(<Map<String, Object?>>[
-        _req(1, 'spider.create', <String, Object?>{
-          'instanceId': 'site:1',
-          'script': 'function search() { throw new Error("炸了"); }',
-        }),
-        _req(2, 'spider.search', <String, Object?>{'instanceId': 'site:1'}),
-      ]);
-      final child = RuntimeChild(
-        codec: pipe.codec,
-        installHostFunctions: (_, _, _) {},
-      );
-      child.run();
-      child.dispose();
-
-      final error = pipe.written.last['error']! as Map<String, Object?>;
-      expect(error['code'], ErrorCode.scriptRuntimeError.value);
-      expect(error['message'], contains('炸了'));
-    });
-  }, skip: isQuickJSAvailable ? null : 'QuickJS native 不可用，跳过');
+        final error = pipe.written.last['error']! as Map<String, Object?>;
+        expect(error['code'], ErrorCode.scriptRuntimeError.value);
+        expect(error['message'], contains('炸了'));
+      });
+    },
+    skip: isQuickJSAvailable ? null : 'QuickJS native 不可用，跳过',
+  );
 }

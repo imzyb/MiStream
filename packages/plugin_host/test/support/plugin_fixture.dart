@@ -13,7 +13,7 @@ Directory makeVersionSource(
   String? marker,
 }) {
   final sep = Platform.pathSeparator;
-  final dir = Directory('$root${sep}sources${sep}${id}_$version')
+  final dir = Directory('$root${sep}sources$sep${id}_$version')
     ..createSync(recursive: true);
   File('${dir.path}${sep}manifest.json').writeAsStringSync(
     jsonEncode({'id': id, 'name': id, 'version': version, 'type': 'source'}),

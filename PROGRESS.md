@@ -1928,5 +1928,119 @@ M7 出口标准停在 3/4（剩「换台 P50 < 2s」卡真实网络），但**�
 - **用户库数据确实陈旧**：105 站点 vs 上游当前 103，`spider_md5` 为空。
   建议顺手「刷新订阅」（会清库重建、拿到正确 md5）。但修后**不刷新也能用**。
 
+---
+
+## 本次会话（2026-10-02）· 三：发布链门禁被 101 条 lint 挡住，且本机此前**跑不了 lint**
+
+### 现象
+
+`v0.1.0-m10-2` / `v0.1.0-m10-3` 两次 Release 都卡在 `release.yml` 的「门禁」
+（`melos run check:arch && melos run analyze`）：`check:arch` 通过，`analyze` 报
+**`ERROR: 101 issues found`**，后续 6 步（装 native 依赖 / 构建 Windows / 校验包链 /
+合规扫描 / 打包 / 建草稿 Release）全部 skipped，**一个包都没产出**。
+
+### 根因（两层，第二层才是真问题）
+
+1. **表层**：全仓有 101 条 `info` 级 lint，而门禁是
+   `flutter analyze --fatal-infos --fatal-warnings` —— info 也算致命。
+2. **真问题**：本机此前的「analyze 全绿」**从来不是这条门禁的证据**。
+   `.workbuddy-ai/scripts/analyze_inproc.dart` 的文件头已写明：
+
+   > lint 规则跑不了。analyzer 12 把 lint 规则拆到 `package:linter`，而 pub 上最新
+   > `linter` 只支持 `analyzer ^5.2.0`，与本仓的 12.1.0 不兼容，装不上。所以
+   > `linter.rules` 那一段只用来**抑制**，不会真的产生告警。
+
+   该 shim 只能跑 analyzer 自带诊断，**跑不了任何 lint**。所以它报的
+   `0 error / 0 warning / 0 info` 与 CI 的 101 条并不矛盾 —— 两者测的不是一回事。
+   `release.yml` 是这条门禁**第一次真正执行**。
+
+### 为什么本机跑不了 lint
+
+本机 Dart **起不了任何子进程**（连 `git --version` 都失败）：
+
+```text
+CreateFile failed 231 (所有的管道范例都在使用中。)
+ProcessException: ... (at ../../runtime/bin/process_win.cc:744)
+```
+
+`dart analyze` / `dart fix` / `dart test` / `dart run build_runner` 都要拉子进程
+（analysis server / test runner / frontend_server），于是全废。沙箱内外表现一致，
+与沙箱无关。
+
+### 解法：用 Python 直接驱动 analysis server
+
+`python` **起子进程是好的**。所以新增 `.workbuddy-ai/scripts/as_client.py`：由 Python
+拉起 `dartaotruntime analysis_server_aot.dart.snapshot`，用 stdio 上的 analysis server
+协议（**裸 JSON 行**，不是 `Content-Length` 分帧）直接对话。`edit.getFixes` 返回的是
+嵌套结构 `{fixes:[{error, fixes:[{message, edits:[{file, edits:[{offset,length,
+replacement}]}]}]}]}`。
+
+这样拿到的是**与 CI 同一套分析器、同一套 lint** 的结果。校准：先用 Flutter 自带
+Dart 3.13 扫全仓得 **149 条**，其中 48 条 `strict_raw_type` 全在
+`packages/storage/lib/src/database/schema_versions.dart/`（根配置 `analyzer.exclude`
+排除的生成代码，得自行按子串跳过）→ **149 − 48 = 101，与 CI 逐规则完全一致**。
+
+随后又取到 CI 的 `.tool-versions` 基线 **Dart 3.12.2**（下载路径
+`flutter_infra_release/flutter/<engine>/dart-sdk-windows-x64.zip`，`<engine>` 由
+`releases_windows.json` 里 Flutter 3.44.8 的 commit 反查 `bin/internal/engine.version`
+得到；注意 `dart-archive` 那条路在本机全 404），把客户端切过去，结果同样为 0 ——
+做到「本地证据 = CI 证据」。
+
+### 修复
+
+| 规则 | 条数 | 处理 |
+| --- | --- | --- |
+| `unnecessary_brace_in_string_interps` | 16 | analysis server 自动修复 |
+| `missing_whitespace_between_adjacent_strings` | 14 | 在**第一个字面量收尾引号之前**补空格 |
+| `use_null_aware_elements` | 9 | 自动修复 |
+| `prefer_initializing_formals` | 9 | **放行**（见坑 2） |
+| `always_use_package_imports` | 7 | 自动修复 |
+| `prefer_int_literals` | 6 | 自动修复 |
+| `missing_code_block_language_in_doc_comment` | 6 | 代码块标注 `text` |
+| `unnecessary_lambdas` / `unnecessary_parenthesis` / `sort_constructors_first` | 4 / 3 / 3 | 自动修复 |
+| `cast_nullable_to_non_nullable` | 3 | 补 `!` |
+| `avoid_positional_boolean_parameters` | 3 | 改具名参数（`set` / `check` / `checkBrightnessConsistency`） |
+| `prefer_constructors_over_static_methods` | 2 | 改 factory，并**上移到字段之前** |
+| `only_throw_errors` | 2 | 字段类型 `Object?` → `Error?` |
+| `sort_unnamed_constructors_first` | 2 | 匿名构造上移到具名构造之前 |
+| `use_raw_strings` / `prefer_foreach` / `prefer_final_locals` / `omit_local_variable_types` / `noop_primitive_operations` | 各 2 | 自动修复 |
+| `prefer_single_quotes` / `prefer_null_aware_operators` / `no_adjacent_strings_in_list` / `unintended_html_in_doc_comment` | 各 1 | 自动修复 / 手工 |
+
+### 三个「别照做」的坑（都是实测踩出来的）
+
+1. **自动修复会提供「加 `// ignore:`」的假修复**。对
+   `missing_whitespace_between_adjacent_strings` 直接应用，会插入 15 条 ignore
+   注释，然后立刻换来 15 条 `document_ignores`。`as_client.py` 现在会**跳过**替换
+   文本里含 `// ignore:` 的修复。
+2. **`prefer_initializing_formals` 的自动修复会改坏代码**。本仓命中的 9 处全是
+   「具名参数 → 私有字段」，自动修复产出 `this._fetcher`，既打断所有调用方
+   （40 条 `undefined_named_parameter`），又换来 9 条
+   `private_named_non_field_parameter`。**私有具名参数跨库不可用**，规则在本仓恒为
+   误报，已在 `analysis_options.yaml` 写明理由放行。
+3. **`missing_whitespace_between_adjacent_strings` 的空格要插在字符串内部**。先按
+   「插在两个字面量之间」（`'a' 'b'`）修**无效** —— 规则要的是**拼接结果**里有
+   空白（`'a' 'b'` 拼出 `ab`，缺的是 `a` 与 `b` 之间那个空格）。正确做法是插在
+   第一个字面量的**收尾引号之前**（`'a ' 'b'`）。
+
+### 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `as_client.py errors .`（**Dart 3.12.2 分析器 = CI 同源**） | 359 文件 **0 条** |
+| `dart format --output=none --set-exit-if-changed .`（Dart 3.12.2） | 363 文件 **0 changed** |
+| `dart run tools/arch_check/bin/arch_check.dart` | 分层纪律检查通过 |
+
+反向验证：把 `prefer_initializing_formals` 的放行去掉、或把空白修复改回「插在字面量
+之间」，上述扫描立刻分别转红 9 条 / 14 条。
+
+### 仍未做（如实记）
+
+- **本机仍然跑不了测试**：`dart test` / `flutter test` 都要拉子进程，受同一个命名管道
+  缺陷阻断。所以这 101 处改动**只有静态证据，没有单测证据** —— `ci.yml` 的 test 矩阵
+  是唯一能验证它们的地方。
+- **`prefer_initializing_formals` 是放行而非修复**：9 处告警被抑制。要真消掉只能把对应
+  字段改公开（扩大公开 API），不该由一条风格规则驱动。
+- **`tools/release_check.ps1` 仍在静默空扫**（打印 `扫描目录：-BuildDir`），本次未动。
+
 
 

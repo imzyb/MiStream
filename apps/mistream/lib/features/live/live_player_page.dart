@@ -271,16 +271,14 @@ class _LivePlayerPageState extends State<LivePlayerPage> {
     _numberTimer = null;
     final number = _numberBuffer.value;
     if (mounted) {
-      setState(() => _numberBuffer.clear());
+      setState(_numberBuffer.clear);
     } else {
       _numberBuffer.clear();
     }
     if (number == null) return;
 
     final navigator = _navigator;
-    final target = navigator == null
-        ? null
-        : navigator.channelAt(navigator.indexForNumber(number));
+    final target = navigator?.channelAt(navigator.indexForNumber(number));
     if (target == null) {
       // 明确说「没有这个台」，而不是偷偷跳去第一个台。
       _showNotice('没有 $number 号频道');
@@ -293,7 +291,7 @@ class _LivePlayerPageState extends State<LivePlayerPage> {
   void _cancelChannelNumber() {
     _numberTimer?.cancel();
     _numberTimer = null;
-    if (mounted) setState(() => _numberBuffer.clear());
+    if (mounted) setState(_numberBuffer.clear);
   }
 
   void _restartNumberTimer() {

@@ -6,7 +6,7 @@ import 'package:live/src/live_group.dart';
 /// 两种格式的真实形状（实测自 `live.zbds.top/tv/iptv4.txt` 与常见 IPTV m3u）：
 ///
 /// **txt**
-/// ```
+/// ```text
 /// 央视频道,#genre#                 ← 分组标记行（不是频道！）
 /// CCTV1,http://a/cctv1.m3u8        ← 频道名,地址
 /// CCTV1,http://b/cctv1.m3u8        ← 同名再出现一次 = 备用地址
@@ -14,11 +14,11 @@ import 'package:live/src/live_group.dart';
 /// ```
 ///
 /// **m3u**（两种写法都要认）
-/// ```
+/// ```text
 /// #EXTINF:-1 group-title="央视",CCTV-1综合      ← 标准：名字在**行末逗号之后**
 /// http://a/cctv1.m3u8
 /// ```
-/// ```
+/// ```text
 /// #EXTINF:-1 tvg-name="CCTV1" group-title="央视",   ← 变体：名字独占一行
 /// CCTV1
 /// http://a/cctv1.m3u8
@@ -306,6 +306,52 @@ class LiveParseResult {
     required this.groups,
   });
 
+  /// 把多份解析结果合并成一份。
+  ///
+  /// 真实 TVBox 配置的 `lives` 是**一组**订阅源（实测常见 2～16 个），每个
+  /// 源各有一份频道表。要显示成一个列表就得合并，而合并规则必须与单份解析
+  /// 内完全一致，否则同一个源单独导入和一起导入会得到不同的频道数。
+  ///
+  /// 规则：
+  /// - **分组按名字去重**，顺序按首次出现重排。各源自己的 `order` 值域互不
+  ///   相干（都是从 0 数起），直接保留会让分组顺序看起来是随机的。
+  /// - **同名频道合并**：备用地址追加，主地址取首次出现的那个。
+  /// - **同地址去重**：多个源收同一个流很常见。
+  ///
+  /// 写成工厂构造而不是静态方法：调用点 `LiveParseResult.merge(...)` 一样，
+  /// 但静态方法会被 `prefer_constructors_over_static_methods` 判为告警；工厂
+  /// 又必须排在字段之前，否则 `sort_constructors_first` 报警。
+  factory LiveParseResult.merge(List<LiveParseResult> results) {
+    final channels = <LiveChannel>[];
+    final channelByName = <String, LiveChannel>{};
+    final groups = <LiveGroup>[];
+    final groupMap = <String, LiveGroup>{};
+    final seenUrls = <String>{};
+
+    for (final result in results) {
+      // 先把该结果声明的分组登记进合并表：这样 `groupId` 才一定能被
+      // [channelsByGroup] 解析到，不会掉进未分组桶。
+      for (final group in result.groups) {
+        _ensureGroup(group.name, groups, groupMap);
+      }
+      for (final channel in result.channels) {
+        for (final url in channel.allUrls) {
+          if (!seenUrls.add(url)) continue;
+          _addChannel(
+            channels: channels,
+            channelByName: channelByName,
+            name: channel.name,
+            url: url,
+            groupId: channel.groupId,
+            logo: channel.logo,
+          );
+        }
+      }
+    }
+
+    return LiveParseResult(channels: channels, groups: groups);
+  }
+
   /// 频道。
   final List<LiveChannel> channels;
 
@@ -348,46 +394,4 @@ class LiveParseResult {
   /// [LiveRepository.getFavorites]，且是用户行为，不该由解析结果表达。
   List<LiveChannel> get ungroupedChannels =>
       channels.where((c) => c.groupId == null).toList();
-
-  /// 把多份解析结果合并成一份。
-  ///
-  /// 真实 TVBox 配置的 `lives` 是**一组**订阅源（实测常见 2～16 个），每个
-  /// 源各有一份频道表。要显示成一个列表就得合并，而合并规则必须与单份解析
-  /// 内完全一致，否则同一个源单独导入和一起导入会得到不同的频道数。
-  ///
-  /// 规则：
-  /// - **分组按名字去重**，顺序按首次出现重排。各源自己的 `order` 值域互不
-  ///   相干（都是从 0 数起），直接保留会让分组顺序看起来是随机的。
-  /// - **同名频道合并**：备用地址追加，主地址取首次出现的那个。
-  /// - **同地址去重**：多个源收同一个流很常见。
-  static LiveParseResult merge(List<LiveParseResult> results) {
-    final channels = <LiveChannel>[];
-    final channelByName = <String, LiveChannel>{};
-    final groups = <LiveGroup>[];
-    final groupMap = <String, LiveGroup>{};
-    final seenUrls = <String>{};
-
-    for (final result in results) {
-      // 先把该结果声明的分组登记进合并表：这样 `groupId` 才一定能被
-      // [channelsByGroup] 解析到，不会掉进未分组桶。
-      for (final group in result.groups) {
-        _ensureGroup(group.name, groups, groupMap);
-      }
-      for (final channel in result.channels) {
-        for (final url in channel.allUrls) {
-          if (!seenUrls.add(url)) continue;
-          _addChannel(
-            channels: channels,
-            channelByName: channelByName,
-            name: channel.name,
-            url: url,
-            groupId: channel.groupId,
-            logo: channel.logo,
-          );
-        }
-      }
-    }
-
-    return LiveParseResult(channels: channels, groups: groups);
-  }
 }

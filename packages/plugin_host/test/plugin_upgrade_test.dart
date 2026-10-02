@@ -19,7 +19,7 @@ void main() {
   late List<String> published;
 
   /// 置 true 后发布通知抛异常，模拟「指针切好了但运行时没接上」。
-  bool failPublish = false;
+  var failPublish = false;
 
   setUp(() {
     root = Directory.systemTemp.createTempSync('plugin_upgrade_test_');
@@ -48,9 +48,9 @@ void main() {
   String pathOf(String id, [String? a, String? b, String? c]) => [
     root.path,
     id,
-    if (a != null) a,
-    if (b != null) b,
-    if (c != null) c,
+    ?a,
+    ?b,
+    ?c,
   ].join(sep);
 
   /// 把 [version] 的产物写进版本库。

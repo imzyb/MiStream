@@ -67,7 +67,7 @@ void _trace(String line) {
   }
 }
 
-void check(bool cond, String what) {
+void check({required bool cond, required String what}) {
   _checks++;
   if (cond) {
     stdout.writeln('  ok    $what');
@@ -106,9 +106,7 @@ Future<String?> _get(String url) async {
 /// 那个在另一个进程里、可以 await。
 class _Loopback {
   _Loopback(this.served, List<Map<String, Object?>> inbound) {
-    for (final msg in inbound) {
-      _push(msg);
-    }
+    inbound.forEach(_push);
   }
 
   /// 预取好的 URL → 正文。没命中的 URL 记进 [missed] 并回 404。
@@ -295,12 +293,18 @@ Future<void> main(List<String> args) async {
       '  ok   ${body.length} 字节  ${Uri.decodeFull(url).split('/').last}',
     );
   }
-  check(served.containsKey(Uri.decodeFull(drpy2Url)), 'drpy2.min.js 可取到');
-  check(served.containsKey(Uri.decodeFull(doubanUrl)), 'douban.js 规则文件可取到');
+  check(
+    cond: served.containsKey(Uri.decodeFull(drpy2Url)),
+    what: 'drpy2.min.js 可取到',
+  );
+  check(
+    cond: served.containsKey(Uri.decodeFull(doubanUrl)),
+    what: 'douban.js 规则文件可取到',
+  );
   for (final dep in _drpy2Deps) {
     check(
-      served.containsKey(Uri.decodeFull(dep)),
-      '依赖可取到：${dep.split('/').last}',
+      cond: served.containsKey(Uri.decodeFull(dep)),
+      what: '依赖可取到：${dep.split('/').last}',
     );
   }
   if (!served.containsKey(Uri.decodeFull(drpy2Url))) {
@@ -461,7 +465,7 @@ Future<void> main(List<String> args) async {
       final cls = result['class']! as List;
       final flt = result['filters'];
       stdout.writeln(
-        '  home → class=${cls.length} 个，'
+        '  home → class=${cls.length} 个， '
         'filters=${flt is Map ? '${flt.length} 组' : '无'}，'
         'list=${(result['list'] as List?)?.length ?? 0} 条',
       );
@@ -471,10 +475,10 @@ Future<void> main(List<String> args) async {
     stdout.writeln('  ${raw.length > 300 ? '${raw.substring(0, 300)}…' : raw}');
   }
 
-  check(createOk, 'spider.create 成功并报出能力位');
+  check(cond: createOk, what: 'spider.create 成功并报出能力位');
   check(
-    loop.childReplies.every((m) => m['error'] == null),
-    '没有任何一次调用报错',
+    cond: loop.childReplies.every((m) => m['error'] == null),
+    what: '没有任何一次调用报错',
   );
   final caps = <Object?>{};
   for (final m in loop.childReplies) {
@@ -484,8 +488,14 @@ Future<void> main(List<String> args) async {
     }
   }
   check(
-    caps.containsAll(<String>['home', 'category', 'detail', 'search', 'play']),
-    'drpy2 的宿主派发入口全部被识别到：$caps',
+    cond: caps.containsAll(<String>[
+      'home',
+      'category',
+      'detail',
+      'search',
+      'play',
+    ]),
+    what: 'drpy2 的宿主派发入口全部被识别到：$caps',
   );
 
   // home() 不依赖远端站点——分类来自规则里的 class_name/class_url。所以哪怕
@@ -499,7 +509,10 @@ Future<void> main(List<String> args) async {
   }
   final homeResult = homeResults.isEmpty ? null : homeResults.last;
   final classes = (homeResult?['class'] as List?) ?? const <Object?>[];
-  check(classes.isNotEmpty, 'home() 从规则读出了分类：${classes.length} 个');
+  check(
+    cond: classes.isNotEmpty,
+    what: 'home() 从规则读出了分类：${classes.length} 个',
+  );
   if (classes.isNotEmpty) {
     final names = classes
         .take(4)
@@ -518,19 +531,19 @@ Future<void> main(List<String> args) async {
     stdout.writeln('--- 连续试源验收（destroy 后起下一个实例）---');
     final expected = cycles + 1;
     check(
-      homeResults.length == expected,
-      '$expected 个实例都跑出了 home 结果：${homeResults.length} 次',
+      cond: homeResults.length == expected,
+      what: '$expected 个实例都跑出了 home 结果：${homeResults.length} 次',
     );
     if (homeResults.length > 1) {
-      final first = (homeResults.first['class'] as List).length;
+      final first = (homeResults.first['class']! as List).length;
       final same = homeResults.every(
-        (r) => (r['class'] as List).length == first,
+        (r) => (r['class']! as List).length == first,
       );
-      check(same && first > 0, '每个源的分类数都一致：$first');
+      check(cond: same && first > 0, what: '每个源的分类数都一致：$first');
     }
     check(
-      created == expected,
-      '$expected 个源各建一个 runtime（不复用旧壳，实测复用会撞 shape 断言）：建了 $created 个',
+      cond: created == expected,
+      what: '$expected 个源各建一个 runtime（不复用旧壳，实测复用会撞 shape 断言）：建了 $created 个',
     );
     final perCycleKiB = cycles > 0
         ? ((rssAfter - rssBefore) / cycles / 1024).round()

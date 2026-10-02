@@ -44,6 +44,11 @@ analyzer:
     directives_ordering: ignore
     unnecessary_raw_strings: ignore
     deprecated_member_use: ignore
+    # 具名参数**不能**用 `this._x` 做初始化形参（私有具名参数跨库不可用）。本仓
+    # 命中的 9 处全是「具名参数 → 私有字段」这一形态，规则恒为误报；真按它改，
+    # 会换来 9 条 private_named_non_field_parameter，并打断所有调用方。
+    # 想彻底消掉只能把字段改公开，那是扩大公开 API，不该由一条风格规则驱动。
+    prefer_initializing_formals: ignore
 
   exclude:
     - "**/*.g.dart"

@@ -36,7 +36,7 @@ class _Published {
 ///
 /// 磁盘布局：
 ///
-/// ```
+/// ```text
 /// <pluginsDirectory>/
 ///   <pluginId>/
 ///     versions/
@@ -162,7 +162,7 @@ class PluginStore {
     final versionsDir = Directory(_versionsDir(pluginId));
     versionsDir.createSync(recursive: true);
 
-    final staging = Directory('${versionsDir.path}${_sep}.staging_$version');
+    final staging = Directory('${versionsDir.path}$_sep.staging_$version');
     if (staging.existsSync()) staging.deleteSync(recursive: true);
     staging.createSync(recursive: true);
     await _copyDir(Directory(plugin.versionDir), staging);
@@ -173,7 +173,7 @@ class PluginStore {
       return;
     }
 
-    final backup = Directory('${versionsDir.path}${_sep}.backup_$version');
+    final backup = Directory('${versionsDir.path}$_sep.backup_$version');
     if (backup.existsSync()) backup.deleteSync(recursive: true);
     target.renameSync(backup.path);
     try {
@@ -393,7 +393,7 @@ class PluginStore {
   }
 
   static String _basename(String path) {
-    final normalized = path.replaceAll('\\', '/');
+    final normalized = path.replaceAll(r'\', '/');
     final index = normalized.lastIndexOf('/');
     return index < 0 ? normalized : normalized.substring(index + 1);
   }

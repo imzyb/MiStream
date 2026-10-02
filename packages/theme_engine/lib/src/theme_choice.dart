@@ -1,7 +1,7 @@
 /// 用户的主题「选择」与「选择 → 具体主题」的解析。
 library;
 
-import 'theme.dart';
+import 'package:theme_engine/src/theme.dart';
 
 /// 设置页里可选的四种外观。
 ///

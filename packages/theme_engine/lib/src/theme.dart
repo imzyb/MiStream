@@ -3,9 +3,9 @@ library;
 
 import 'package:meta/meta.dart';
 
-import 'contrast.dart';
-import 'motion.dart';
-import 'scale.dart';
+import 'package:theme_engine/src/contrast.dart';
+import 'package:theme_engine/src/motion.dart';
+import 'package:theme_engine/src/scale.dart';
 
 @immutable
 class AppTheme {
@@ -262,16 +262,16 @@ List<ContrastRule> contrastRules(DesignTokens t) => [
     4.5,
   ),
   // 大字与 UI 组件 3:1
-  ContrastRule('primary/background', t.primary, t.background, 3.0),
-  ContrastRule('primary/surface', t.primary, t.surface, 3.0),
-  ContrastRule('primary/surfaceVariant', t.primary, t.surfaceVariant, 3.0),
-  ContrastRule('outlineStrong/background', t.outlineStrong, t.background, 3.0),
-  ContrastRule('outlineStrong/surface', t.outlineStrong, t.surface, 3.0),
+  ContrastRule('primary/background', t.primary, t.background, 3),
+  ContrastRule('primary/surface', t.primary, t.surface, 3),
+  ContrastRule('primary/surfaceVariant', t.primary, t.surfaceVariant, 3),
+  ContrastRule('outlineStrong/background', t.outlineStrong, t.background, 3),
+  ContrastRule('outlineStrong/surface', t.outlineStrong, t.surface, 3),
   ContrastRule(
     'outlineStrong/surfaceVariant',
     t.outlineStrong,
     t.surfaceVariant,
-    3.0,
+    3,
   ),
 ];
 
@@ -327,14 +327,16 @@ List<String> findTranslucentTokens(DesignTokens t) {
 ///
 /// 抽成共用函数是因为 `loadThemePackage`（运行时）与 `tools/theme_lint` 都要用：
 /// 只写在 lint 里的话，不经 lint 直接装包的用户永远看不到这条提示。
-List<String> checkBrightnessConsistency(bool? declaredDark, DesignTokens t) {
+List<String> checkBrightnessConsistency({
+  required bool? declaredDark,
+  required DesignTokens t,
+}) {
   if (declaredDark == null) return const [];
   final looksDark = ContrastChecker.luminance(t.background) < 0.5;
   if (looksDark == declaredDark) return const [];
-  return [
-    '声明 brightness=${declaredDark ? 'dark' : 'light'}，但 color.background '
-        '实际是${looksDark ? '深色' : '浅色'}',
-  ];
+  final declared = declaredDark ? 'dark' : 'light';
+  final actual = looksDark ? '深色' : '浅色';
+  return ['声明 brightness=$declared，但 color.background 实际是$actual'];
 }
 
 /// 主题的尺度、字体与动效令牌校验，返回问题清单（空 = 通过）。

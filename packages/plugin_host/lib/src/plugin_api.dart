@@ -4,7 +4,7 @@ import 'package:plugin_host/src/plugin_manifest.dart';
 ///
 /// 允许的迁移（左侧为动作）：
 ///
-/// ```
+/// ```text
 /// install   : (无)      -> installed
 /// 激活成功   : installed -> enabled
 /// 激活失败   : installed -> error

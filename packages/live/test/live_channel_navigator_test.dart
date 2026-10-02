@@ -45,9 +45,7 @@ void main() {
 
     test('超出最大位数时丢掉最旧的一位', () {
       final buffer = ChannelNumberBuffer(maxDigits: 3);
-      for (final digit in [1, 2, 3, 4]) {
-        buffer.push(digit);
-      }
+      [1, 2, 3, 4].forEach(buffer.push);
       // 按满了继续按还能看见数字滚动；忽略新输入会让人以为按键坏了。
       expect(buffer.text, '234');
       buffer.push(5);

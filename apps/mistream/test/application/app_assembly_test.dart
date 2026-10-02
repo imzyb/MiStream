@@ -77,7 +77,7 @@ void main() {
       final onPath = pathDirWithJava('path-jdk');
       expect(
         AppAssembly.resolveJavaPath(javaHome: home, pathValue: onPath),
-        '${home}${Platform.pathSeparator}bin'
+        '$home${Platform.pathSeparator}bin'
         '${Platform.pathSeparator}$javaName',
       );
     });
@@ -88,7 +88,7 @@ void main() {
       final onPath = pathDirWithJava('path-jdk');
       expect(
         AppAssembly.resolveJavaPath(javaHome: null, pathValue: onPath),
-        '${onPath}${Platform.pathSeparator}$javaName',
+        '$onPath${Platform.pathSeparator}$javaName',
       );
     });
 
@@ -96,7 +96,7 @@ void main() {
       final onPath = pathDirWithJava('path-jdk');
       expect(
         AppAssembly.resolveJavaPath(javaHome: '', pathValue: onPath),
-        '${onPath}${Platform.pathSeparator}$javaName',
+        '$onPath${Platform.pathSeparator}$javaName',
       );
     });
 
@@ -105,7 +105,7 @@ void main() {
       final onPath = pathDirWithJava('path-jdk');
       expect(
         AppAssembly.resolveJavaPath(javaHome: broken, pathValue: onPath),
-        '${onPath}${Platform.pathSeparator}$javaName',
+        '$onPath${Platform.pathSeparator}$javaName',
       );
     });
 
@@ -130,7 +130,7 @@ void main() {
       final dir = pathDirWithJava('jdk');
       expect(
         AppAssembly.findExecutableOnPath(dir, javaName),
-        '${dir}${Platform.pathSeparator}$javaName',
+        '$dir${Platform.pathSeparator}$javaName',
       );
     });
 
@@ -139,7 +139,7 @@ void main() {
       final hit = pathDirWithJava('jdk');
       expect(
         AppAssembly.findExecutableOnPath('$missing$pathSep$hit', javaName),
-        '${hit}${Platform.pathSeparator}$javaName',
+        '$hit${Platform.pathSeparator}$javaName',
       );
     });
 
@@ -148,7 +148,7 @@ void main() {
       final second = pathDirWithJava('second');
       expect(
         AppAssembly.findExecutableOnPath('$first$pathSep$second', javaName),
-        '${first}${Platform.pathSeparator}$javaName',
+        '$first${Platform.pathSeparator}$javaName',
       );
     });
 
@@ -159,7 +159,7 @@ void main() {
           '$pathSep  $pathSep$hit$pathSep',
           javaName,
         ),
-        '${hit}${Platform.pathSeparator}$javaName',
+        '$hit${Platform.pathSeparator}$javaName',
       );
     });
 

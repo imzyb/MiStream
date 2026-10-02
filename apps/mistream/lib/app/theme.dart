@@ -29,6 +29,27 @@ class AppTokens extends ThemeExtension<AppTokens> {
     required this.motion,
   });
 
+  /// 取当前主题的令牌。
+  ///
+  /// 取不到时回落到规范默认值，而不是返回 null 让调用方到处判空——主题扩展
+  /// 一定装着，缺了说明是装配漏了，那也不该让 UI 崩。
+  ///
+  /// 写成工厂构造而不是静态方法：调用点 `AppTokens.of(context)` 一模一样，
+  /// 但静态方法会被 `prefer_constructors_over_static_methods` 判为告警。
+  /// 工厂得排在字段之前，否则 `sort_constructors_first` 又会报警。
+  factory AppTokens.of(BuildContext context) {
+    final ext = Theme.of(context).extension<AppTokens>();
+    if (ext != null) return ext;
+    final scheme = Theme.of(context).colorScheme;
+    return AppTokens(
+      primaryText: scheme.primary,
+      outline: scheme.outlineVariant,
+      scale: DesignScale.standard,
+      typography: DesignTypography.standard,
+      motion: DesignMotion.standard,
+    );
+  }
+
   /// 主色文字：链接、强调文本、强调图标。
   final Color primaryText;
 
@@ -43,23 +64,6 @@ class AppTokens extends ThemeExtension<AppTokens> {
 
   /// 动效时长与曲线。
   final DesignMotion motion;
-
-  /// 取当前主题的令牌。
-  ///
-  /// 取不到时回落到规范默认值，而不是返回 null 让调用方到处判空——主题扩展
-  /// 一定装着，缺了说明是装配漏了，那也不该让 UI 崩。
-  static AppTokens of(BuildContext context) {
-    final ext = Theme.of(context).extension<AppTokens>();
-    if (ext != null) return ext;
-    final scheme = Theme.of(context).colorScheme;
-    return AppTokens(
-      primaryText: scheme.primary,
-      outline: scheme.outlineVariant,
-      scale: DesignScale.standard,
-      typography: DesignTypography.standard,
-      motion: DesignMotion.standard,
-    );
-  }
 
   @override
   AppTokens copyWith({

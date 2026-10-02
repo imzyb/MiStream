@@ -62,8 +62,8 @@ void main() {
       expect(
         rt.eval(
           '(async function () { '
-          'var v = await Promise.resolve(1)'
-          '.then(function (x) { return x + 1; })'
+          'var v = await Promise.resolve(1) '
+          '.then(function (x) { return x + 1; }) '
           '.then(function (x) { return x * 10; }); '
           'return String(v); '
           '})()',

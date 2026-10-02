@@ -331,7 +331,7 @@ class AppAssembly {
     if (javaHome != null && javaHome.isNotEmpty) {
       final candidate = File(
         '$javaHome${Platform.pathSeparator}bin'
-        '${Platform.pathSeparator}${_javaExecutableName}',
+        '${Platform.pathSeparator}$_javaExecutableName',
       );
       if (candidate.existsSync()) return candidate.path;
     }

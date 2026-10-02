@@ -25,9 +25,9 @@ String _valid({
 }) => jsonEncode({
   'id': id,
   'type': type,
-  if (version != null) 'version': version,
+  'version': ?version,
   'theme': {
-    if (brightness != null) 'brightness': brightness,
+    'brightness': ?brightness,
     'tokens': tokens ?? const {'color.outline': '#CBD5E1'},
   },
 });

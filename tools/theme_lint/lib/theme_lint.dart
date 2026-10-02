@@ -243,15 +243,15 @@ class ThemeLinter {
     // 判据抽在 theme_engine 里，运行时（loadThemePackage）用的是同一份 ——
     // 只写在这里的话，不经 lint 直接装包的用户永远看不到这条提示。
     for (final problem in checkBrightnessConsistency(
-      declared == 'dark',
-      merged.tokens,
+      declaredDark: declared == 'dark',
+      t: merged.tokens,
     )) {
       issues.add(
         LintIssue(
           LintSeverity.warning,
           problem,
           hint:
-              '多半是 brightness 抄反了；它决定这个包叠到哪套内置主题上，'
+              '多半是 brightness 抄反了；它决定这个包叠到哪套内置主题上， '
               '也决定系统 UI（状态栏、滚动条）按明还是按暗画',
         ),
       );

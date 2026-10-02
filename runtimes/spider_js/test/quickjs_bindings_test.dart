@@ -12,9 +12,13 @@ final String? _skipUnavailable = isQuickJSAvailable
 
 void main() {
   group('QuickJS 绑定', () {
-    test('native 不可用时 isQuickJSAvailable 为 false', () {
-      expect(isQuickJSAvailable, isFalse);
-    }, skip: isQuickJSAvailable ? 'native 在场，此用例不适用' : null);
+    test(
+      'native 不可用时 isQuickJSAvailable 为 false',
+      () {
+        expect(isQuickJSAvailable, isFalse);
+      },
+      skip: isQuickJSAvailable ? 'native 在场，此用例不适用' : null,
+    );
   });
 
   group('JsRuntime 降级路径', () {
@@ -24,18 +28,26 @@ void main() {
       expect(runtime.isAvailable, isFalse);
     });
 
-    test('native 不可用时 init 返回 false 并给出原因', () {
-      final runtime = JsRuntime();
-      expect(runtime.init(), isFalse);
-      expect(runtime.status, JsRuntimeStatus.unavailable);
-      // 失败必须可诊断——不能只是「返回 false」。
-      expect(runtime.lastError, isNotNull);
-    }, skip: isQuickJSAvailable ? 'native 在场，此降级用例不适用' : null);
+    test(
+      'native 不可用时 init 返回 false 并给出原因',
+      () {
+        final runtime = JsRuntime();
+        expect(runtime.init(), isFalse);
+        expect(runtime.status, JsRuntimeStatus.unavailable);
+        // 失败必须可诊断——不能只是「返回 false」。
+        expect(runtime.lastError, isNotNull);
+      },
+      skip: isQuickJSAvailable ? 'native 在场，此降级用例不适用' : null,
+    );
 
-    test('native 不可用时 eval 返回 null', () {
-      final runtime = JsRuntime()..init();
-      expect(runtime.eval('1+2'), isNull);
-    }, skip: isQuickJSAvailable ? 'native 在场，此降级用例不适用' : null);
+    test(
+      'native 不可用时 eval 返回 null',
+      () {
+        final runtime = JsRuntime()..init();
+        expect(runtime.eval('1+2'), isNull);
+      },
+      skip: isQuickJSAvailable ? 'native 在场，此降级用例不适用' : null,
+    );
 
     test('dispose 可重复调用且不抛异常', () {
       final runtime = JsRuntime()

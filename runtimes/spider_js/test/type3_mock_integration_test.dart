@@ -265,115 +265,119 @@ void main() {
       await mock.close();
     });
 
-    test('整条链路：init → home → detail → play 命中 mock 端点', () async {
-      if (!canSpawnSubprocess) {
-        markTestSkipped('Spider JS bundle 不存在，跳过子进程集成测试');
-        return;
-      }
+    test(
+      '整条链路：init → home → detail → play 命中 mock 端点',
+      () async {
+        if (!canSpawnSubprocess) {
+          markTestSkipped('Spider JS bundle 不存在，跳过子进程集成测试');
+          return;
+        }
 
-      // 1. 拉脚本内容
-      final script = await _httpGet(mock.spiderJsUrl);
+        // 1. 拉脚本内容
+        final script = await _httpGet(mock.spiderJsUrl);
 
-      // 2. handshake
-      _writeFrame(
-        stdin,
-        jsonEncode(<String, Object?>{
-          'jsonrpc': '2.0',
-          'id': 1,
-          'method': 'runtime.handshake',
-          'params': <String, Object?>{},
-        }),
-      );
-      await stdin.flush();
-      final handshakeReply = _RpcMessage.decode(
-        await _readFrame(stdoutReader),
-      );
-      expect(handshakeReply.id, 1);
-      expect(handshakeReply.hasResult, isTrue);
+        // 2. handshake
+        _writeFrame(
+          stdin,
+          jsonEncode(<String, Object?>{
+            'jsonrpc': '2.0',
+            'id': 1,
+            'method': 'runtime.handshake',
+            'params': <String, Object?>{},
+          }),
+        );
+        await stdin.flush();
+        final handshakeReply = _RpcMessage.decode(
+          await _readFrame(stdoutReader),
+        );
+        expect(handshakeReply.id, 1);
+        expect(handshakeReply.hasResult, isTrue);
 
-      // 3. spider.create（脚本 = spider.js 内容，ext = mock 的 /api.php URL）
-      _writeFrame(
-        stdin,
-        jsonEncode(<String, Object?>{
-          'jsonrpc': '2.0',
-          'id': 2,
-          'method': 'spider.create',
-          'params': <String, Object?>{
-            'instanceId': 'site:mock',
-            'script': script,
-            'config': mock.apiUrl,
-            'baseUrl': mock.baseUrl,
-          },
-        }),
-      );
-      await stdin.flush();
-      final createReply = _RpcMessage.decode(
-        await _readFrame(stdoutReader),
-      );
-      expect(createReply.id, 2);
-      expect(
-        createReply.hasError,
-        isFalse,
-        reason: 'create 出错：${createReply.map}',
-      );
+        // 3. spider.create（脚本 = spider.js 内容，ext = mock 的 /api.php URL）
+        _writeFrame(
+          stdin,
+          jsonEncode(<String, Object?>{
+            'jsonrpc': '2.0',
+            'id': 2,
+            'method': 'spider.create',
+            'params': <String, Object?>{
+              'instanceId': 'site:mock',
+              'script': script,
+              'config': mock.apiUrl,
+              'baseUrl': mock.baseUrl,
+            },
+          }),
+        );
+        await stdin.flush();
+        final createReply = _RpcMessage.decode(
+          await _readFrame(stdoutReader),
+        );
+        expect(createReply.id, 2);
+        expect(
+          createReply.hasError,
+          isFalse,
+          reason: 'create 出错：${createReply.map}',
+        );
 
-      // 4. spider.home —— 脚本内部用 host.fetch 抓 /api.php?ac=videolist
-      //    我们必须同步帮它回 host.fetch，否则子进程在 callHost 里死等。
-      final homeResult = await _runSpiderAndServeFetches(
-        method: 'home',
-        args: <Object?>[null],
-        stdin: stdin,
-        reader: stdoutReader,
-        hostApi: hostApi,
-      );
-      final homeBody = homeResult;
-      expect(homeBody, isA<Map<String, Object?>>());
-      final homeMap = homeBody! as Map<String, Object?>;
-      final homeList = homeMap['list'] as List<Object?>?;
-      expect(homeList, isNotEmpty, reason: 'home 应返回非空列表：$homeMap');
-      expect(homeMap['class'], isNotEmpty);
+        // 4. spider.home —— 脚本内部用 host.fetch 抓 /api.php?ac=videolist
+        //    我们必须同步帮它回 host.fetch，否则子进程在 callHost 里死等。
+        final homeResult = await _runSpiderAndServeFetches(
+          method: 'home',
+          args: <Object?>[null],
+          stdin: stdin,
+          reader: stdoutReader,
+          hostApi: hostApi,
+        );
+        final homeBody = homeResult;
+        expect(homeBody, isA<Map<String, Object?>>());
+        final homeMap = homeBody! as Map<String, Object?>;
+        final homeList = homeMap['list'] as List<Object?>?;
+        expect(homeList, isNotEmpty, reason: 'home 应返回非空列表：$homeMap');
+        expect(homeMap['class'], isNotEmpty);
 
-      // 5. spider.detail
-      final detailResult = await _runSpiderAndServeFetches(
-        method: 'detail',
-        args: <Object?>['1001'],
-        stdin: stdin,
-        reader: stdoutReader,
-        hostApi: hostApi,
-      );
-      final detailBody = detailResult;
-      expect(detailBody, isA<Map<String, Object?>>());
-      final detailList =
-          (detailBody! as Map<String, Object?>)['list'] as List<Object?>?;
-      expect(detailList, isNotEmpty);
-      final firstItem = detailList!.first! as Map<String, Object?>;
-      expect(firstItem['vod_name'], '测试电影');
+        // 5. spider.detail
+        final detailResult = await _runSpiderAndServeFetches(
+          method: 'detail',
+          args: <Object?>['1001'],
+          stdin: stdin,
+          reader: stdoutReader,
+          hostApi: hostApi,
+        );
+        final detailBody = detailResult;
+        expect(detailBody, isA<Map<String, Object?>>());
+        final detailList =
+            (detailBody! as Map<String, Object?>)['list'] as List<Object?>?;
+        expect(detailList, isNotEmpty);
+        final firstItem = detailList!.first! as Map<String, Object?>;
+        expect(firstItem['vod_name'], '测试电影');
 
-      // 6. spider.play
-      final playResult = await _runSpiderAndServeFetches(
-        method: 'play',
-        args: <Object?>['qiyi', '1001', null],
-        stdin: stdin,
-        reader: stdoutReader,
-        hostApi: hostApi,
-      );
-      final playBody = playResult;
-      expect(playBody, isA<Map<String, Object?>>());
-      final playMap = playBody! as Map<String, Object?>;
-      expect(playMap['url'], contains('qiyi/1001/index.m3u8'));
-      expect(playMap['parse'], 0);
+        // 6. spider.play
+        final playResult = await _runSpiderAndServeFetches(
+          method: 'play',
+          args: <Object?>['qiyi', '1001', null],
+          stdin: stdin,
+          reader: stdoutReader,
+          hostApi: hostApi,
+        );
+        final playBody = playResult;
+        expect(playBody, isA<Map<String, Object?>>());
+        final playMap = playBody! as Map<String, Object?>;
+        expect(playMap['url'], contains('qiyi/1001/index.m3u8'));
+        expect(playMap['parse'], 0);
 
-      // 7. 收尾
-      _writeFrame(
-        stdin,
-        jsonEncode(<String, Object?>{
-          'jsonrpc': '2.0',
-          'id': 99,
-          'method': 'runtime.shutdown',
-        }),
-      );
-      await stdin.flush();
-    }, timeout: const Timeout(Duration(seconds: 30)));
+        // 7. 收尾
+        _writeFrame(
+          stdin,
+          jsonEncode(<String, Object?>{
+            'jsonrpc': '2.0',
+            'id': 99,
+            'method': 'runtime.shutdown',
+          }),
+        );
+        await stdin.flush();
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
   });
 }
 

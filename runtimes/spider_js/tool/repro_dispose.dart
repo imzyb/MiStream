@@ -7,7 +7,7 @@
 /// 进程 abort 会丢掉缓冲的 stdout，所以进度必须同步落盘。
 ///
 /// 用法（`runtimes/spider_js` 目录下）：
-///   dart run tool/repro_dispose.dart <mode> [次数] [脚本路径]
+///   dart run tool/repro_dispose.dart `<mode>` [次数] [脚本路径]
 ///
 /// mode：
 ///   empty   只求值一个无关紧要的表达式
@@ -115,7 +115,7 @@ void main(List<String> args) {
       case 'deps':
         // 只装 4 个依赖模块，不跑 drpy2。
         for (final entry in _deps.entries) {
-          final code = File('${_dir}${entry.value}').readAsStringSync();
+          final code = File('$_dir${entry.value}').readAsStringSync();
           rt.eval(
             generateModuleLoader(
               code,
@@ -146,7 +146,7 @@ void main(List<String> args) {
           );
         }
         for (final entry in _deps.entries) {
-          final code = File('${_dir}${entry.value}').readAsStringSync();
+          final code = File('$_dir${entry.value}').readAsStringSync();
           final dep = parseImports(
             'import ${entry.key.endsWith('模板.js') ? '模板' : 'x'} '
             'from "${entry.key}"',
@@ -167,10 +167,10 @@ void main(List<String> args) {
         // RuntimeChild._capabilitiesOf 的那条探测表达式。
         if (!skipCaps)
           rt.eval(
-            '[typeof home === "function" ? "home" : "",'
-            'typeof category === "function" ? "category" : "",'
-            'typeof detail === "function" ? "detail" : "",'
-            'typeof search === "function" ? "search" : "",'
+            '[typeof home === "function" ? "home" : "", '
+            'typeof category === "function" ? "category" : "", '
+            'typeof detail === "function" ? "detail" : "", '
+            'typeof search === "function" ? "search" : "", '
             'typeof play === "function" ? "play" : ""].filter(Boolean).join(",")',
           );
         tr('iter $i: caps done, failure=${rt.lastFailure}');

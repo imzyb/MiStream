@@ -46,7 +46,7 @@ library;
 /// }
 /// ```
 /// `classes` 也接受 drpy 的字符串写法 `名称$值#名称$值`。
-const String type0Script = '''
+const String type0Script = r'''
 // type=0 内置通用脚本 — XPath/CSP 网页解析器
 // 由源配置 'ext' 字段驱动，通过 req + pdfh/pdfa 提取页面数据。
 //
@@ -152,14 +152,14 @@ function extractList(page, rule) {
   return out;
 }
 
-// 分类列表。classes 支持两种写法：对象数组，或 drpy 的 '名称\$值#名称\$值'。
+// 分类列表。classes 支持两种写法：对象数组，或 drpy 的 '名称$值#名称$值'。
 function readClasses() {
   var raw = cfg('classes', []);
   var out = [];
   if (typeof raw === 'string') {
     var items = raw.split('#');
     for (var i = 0; i < items.length; i++) {
-      var parts = items[i].split('\$');
+      var parts = items[i].split('$');
       if (!parts[0]) continue;
       out.push({ type_id: parts[1] || parts[0], type_name: parts[0] });
     }
@@ -223,7 +223,7 @@ async function detail(ids) {
   var episodes = [];
   for (var i = 0; i < urls.length; i++) {
     var ep = absUrl(page.url, urls[i]);
-    episodes.push(names[i] ? names[i] + '\$' + ep : ep);
+    episodes.push(names[i] ? names[i] + '$' + ep : ep);
   }
 
   return {
