@@ -242,10 +242,22 @@ void main() {
 
       final elapsedMs = decoded['elapsedMs']! as int;
       printOnFailure('1MB 逐字节读耗时 ${elapsedMs}ms');
-      // 实测基线 668ms/MB（约 1.5MB/s）。阈值留了 50% 余量，只拦量级性退化。
+      // 这条是**性能护栏**，不是正确性断言：它要拦的是「逐字节方案被改坏成
+      // 量级性退化」，而不是给绝对时延立一个精确刻度。
+      //
+      // 实测（都走真 stdin、真 VM native readByteSync）：
+      //   - 本机基线 668ms/MB
+      //   - GitHub 共享 runner（ubuntu-latest）2008ms/MB —— 3 倍，纯粹是宿主机
+      //     调度噪声，方案本身没变
+      // 原阈值 1000ms 只比基线高 50%，于是 CI 上按概率翻红（macOS 同样如此）。
+      // 现在取 5000ms ≈ 基线的 7.5 倍：既容得下共享 runner 的抖动，又仍能拦住
+      // 5 倍以上的真实退化（例如把逐字节读改成每次多一次 syscall 那种）。
+      //
+      // 如果这条开始频繁失败，先怀疑宿主机变慢，而不是直接改大阈值——
+      // 量级真退化时该换的是「大 payload 走临时文件」（见方案退路）。
       expect(
         elapsedMs,
-        lessThan(1000),
+        lessThan(5000),
         reason: '1MB 读了 ${elapsedMs}ms，逐字节方案撑不住，该换成大 payload 走临时文件（见方案退路）',
       );
     }, timeout: const Timeout(Duration(minutes: 2)));
