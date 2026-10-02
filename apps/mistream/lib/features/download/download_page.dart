@@ -193,7 +193,8 @@ class _DownloadPageState extends State<DownloadPage> {
       child: ListTile(
         leading: _buildTaskIcon(task),
         title: Text(
-          task.title,
+          // `title` 是影片名；从影片页发起的下载要带上集名才分得清是哪一集。
+          task.displayName,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -346,7 +347,7 @@ class _DownloadPageState extends State<DownloadPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('删除下载'),
-        content: Text('确定要删除「${task.title}」吗？'),
+        content: Text('确定要删除「${task.displayName}」吗？'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -435,7 +436,8 @@ class _DownloadPageState extends State<DownloadPage> {
                   // 保存路径由应用层按下载根目录拼，UI 不自己拼 ——
                   // 旧实现写的是 `/downloads/<标题>`，在 Windows 上会落到
                   // **当前盘根目录**下，越出应用的数据目录。
-                  savePath: _assembly.downloadSavePathFor(title),
+                  // 手动新建没有「集」的概念，第二参数传 `null`。
+                  savePath: _assembly.downloadSavePathFor(title, null),
                 );
                 await _manager.startDownload(task.id);
                 if (!ctx.mounted) return;

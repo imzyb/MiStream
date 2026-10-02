@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mistream/app/app.dart';
 import 'package:mistream/application/detail_use_case.dart';
+import 'package:mistream/application/download_use_case.dart';
 import 'package:mistream/features/common/common.dart'
     show ErrorView, PosterImage, ResponsiveGridPresets, ResponsiveSliverGrid;
 import 'package:search_engine/search_engine.dart';
@@ -23,6 +24,7 @@ class DetailPage extends StatefulWidget {
     super.key,
     this.item,
     this.useCase,
+    this.downloadUseCase,
   });
 
   /// 站点 ID，用于查找 API 地址。
@@ -36,6 +38,9 @@ class DetailPage extends StatefulWidget {
 
   /// 可注入的详情用例（测试用）；`null` 时取 [AppScope] 装配里的默认实现。
   final DetailUseCase? useCase;
+
+  /// 可注入的下载用例（测试用）；`null` 时取 [AppScope] 装配里的默认实现。
+  final DownloadUseCase? downloadUseCase;
 
   @override
   State<DetailPage> createState() => _DetailPageState();
@@ -305,6 +310,8 @@ class _DetailPageState extends State<DetailPage> {
               return _EpisodeCard(
                 episode: ep,
                 onTap: () => _playEpisode(ep, flag),
+                onMenu: (position) =>
+                    unawaited(_showEpisodeMenu(ep, flag, position)),
               );
             },
           ),
@@ -430,6 +437,68 @@ class _DetailPageState extends State<DetailPage> {
           'vodName': _detail?.name,
           'vodPic': _detail?.pic,
         },
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------
+  // 下载
+  // -------------------------------------------------------------------
+
+  /// 剧集卡片的右键/长按菜单。
+  ///
+  /// 下载入口挂在**集**上而不是「整部片」上：播放也是按集点的，而 `download`
+  /// 表要记的正是「哪一集」（`episode_name`）—— 没有它，同一部剧下回来的
+  /// 文件在列表里长得一模一样，也去不了重。
+  ///
+  /// 「已在下载列表」这一项做成**禁用**而不是隐藏：用户第二次点的时候要看到
+  /// 「为什么点不动」，而不是以为菜单坏了。状态由 `findExisting` 先问再做，
+  /// 所以点下去之前就能画对。
+  Future<void> _showEpisodeMenu(
+    VodEpisode episode,
+    String flag,
+    Offset globalPosition,
+  ) async {
+    final detail = _detail;
+    if (detail == null) return;
+    final useCase =
+        widget.downloadUseCase ?? AppScope.of(context).downloadUseCase;
+    final request = DownloadRequest(
+      siteId: widget.siteId,
+      vodId: widget.vodId,
+      flag: flag,
+      vodName: detail.name,
+      episodeId: episode.id,
+      episodeName: episode.name,
+    );
+    final existing = useCase.findExisting(request);
+
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 0, 0),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        PopupMenuItem(
+          value: 'download',
+          enabled: existing == null,
+          child: Text(existing == null ? '下载本集' : '已在下载列表'),
+        ),
+      ],
+    );
+    if (action != 'download' || !mounted) return;
+
+    final result = await useCase.addEpisode(request);
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    result.fold(
+      (task) => messenger.showSnackBar(
+        SnackBar(content: Text('已加入下载：${task.displayName}')),
+      ),
+      (error) => messenger.showSnackBar(
+        SnackBar(content: Text('加入下载失败：${error.message}')),
       ),
     );
   }
@@ -586,27 +655,47 @@ class _InfoChip extends StatelessWidget {
 
 /// 剧集卡片。
 class _EpisodeCard extends StatelessWidget {
-  const _EpisodeCard({required this.episode, required this.onTap});
+  const _EpisodeCard({
+    required this.episode,
+    required this.onTap,
+    this.onMenu,
+  });
 
   final VodEpisode episode;
   final VoidCallback onTap;
 
+  /// 右键 / 长按回调，参数是触发位置的全局坐标（菜单要贴着它弹）。
+  final void Function(Offset globalPosition)? onMenu;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Text(
-              episode.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall,
-              textAlign: TextAlign.center,
+    final onMenu = this.onMenu;
+    return GestureDetector(
+      // 触屏长按走外层：`InkWell` 没有带坐标的长按回调，而菜单要贴着触发点弹。
+      // 两层不冲突 —— 短按由 `InkWell` 的 tap 认领，长按只有这里认领。
+      onLongPressStart: onMenu == null
+          ? null
+          : (details) => onMenu(details.globalPosition),
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          // 桌面端右键。两条路径都通到同一个菜单，只做右键的话触屏上这个
+          // 功能等于不存在。
+          onSecondaryTapDown: onMenu == null
+              ? null
+              : (details) => onMenu(details.globalPosition),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                episode.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall,
+                textAlign: TextAlign.center,
+              ),
             ),
           ),
         ),

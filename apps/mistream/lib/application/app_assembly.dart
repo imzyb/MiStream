@@ -7,16 +7,19 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:core_domain/core_domain.dart';
 import 'package:download/download.dart';
 import 'package:live/live.dart';
 import 'package:media_sniffer/media_sniffer.dart';
 import 'package:meta/meta.dart';
 import 'package:mistream/application/config_install_service.dart';
 import 'package:mistream/application/detail_use_case.dart';
+import 'package:mistream/application/download_use_case.dart';
 import 'package:mistream/application/live_epg_settings.dart';
 import 'package:mistream/application/live_sort_settings.dart';
 import 'package:mistream/application/live_source_fetcher.dart';
 import 'package:path/path.dart' as p;
+import 'package:player_engine/player_engine.dart';
 import 'package:search_engine/search_engine.dart';
 import 'package:sniffer/sniffer.dart';
 import 'package:source_adapter/source_adapter.dart';
@@ -98,6 +101,11 @@ class AppAssembly {
       repository: downloadRepository,
       downloadRoot: downloadsRoot,
     );
+    downloadUseCase = DownloadUseCase(
+      resolveSource: _resolvePlayableSource,
+      manager: downloadManager,
+      savePathFor: downloadSavePathFor,
+    );
   }
 
   /// 底层数据库。
@@ -155,6 +163,9 @@ class AppAssembly {
   /// 下载管理器（排队、限流、状态落库）。
   late final DownloadManager downloadManager;
 
+  /// 「把某一集加入下载」的编排（解析地址 → 拼路径 → 落库 → 发车）。
+  late final DownloadUseCase downloadUseCase;
+
   /// 源提供者。
   late final StorageSourceProvider sourceProvider;
 
@@ -185,15 +196,48 @@ class AppAssembly {
   /// **恢复不自动续传**：这一步只把状态读回来，是否接着下由用户决定。
   Future<void> restoreDownloads() => downloadManager.restore();
 
-  /// 由媒体标题生成下载保存路径。
+  /// 把 `PlayUseCase` 的结果压成「可下载的媒体源」。
+  ///
+  /// `PlayResult` 还带着集号、标题、是否经嗅探这些**播放侧**的东西；下载只关心
+  /// 地址与请求头，所以在这里收一次。收在装配层而不是让 `DownloadUseCase` 直接
+  /// 依赖 `PlayUseCase`，是为了让下载用例能脱离 Spider 运行时与嗅探器单独测。
+  Future<Result<MediaSource, AppError>> _resolvePlayableSource({
+    required int siteId,
+    required String vodId,
+    required String flag,
+    String? episodeId,
+  }) async {
+    final result = await playUseCase.getPlayableSource(
+      siteId: siteId,
+      vodId: vodId,
+      flag: flag,
+      episodeId: episodeId,
+    );
+    if (result.isErr) return Err(result.errorOrNull!);
+    return Ok(result.valueOrNull!.mediaSource);
+  }
+
+  /// 由影片名与集名生成下载保存路径。
   ///
   /// 路径拼装收在应用层，UI 只传标题 —— 否则「下载根目录在哪」这件事会散落到
   /// 每个调 `createTask` 的地方（旧实现就是每个调用点各写一遍硬编码的
   /// `/downloads/<标题>`）。
-  String downloadSavePathFor(String title) {
-    final name = sanitizeDownloadName(title);
+  ///
+  /// **一集一个目录**（`<根>/<影片名>/<集名>`）：HLS 下载把分片写成
+  /// `segment_000000.ts` 这种固定名字，同一部剧的多集如果共用一个目录，第二集
+  /// 会直接覆盖第一集的分片 —— 两份任务各自以为自己下完了，合出来的文件是
+  /// 两集混在一起。电影（[episodeName] 为空）就落在影片名那一层。
+  ///
+  /// 两级名字都过 [sanitizeDownloadName]：集名来自源站，`第 03 集` 这种带空格
+  /// 的名字直接当目录名会被 Windows 悄悄吃掉尾随空格。
+  String downloadSavePathFor(String vodName, [String? episodeName]) {
     final root = downloadsRoot;
-    return root == null ? name : p.join(root, name);
+    final show = sanitizeDownloadName(vodName);
+    final episode = episodeName == null || episodeName.isEmpty
+        ? null
+        : sanitizeDownloadName(episodeName, fallback: '未命名');
+    final relative = episode == null ? show : p.join(show, episode);
+    return root == null ? relative : p.join(root, relative);
   }
 
   /// 关闭底层资源。

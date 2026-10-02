@@ -222,6 +222,29 @@ void main() {
       expect(assemble().downloadSavePathFor('甲'), '甲');
     });
 
+    test('同一部剧的每一集各占一个目录', () {
+      // HLS 下载把分片写成 `segment_000000.ts` 这种固定名字。多集共用一个目录
+      // 时，第二集会直接覆盖第一集的分片 —— 两份任务各自以为自己下完了，合出来
+      // 的文件是两集混在一起。
+      final assembly = assemble(downloadsRoot: p.join('root', 'downloads'));
+      expect(
+        assembly.downloadSavePathFor('庆余年', '第 03 集'),
+        p.join('root', 'downloads', '庆余年', '第 03 集'),
+      );
+      expect(
+        assembly.downloadSavePathFor('庆余年', '第 03 集'),
+        isNot(assembly.downloadSavePathFor('庆余年', '第 04 集')),
+      );
+    });
+
+    test('集名为空时退回影片名那一层', () {
+      final assembly = assemble(downloadsRoot: p.join('root', 'downloads'));
+      expect(
+        assembly.downloadSavePathFor('独行月球', ''),
+        p.join('root', 'downloads', '独行月球'),
+      );
+    });
+
     test('restoreDownloads 走的是数据库仓储，不是内存', () async {
       // 装配层最容易出的错是「建了仓储但管理器还在用默认的内存实现」——
       // 那样用例全绿，而杀进程重启后任务全没了。这条用例钉的就是它。
