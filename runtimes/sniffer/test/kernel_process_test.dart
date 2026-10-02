@@ -12,8 +12,28 @@
 /// 协议层由 `cdp_client_test.dart` 用内存传输完整覆盖。
 library;
 
+import 'dart:io';
+
 import 'package:sniffer/sniffer.dart';
 import 'package:test/test.dart';
+
+/// 启动真实内核时追加的参数。
+///
+/// **只在 Linux 上加 `--no-sandbox`**，针对的是**被测环境**而不是被测行为：
+/// Ubuntu 23.10+ 起 AppArmor 默认禁止非特权 user namespace，Chromium 的沙箱
+/// 因此起不来，内核在端点就绪前就以 `code=-6` 退出，stderr 里是
+///
+///     FATAL:...zygote_host_impl_linux.cc:129] No usable sandbox!
+///
+/// 本组要证的是「内核能起、DevTools 端点是真实的」，与沙箱能力无关，所以把这条
+/// 环境限制摘出去。Windows / macOS 的沙箱可用，**不加**，让默认参数继续被真实覆盖。
+///
+/// ⚠️ 生产代码 `SnifferKernelProcess.launch` **没有**这个回退：真机上嗅探内核要
+/// 渲染不受信任的第三方页面，关掉沙箱是实打实的安全降级（Chromium 原文写的是
+/// "if you want to live dangerously"）。也就是说在 Ubuntu 23.10+ 上生产路径会失败，
+/// 这是**已知缺口**（见 PROGRESS.md），不要拿这里的行为反推生产可用。
+List<String> get kernelTestExtraArgs =>
+    Platform.isLinux ? const ['--no-sandbox'] : const [];
 
 void main() {
   const locator = SnifferKernelLocator();
@@ -70,6 +90,7 @@ void main() {
         final proc = await SnifferKernelProcess.launch(
           kernel: kernel,
           startupTimeout: const Duration(seconds: 30),
+          extraArgs: kernelTestExtraArgs,
         );
         try {
           expect(proc.browserWebSocketUrl, startsWith('ws://127.0.0.1:'));
@@ -94,6 +115,7 @@ void main() {
         final proc = await SnifferKernelProcess.launch(
           kernel: kernel,
           startupTimeout: const Duration(seconds: 30),
+          extraArgs: kernelTestExtraArgs,
         );
         final profilePath = proc.profileDir.path;
         await proc.dispose();
@@ -125,10 +147,12 @@ void main() {
         final a = await SnifferKernelProcess.launch(
           kernel: kernel,
           startupTimeout: const Duration(seconds: 30),
+          extraArgs: kernelTestExtraArgs,
         );
         final b = await SnifferKernelProcess.launch(
           kernel: kernel,
           startupTimeout: const Duration(seconds: 30),
+          extraArgs: kernelTestExtraArgs,
         );
         try {
           // 端口由系统分配（--remote-debugging-port=0），因此必然不同——
