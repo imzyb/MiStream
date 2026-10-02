@@ -2134,12 +2134,53 @@ Windows PowerShell 5.1 的 `-File` 对**没有 BOM** 的脚本按 **ANSI 码页*
   它，打包分发时 JVM 类 `csp_` 站点会走「JVM 运行时未配置」的降级分支（已文档化，
   非静默缺陷）。
 
+### 结果：发布链第一次跑通
+
+| run | 结果 |
+| --- | --- |
+| CI `37032054665`（`28ed23b`） | `lint` / `arch` / `commitlint` / `build-check(macos,windows)` / `release-windows` **全绿** |
+| **Release `37032078549`（tag `v0.1.0-m10-5`）** | **success**，13 步全部通过，含第 11 步合规扫描与第 13 步创建草稿 Release |
+
+产出：**草稿 Release `v0.1.0-m10-5`**，asset `mistream-v0.1.0-m10-5-windows-x64.zip`
+（38.4 MB，sha256 `0c69c5d2…`）。包内 29 个文件，`mistream.exe`(91 KB 薄启动器) +
+`data/app.so`(8.8 MB) + `libmpv-2.dll`(29.7 MB) + `spider_js_runtime.exe`(8.1 MB) +
+quickjs/sqlite3/flutter_windows.dll 等；文本资源只有 `FontManifest.json` 与
+`NativeAssetsManifest.json` 两个，**不含源配置**。
+
+### 治本：`melos run generate` 改走 workspace 模式（已完成）
+
+原脚本配 `packageFilters: dependsOn: build_runner`，melos 会 cd 进 `packages/storage`
+跑一次**单包构建**，在 pub workspace 下写 0 个输出。改成
+`dart run build_runner build --workspace` 并**去掉 packageFilters**（没有它 melos 才在
+仓库根执行），顺手删掉已被 build_runner 2.15 移除的 `--delete-conflicting-outputs`。
+
+CI 实测（run `37033530708`）：
+
+```
+melos run generate
+  └> dart run build_runner build --workspace
+  Built with build_runner/aot in 35s; wrote 55 outputs.     ← 原来是 0
+```
+
+随后 `format:check` 363 文件 0 changed、`analyze` `No issues found!`。
+
+于是回退 `.gitignore` 的例外并把 `database.g.dart` 移出版本控制（`git rm --cached`），
+**ADR-008「drift 产物不提交」至此才真正成立**。`ci.yml` 的生成步骤保留
+`test -f packages/storage/lib/src/database/database.g.dart` 断言 —— 它拦的正是
+「生成器静默写 0 个输出」这个当初没人发现的故障模式。
+
 ### 仍未做（如实记）
 
-- **`melos run generate` 在 CI 上写 0 输出**（`Built with build_runner/aot in 13s;
-  wrote 0 outputs.`），`database.g.dart` 仍是靠入库解封的权宜之计，治本未做。
-- `tools/release_check.ps1` 的合规规则只有 `spider` / `api.php` / `vod_pic` 三条，
-  未做 license 扫描与体积门禁（`ci.yml` 末尾的 TODO(M10)）。
+- `test` 三平台仍然红，且**历来每一次都红**：环境依赖（Chromium 沙箱、runner 无
+  Edge/Chrome、真子进程/TCP）。`build-check（linux）` 红是因为 runner 缺
+  `libasound2-dev`（`volume_controller` 的 Linux CMake 报 `Could NOT find ALSA`）。
+  两者都与本次改动无关，但都是**真问题**，未处理。
+- 合规规则只有 `spider` / `api.php` / `vod_pic` 三条，未做 license 扫描与体积门禁
+  （`ci.yml` 末尾的 TODO(M10)）。
+- 草稿 Release 是 `draft: true`，未发布；`v0.1.0-m10-1/2/3/4` 四个 tag 指向的是失败
+  的流水线（其中 2/3/4 的包其实构建成功了，只是被门禁挡住）。
+- `spider_jvm_runtime.jar` 不进包：`app_assembly.dart` 按仓库相对路径找它，分发场景
+  下 JVM 类 `csp_` 站点会走「JVM 运行时未配置」的降级分支。
 
 
 
