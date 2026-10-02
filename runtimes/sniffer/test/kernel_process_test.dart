@@ -35,6 +35,14 @@ import 'package:test/test.dart';
 List<String> get kernelTestExtraArgs =>
     Platform.isLinux ? const ['--no-sandbox'] : const [];
 
+/// 等内核出现 DevTools 端点的上限。
+///
+/// 取 60s 而不是 30s，是因为**冷启动**：CI 上第一次拉 Chromium 时 30s 不够
+/// （实测超时，stderr 只有 dbus 噪声），而紧接着的第二次、第三次启动都在 1s 内
+/// 就绪 —— 差的是首次启动要付的那笔（profile / 字体缓存 / ELF 页缓存），
+/// 不是内核本身起不来。这是宿主机特性，与「内核能不能起」无关。
+const kernelStartupTimeout = Duration(seconds: 60);
+
 void main() {
   const locator = SnifferKernelLocator();
   final kernel = locator.locate();
@@ -89,7 +97,7 @@ void main() {
       () async {
         final proc = await SnifferKernelProcess.launch(
           kernel: kernel,
-          startupTimeout: const Duration(seconds: 30),
+          startupTimeout: kernelStartupTimeout,
           extraArgs: kernelTestExtraArgs,
         );
         try {
@@ -106,7 +114,7 @@ void main() {
         }
       },
       skip: skipReason,
-      timeout: const Timeout(Duration(seconds: 60)),
+      timeout: const Timeout(Duration(minutes: 2)),
     );
 
     test(
@@ -114,7 +122,7 @@ void main() {
       () async {
         final proc = await SnifferKernelProcess.launch(
           kernel: kernel,
-          startupTimeout: const Duration(seconds: 30),
+          startupTimeout: kernelStartupTimeout,
           extraArgs: kernelTestExtraArgs,
         );
         final profilePath = proc.profileDir.path;
@@ -138,7 +146,7 @@ void main() {
         expect(gone, isTrue, reason: '内核进程应已退出（profile: $profilePath）');
       },
       skip: skipReason,
-      timeout: const Timeout(Duration(seconds: 60)),
+      timeout: const Timeout(Duration(minutes: 2)),
     );
 
     test(
@@ -146,12 +154,12 @@ void main() {
       () async {
         final a = await SnifferKernelProcess.launch(
           kernel: kernel,
-          startupTimeout: const Duration(seconds: 30),
+          startupTimeout: kernelStartupTimeout,
           extraArgs: kernelTestExtraArgs,
         );
         final b = await SnifferKernelProcess.launch(
           kernel: kernel,
-          startupTimeout: const Duration(seconds: 30),
+          startupTimeout: kernelStartupTimeout,
           extraArgs: kernelTestExtraArgs,
         );
         try {
@@ -169,7 +177,7 @@ void main() {
         }
       },
       skip: skipReason,
-      timeout: const Timeout(Duration(seconds: 90)),
+      timeout: const Timeout(Duration(minutes: 3)),
     );
 
     test(
