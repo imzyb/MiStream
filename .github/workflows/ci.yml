@@ -118,9 +118,14 @@ jobs:
           cache: true
       - name: Linux 桌面构建依赖
         if: matrix.target == 'linux'
+        # libasound2-dev：volume_controller 的 linux/CMakeLists.txt 里是
+        # `find_package(ALSA REQUIRED)`，缺了直接 FATAL_ERROR，构建在配置阶段就断。
+        # 其余 Linux 插件不需要额外系统库：media_kit_video 找不到
+        # package:media_kit_libs_linux 时只打一句 WARNING 并编译 stub
+        # （MEDIA_KIT_LIBS_NOT_FOUND=1），jni 的 find_package(JNI) 不带 REQUIRED。
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libgtk-3-dev
+          sudo apt-get install -y ninja-build libgtk-3-dev libasound2-dev
       - run: dart pub global activate melos
       - run: melos bootstrap
       - run: melos run generate
