@@ -31,13 +31,12 @@ coverage/
 
 # 生成代码（ADR-008：drift 产物不提交，CI 走 build_runner）
 **/*.g.dart
-# 例外（2026-10-02）：`melos run generate` 在 CI 里写 **0 个输出** —— pub workspace
-# 下 build_runner 2.15.1 不再把「当前包」当 root package（本地同样复现不了：
-# `dart run build_runner` 要先起 frontend_server 子进程，撞本机命名管道缺陷）。
-# 于是干净检出里没有 drift 产物，`flutter analyze` 报 613 个「生成符号未定义」，
-# Release 的「门禁」直接挂、后续构建全部 skipped —— 发布链一个包都产不出。
-# 先把这**唯一**一个生成产物入库解封；治本方向见 pubspec.yaml 的 generate 脚本。
-!packages/storage/lib/src/database/database.g.dart
+# 2026-10-02 说明：这里曾给 packages/storage/lib/src/database/database.g.dart 开过一条
+# 例外并把产物入库，因为 `melos run generate` 在 CI 里写 **0 个输出**（melos 会 cd 进
+# packages/storage 跑单包构建，在 pub workspace 下不产出任何东西），干净检出因此缺
+# drift 产物、analyze 报 613 个「生成符号未定义」，发布链一个包都产不出。
+# 根因已在 pubspec.yaml 的 generate 脚本修掉：改走 `build_runner build --workspace`
+# （仓库根一次构建整个 workspace），CI 实测 `wrote 55 outputs`。例外已回退，产物不再入库。
 
 # QuickJS native 产物（runtimes/spider_js/native/build.bat 本地构建，不入库）。
 # 源码与构建脚本在 native/ 下受版本管理；二进制不进仓库，理由见 docs/10 §10
