@@ -19,6 +19,9 @@ void main() {
         'totalSegments': 10,
         'priority': 3,
         'headers': {'Referer': 'https://example.com/'},
+        'siteId': 9,
+        'vodId': '99887',
+        'episodeName': '第 03 集',
       };
       final task = DownloadTask.fromJson(json);
       expect(task.id, 42);
@@ -33,6 +36,9 @@ void main() {
       expect(task.totalSegments, 10);
       expect(task.priority, 3);
       expect(task.headers['Referer'], 'https://example.com/');
+      expect(task.siteId, 9);
+      expect(task.vodId, '99887');
+      expect(task.episodeName, '第 03 集');
     });
 
     test('fromJson 缺 id 时落到 0（表示尚未落库）', () {
@@ -40,6 +46,11 @@ void main() {
       expect(task.id, 0);
       expect(task.status, DownloadStatus.pending);
       expect(task.totalBytes, -1);
+      // 手动新建的任务没有来源信息 —— 三个字段都该是 null，而不是空串：
+      // 空串会让「有没有来源」这件事永远为真，去重与列表显示都会跟着错。
+      expect(task.siteId, isNull);
+      expect(task.vodId, isNull);
+      expect(task.episodeName, isNull);
     });
 
     test('toJson 往返', () {
@@ -54,6 +65,9 @@ void main() {
         updatedAt: 1000100,
         headers: {'Referer': 'r'},
         priority: 2,
+        siteId: 3,
+        vodId: 'v1',
+        episodeName: '第 01 集',
       );
       final restored = DownloadTask.fromJson(task.toJson());
       expect(restored.id, task.id);
@@ -62,6 +76,35 @@ void main() {
       expect(restored.progress, task.progress);
       expect(restored.headers, task.headers);
       expect(restored.priority, task.priority);
+      expect(restored.siteId, task.siteId);
+      expect(restored.vodId, task.vodId);
+      expect(restored.episodeName, task.episodeName);
+    });
+
+    test('displayName 带上集名，title 仍是影片名', () {
+      // `title` 对应 `download.vod_name` 列，语义是影片名。同一部剧的多集
+      // 只看它会得到一串一模一样的条目，所以列表要显示的是 displayName。
+      const episode = DownloadTask(
+        id: 1,
+        title: '庆余年',
+        url: 'u',
+        savePath: '/tmp/a',
+        createdAt: 1,
+        updatedAt: 1,
+        episodeName: '第 03 集',
+      );
+      expect(episode.displayName, '庆余年 · 第 03 集');
+      expect(episode.title, '庆余年', reason: 'title 不该被集名污染');
+
+      const movie = DownloadTask(
+        id: 2,
+        title: '独行月球',
+        url: 'u',
+        savePath: '/tmp/b',
+        createdAt: 1,
+        updatedAt: 1,
+      );
+      expect(movie.displayName, '独行月球');
     });
 
     test('copyWith 返回新实例，原对象不变', () {

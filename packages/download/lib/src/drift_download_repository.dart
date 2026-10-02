@@ -108,6 +108,9 @@ class DriftDownloadRepository implements DownloadRepository {
       headersJson: Value(encodeHeaders(task.headers)),
       filePath: Value(task.savePath),
       mediaType: Value(task.mediaType),
+      siteId: Value(task.siteId),
+      vodId: Value(task.vodId),
+      episodeName: Value(task.episodeName),
       totalBytes: Value(task.totalBytes < 0 ? 0 : task.totalBytes),
       doneBytes: Value(task.downloadedBytes),
       totalSegments: Value(task.totalSegments < 0 ? null : task.totalSegments),
@@ -149,6 +152,9 @@ class DriftDownloadRepository implements DownloadRepository {
       totalSegments: row.totalSegments ?? -1,
       priority: row.priority,
       headers: decodeHeaders(row.headersJson),
+      siteId: row.siteId,
+      vodId: row.vodId,
+      episodeName: row.episodeName,
     );
   }
 

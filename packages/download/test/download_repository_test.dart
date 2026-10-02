@@ -63,6 +63,52 @@ void main() {
       expect(task.totalBytes, -1);
       expect(task.totalSegments, -1);
     });
+
+    test('siteId 写进 site_id 列；站点被删后置空而任务还在', () async {
+      // `download.site_id` 是**真外键**（`AppDatabase._configure` 里
+      // `PRAGMA foreign_keys = ON`），指向 `site(id)` 且 `ON DELETE SET NULL`。
+      // 这条用例同时钉两件事：
+      // 1. 站点存在时写得进去（外键是开着的，写脏 id 会直接抛）；
+      // 2. 站点没了（换配置重导）之后任务本身不该跟着消失 —— 已经下到一半的
+      //    字节还在盘上，用户要的是「接着下」，不是「记录被清空」。
+      final configId = await db
+          .into(db.configSources)
+          .insert(
+            ConfigSourcesCompanion.insert(
+              name: '演示配置',
+              rawHash: 'h',
+              format: 'tvbox',
+              createdAt: DateTime.utc(2026),
+              updatedAt: DateTime.utc(2026),
+            ),
+          );
+      final siteId = await db
+          .into(db.sites)
+          .insert(
+            SitesCompanion.insert(
+              configId: Value(configId),
+              siteKey: 'demo',
+              name: '示例源',
+              typeCode: 1,
+              runtime: 'http',
+              api: 'https://example.com/api.php/provide/vod/',
+              createdAt: DateTime.utc(2026),
+              updatedAt: DateTime.utc(2026),
+            ),
+          );
+
+      final repo = DriftDownloadRepository(db);
+      await repo.insertTask(
+        _task(siteId: siteId, vodId: '1', episodeName: '第 01 集'),
+      );
+      expect((await repo.listTasks()).single.siteId, siteId);
+
+      await (db.delete(db.sites)..where((t) => t.id.equals(siteId))).go();
+
+      final after = (await repo.listTasks()).single;
+      expect(after.siteId, isNull);
+      expect(after.episodeName, '第 01 集', reason: '任务不该跟着站点消失');
+    });
   });
 }
 
@@ -149,6 +195,29 @@ void runRepositoryContract(DownloadRepository Function() create) {
 
     final ids = [for (final t in await repo.listTasks()) t.id];
     expect(ids, [3, 4, 5]);
+  });
+
+  test('来源信息（影片 / 集）能落库并读回', () async {
+    // `download.vod_id` 与 `episode_name` 两列在「从影片页发起下载」接进来之前
+    // **没有任何写入方** —— 于是下载列表分不清「同一部剧的第几集」，「已加入
+    // 下载」也无从判断。
+    //
+    // `siteId` 不在这里测：它有外键指向 `site(id)`，两个实现能造出的前置条件
+    // 不一样（内存实现没有站点表）。站点那一列由 drift 专属用例覆盖。
+    await repo.insertTask(_task(vodId: '99887', episodeName: '第 03 集'));
+
+    final task = (await repo.listTasks()).single;
+    expect(task.vodId, '99887');
+    expect(task.episodeName, '第 03 集');
+  });
+
+  test('手动新建的任务来源信息为空', () async {
+    await repo.insertTask(_task());
+
+    final task = (await repo.listTasks()).single;
+    expect(task.siteId, isNull);
+    expect(task.vodId, isNull);
+    expect(task.episodeName, isNull);
   });
 
   test('deleteTask 只删指定任务', () async {
@@ -244,6 +313,9 @@ DownloadTask _task({
   int downloadedBytes = 0,
   int priority = 0,
   Map<String, String> headers = const {},
+  int? siteId,
+  String? vodId,
+  String? episodeName,
 }) {
   return DownloadTask(
     id: id,
@@ -258,5 +330,8 @@ DownloadTask _task({
     downloadedBytes: downloadedBytes,
     priority: priority,
     headers: headers,
+    siteId: siteId,
+    vodId: vodId,
+    episodeName: episodeName,
   );
 }

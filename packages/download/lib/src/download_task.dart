@@ -26,6 +26,9 @@ class DownloadTask {
     this.totalSegments = -1,
     this.priority = 0,
     this.headers = const {},
+    this.siteId,
+    this.vodId,
+    this.episodeName,
   });
 
   /// 从 JSON 构造。
@@ -53,6 +56,9 @@ class DownloadTask {
             (key, value) => MapEntry('$key', '$value'),
           ) ??
           const {},
+      siteId: json['siteId'] as int?,
+      vodId: json['vodId'] as String?,
+      episodeName: json['episodeName'] as String?,
     );
   }
 
@@ -101,6 +107,26 @@ class DownloadTask {
   /// 请求头（UA / Referer 之类，真实源常常必需）。
   final Map<String, String> headers;
 
+  /// 来源站点 ID；`null` 表示不是从影片页发起的（手动新建 URL）。
+  ///
+  /// 对应 `download.site_id`，外键指向 `site(id)` 且 `ON DELETE SET NULL` ——
+  /// 站点被删（配置重导）之后这三列会变 `null`，但任务本身不该跟着消失：
+  /// 已经下到一半的字节还在盘上，用户要的是「接着下」，不是「因为换了个配置
+  /// 就把下载记录清空」。
+  ///
+  /// ⚠️ 外键是**真开着的**（`PRAGMA foreign_keys = ON`），所以写入时必须确认
+  /// 站点存在 —— 这也是「只由影片页入口写入」而不是让 UI 随手填的原因。
+  final int? siteId;
+
+  /// 来源影片 ID；`null` 同上。
+  final String? vodId;
+
+  /// 剧集名（如「第 03 集」）；`null` 表示电影或未指明集。
+  ///
+  /// 与 [vodId] 一起构成「同一部片的哪一集」，用来在发起下载时去重，也是
+  /// 离线播放列表要显示的东西。
+  final String? episodeName;
+
   /// 是否 HLS（按 URL 判定）。
   ///
   /// 只用 `m3u8` 这个判据，不看扩展名大小写：真实源里 `.../index.M3U8?token=x`
@@ -110,6 +136,18 @@ class DownloadTask {
 
   /// 落库用的媒体类型。
   String get mediaType => isHls ? 'hls' : 'direct';
+
+  /// 列表里显示的名字。
+  ///
+  /// [title] 对应 `download.vod_name` 列，语义是**影片名**；同一部剧下多集时
+  /// 只看它会得到一串一模一样的条目。集名单独存（[episodeName]）而不是拼进
+  /// [title]，是因为拼进去之后 `vod_name` 就不再是影片名了 —— 而「同一部片的
+  /// 多集」这件事要靠 `vod_id` + `episode_name` 才能判断。
+  String get displayName {
+    final episode = episodeName;
+    if (episode == null || episode.isEmpty) return title;
+    return '$title · $episode';
+  }
 
   /// 转换为 JSON。
   Map<String, dynamic> toJson() {
@@ -129,6 +167,9 @@ class DownloadTask {
       'totalSegments': totalSegments,
       'priority': priority,
       if (headers.isNotEmpty) 'headers': headers,
+      if (siteId != null) 'siteId': siteId,
+      if (vodId != null) 'vodId': vodId,
+      if (episodeName != null) 'episodeName': episodeName,
     };
   }
 
@@ -152,6 +193,9 @@ class DownloadTask {
     int? totalSegments,
     int? priority,
     Map<String, String>? headers,
+    int? siteId,
+    String? vodId,
+    String? episodeName,
     bool clearError = false,
   }) {
     return DownloadTask(
@@ -170,6 +214,9 @@ class DownloadTask {
       totalSegments: totalSegments ?? this.totalSegments,
       priority: priority ?? this.priority,
       headers: headers ?? this.headers,
+      siteId: siteId ?? this.siteId,
+      vodId: vodId ?? this.vodId,
+      episodeName: episodeName ?? this.episodeName,
     );
   }
 

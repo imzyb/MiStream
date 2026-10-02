@@ -141,12 +141,19 @@ class DownloadManager {
   /// **不自动开始**：「建任务」与「开始下载」是两个动作，调度只有一个入口
   /// （[startDownload] / [resumeDownload]），否则「等待中」这个状态会同时
   /// 表示「排队等跑」和「建了没启动」两件事，没法区分。
+  ///
+  /// [siteId] / [vodId] / [episodeName] 是「这部片的这一集」的身份，从影片页
+  /// 发起下载时才有值（见 `download` 表的同名列）。它们不参与调度，只用来让
+  /// 下载列表能显示「第几集」并支持去重。
   Future<DownloadTask> createTask({
     required String title,
     required String url,
     required String savePath,
     Map<String, String> headers = const {},
     int priority = 0,
+    int? siteId,
+    String? vodId,
+    String? episodeName,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     final draft = DownloadTask(
@@ -158,6 +165,9 @@ class DownloadManager {
       updatedAt: now,
       headers: headers,
       priority: priority,
+      siteId: siteId,
+      vodId: vodId,
+      episodeName: episodeName,
     );
     final id = await _repository.insertTask(draft);
     final task = draft.copyWith(id: id);

@@ -89,6 +89,24 @@ void main() {
       expect(stored.headers['Referer'], 'https://a.com/');
       expect(stored.priority, 9);
     });
+
+    test('来源信息（影片 / 集）跟着落库', () async {
+      final manager = managerWith();
+      await manager.createTask(
+        title: '庆余年',
+        url: 'http://a.com/v.m3u8',
+        savePath: '/tmp/庆余年/第 03 集',
+        siteId: 9,
+        vodId: '99887',
+        episodeName: '第 03 集',
+      );
+
+      final stored = (await repository.listTasks()).single;
+      expect(stored.siteId, 9);
+      expect(stored.vodId, '99887');
+      expect(stored.episodeName, '第 03 集');
+      expect(stored.displayName, '庆余年 · 第 03 集');
+    });
   });
 
   group('队列', () {
