@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $JarPath = 'C:\Users\Administrator\AppData\Local\Temp\opencode\qist_spider.jar'
-$rt = 'I:\Cloudflare\mistream\runtimes\spider_jvm\build\spider_jvm_runtime.jar'
-$libsDir = 'I:\Cloudflare\mistream\runtimes\spider_jvm\libs'
+$rt = 'K:\Cloudflare\mistream_new\runtimes\spider_jvm\build\spider_jvm_runtime.jar'
+$libsDir = 'K:\Cloudflare\mistream_new\runtimes\spider_jvm\libs'
 $libs = (Get-ChildItem $libsDir -Filter '*.jar' | ForEach-Object { $_.FullName }) -join ';'
 $cp = "$rt;$libs"
 

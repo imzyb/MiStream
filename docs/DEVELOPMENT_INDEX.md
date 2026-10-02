@@ -33,7 +33,7 @@
 ## 目录结构
 
 ```
-I:\Cloudflare\mistream_new
+K:\Cloudflare\mistream_new
 ├── apps/                # 主应用层
 │   └── mistream/        # Flutter Desktop 主应用
 │       ├── lib/         # 业务逻辑层
