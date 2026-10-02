@@ -1593,14 +1593,11 @@ M7 出口标准停在 3/4（剩「换台 P50 < 2s」卡真实网络），但**�
    ~~搜索层不能选源~~ ✅、~~引导页三处~~ ✅、~~播放段边界~~ ✅、~~搜索网格全量
    重建~~ ✅（2026-09-27 已修，见上一节：`EpisodeIndex` 值对象统一序号约定、越界
    不再回退、`PlayResult` 回填集号、历史落库 `episodeIndex` 并在续播前比对、
-   历史/收藏改走 `player` 入口；搜索网格改用稳定身份键 + `findChildIndexCallback`）。
-   余下：
-   - **`_CategoryDetailPage` 用 `globalRouterAssembly`** 而非注入（`router.dart`
-     两处）。功能上正确（其 `siteId` 已被 `_loadData` 同步为 `workingSiteId`），
-     但正确性依赖隐式同步，脆弱
-   - **选源口径不一致**：选择器只让 `isUsable` 的源可点，而
-     `HomeUseCase._getEnabledSites` 又「无条件尊重用户显式选择，哪怕缺运行时」
-     —— 后者在首页路径上不可达，两种意图各写了一半
+   历史/收藏改走 `player` 入口；搜索网格改用稳定身份键 + `findChildIndexCallback`）、
+   ~~`_CategoryDetailPage` 用全局装配~~ ✅、~~选源口径不一致~~ ✅
+   （2026-10-02，见本文件末尾「本次会话（2026-10-02）」）。
+   **余项：无。**（`router.dart` 里仍剩的两处 `globalRouterAssembly` 属第 5 条
+   P4 债务，不在这条清单里）
 
 ---
 
@@ -1783,6 +1780,77 @@ M7 出口标准停在 3/4（剩「换台 P50 < 2s」卡真实网络），但**�
 >
 > **提交后必做**：`sh tools/git_ref_guard.sh` 恢复被删的分支引用，否则下次
 > 提交会产生孤儿提交、丢失历史链。
+
+
+---
+
+## 本次会话（2026-10-02）：主链路审查余项清空
+
+`docs/CODE_AUDIT_2026-09-27.md` 里剩下的两条 P2/P3 余项都属同一类病：
+**两种设计意图各写了一半**，而不是「写错了」。
+
+### 一、`_CategoryDetailPage` 不再读全局装配（P2-3）
+
+`router.dart` 的 `_loadData` / `_loadMore` 此前直接取 `globalRouterAssembly`
+（由 `setGlobalRouterAssembly` 写入的可变单例）。改为在 `didChangeDependencies`
+里取一次 `AppScope.of(context)` 并缓存（`_assembly`），与 `DetailPage` /
+`SearchPage` / `DownloadPage` 统一。
+
+取装配放在 `didChangeDependencies` 而非 `initState`：`AppScope.of` 用的是
+`getInheritedWidgetOfExactType`（不建立依赖，放 `initState` 里调也不算错），
+但首次取数要等 context 就绪，放这里语义更直白。
+
+⚠️ 这一处**功能上原本就是正确的**（审计已核实：其 `siteId` 来自
+`_currentSite?.id`，而该字段已被 `_loadData` 同步为 `workingSiteId`）。修的是
+**达成方式**——正确性此前依赖 `_currentSite` 与 `workingSiteId` 的隐式同步，
+而不是显式传参。
+
+### 二、选源口径统一（P3-3）
+
+- **选择器**：只有 `isUsable`（= `_siteHasRuntime`）的源可点，不可用的灰显 +
+  副标题「(暂不支持)」+ `onTap: null`
+- **`HomeUseCase._getEnabledSites(siteId:)`**：**无条件**尊重用户显式选择，
+  哪怕缺运行时
+
+后者在首页路径上**不可达** —— 用户根本点不到不可用的源。
+
+**统一到选择器那一侧**：`_getEnabledSites(siteId:)` 也按 `_siteHasRuntime` 过滤。
+选这个方向而不是「放开选择器」的理由：选择器已经让用户**提前**知道原因；
+放开只会让人点一个注定失败的源，再撞满 8s 的建运行时超时。「点了没反应比报
+明确的错更难排查」这条理由在 UI 加灰显之前成立，现在已过时。
+
+配套把「取不到站点」的文案分岔：显式给了 `siteId` 时不再是笼统的
+「无可用站点」，而是「所选片源不可用（缺少运行时或已停用）」—— 用户（或上次
+遗留的 `workingSiteId`）指的是**某一个**源，笼统文案会让人以为整份配置都坏了。
+
+`home_page.dart` 的注释同步说明「支持与否只有一把尺子」。
+
+### 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `analyze_inproc.dart` | 358 文件 **0 error / 0 warning / 0 info** |
+| `run_tests_shim.dart` | 216 → **217 例**全绿 |
+| `tools/arch_check` | 分层纪律检查通过 |
+| `dart format` | 0 changed |
+
+**反向验证（逐条摘，各自变红）**：
+
+| 摘掉的保障 | 结果 |
+| --- | --- |
+| `_getEnabledSites` 的 `_siteHasRuntime` 过滤 | `+3 -1` —— `expect(result.isErr, isTrue)` 失败（旧行为返回 Ok：它拿缺运行时的源去建了运行时） |
+| `_noSiteMessage` 的文案分岔 | `+3 -1` —— `Expected: '所选片源不可用（缺少运行时或已停用）' / Actual: '无可用站点'` |
+
+新用例断言的是 `factory.createCalls == 0`，而不只是「返回了错误」：旧实现会
+**先建运行时再撞超时**，只断言返回错误抓不住这一点。
+
+### 仍未做（如实记）
+
+- **UI 渲染未覆盖**：选择器灰显、分类详情页的接线都只有静态保证。本环境
+  widget 测试连不上 `flutter_tester`，上述「全绿」覆盖的是数据与规则，
+  **不是画得对不对**。
+- `router.dart` 里仍剩两处 `globalRouterAssembly`（`:251` 给
+  `PlayerPageWrapper` 传参、`:315` 作回退），属「下一步」第 5 条的 P4 债务。
 
 
 

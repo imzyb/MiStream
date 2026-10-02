@@ -193,6 +193,10 @@ void _goDetail(SearchItem item) {
 
 **补充**：这一处**功能上是正确的**——`_CategoryDetailPage` 收到的 `siteId` 来自 `HomePage._navigateToCategoryDetail`（`home_page.dart:154-165`）传入的 `_currentSite?.id`，而 `_currentSite` 在 `_loadData` 里已被更新为 `workingSiteId`（`home_page.dart:91-96`），所以它推详情时用的确实是「实际取数成功的站点」。**只是达成方式脆弱**：正确性依赖 `_currentSite` 与 `workingSiteId` 的隐式同步，而不是显式传参。
 
+**已修（2026-10-02）**：`_CategoryDetailPageState` 改为在 `didChangeDependencies` 里取一次 `AppScope.of(context)` 并缓存（`_assembly`），`_loadData` / `_loadMore` 都用它，与 `DetailPage` / `SearchPage` / `DownloadPage` 统一。取装配放在 `didChangeDependencies` 而非 `initState`：`AppScope.of` 用的是 `getInheritedWidgetOfExactType`（不建立依赖，放 `initState` 也不算错），但首次取数要等 context 就绪，放这里语义更直白。
+
+`router.dart` 里仍有两处 `globalRouterAssembly`（`:251` 给 `PlayerPageWrapper` 传参、`:315` 作回退），属 P4 债务，不在本条范围。
+
 ---
 
 ### P3 · 引导页的重复实现与体验缺陷
@@ -241,6 +245,12 @@ static String? _episodeUrl(String line, int episodeIndex) {
 - `_getEnabledSites`：`siteId != null` 时**无条件尊重**用户选择，哪怕缺运行时（`home_use_case.dart:152-156`，注释理由是「点了没反应比报明确的错更难排查」）
 
 两条设计意图都合理，但合在一起，`_getEnabledSites` 的那个分支在首页路径上**不可达**——用户根本点不到不可用的源。要么放开选择器（允许点，点了给明确错误），要么删掉那个分支。目前是两种意图各写了一半。
+
+**已修（2026-10-02）**：统一到**选择器那一侧** —— `_getEnabledSites(siteId:)` 也按 `_siteHasRuntime` 过滤。选这个方向而不是「放开选择器」的理由：选择器已经把不可用的源灰显、副标题写「(暂不支持)」，用户**提前**知道原因；放开只会让人点一个注定失败的源，再撞满 8s 的建运行时超时。「点了没反应比报明确的错更难排查」这条理由在 UI 加灰显之前成立，现在已过时。
+
+配套把「取不到站点」的文案分岔：显式给了 `siteId` 时不再是笼统的「无可用站点」，而是「所选片源不可用（缺少运行时或已停用）」—— 用户（或上次遗留的 `workingSiteId`）指的是**某一个**源，笼统文案会让人以为整份配置都坏了。
+
+用例：`packages/search_engine/test/home_use_case_test.dart` 新增「显式选到缺运行时的源：与选择器同口径，且不拿它去建运行时」，断言 `listSources` 判其 `isUsable == false`、`getHomeData(siteId:)` 报明确错误、且工厂 `createCalls == 0`。最后一条是关键：旧实现会先建运行时再撞超时，**只断言「返回错误」抓不住这一点**。
 
 #### P3-4 搜索结果网格每次进度全量重建
 
