@@ -10,6 +10,8 @@
 /// 且依赖全局装配。
 library;
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mistream/app/router.dart';
@@ -20,6 +22,21 @@ import 'package:player_engine/testing.dart' show FakePlayerEngine;
 import 'package:storage/storage.dart';
 
 void main() {
+  // 放行真实 HttpClient。
+  //
+  // `flutter_test` 的 `TestWidgetsFlutterBinding` 初始化时会把
+  // `HttpOverrides.global` 换成 mock 实现，此后**所有** HTTP 请求一律返回 400
+  // （`_binding_io.dart` 的 `setupHttpOverrides`）。这条保护是防 widget 测试误打
+  // 真实网络，但本文件的「受控外部依赖」恰恰就是本地 `MockSourceServer`，
+  // 必须放行 —— 否则 `setUp` 里的 `installFromUrl` 直接报
+  // `订阅拉取失败：HTTP 400 · 0 字节`，5 条用例全部在 setUp 就挂。
+  //
+  // mock 只在 binding 初始化时装**一次**（不是每个用例重设），而 `testWidgets`
+  // 在 `main()` 注册阶段就把 binding 建好了，所以在这里置 null 能一直生效。
+  setUpAll(() {
+    HttpOverrides.global = null;
+  });
+
   late MockSourceServer server;
   late AppDatabase db;
   late Repositories repositories;
@@ -69,6 +86,16 @@ void main() {
   }
 
   /// 挂载播放页并等到引擎就绪。
+  ///
+  /// ⚠️ `_init()` 里要**真发一次 HTTP**（`playUseCase.getPlayableSource` 对
+  /// type=1 站点会去拉 mock server 的 `api.php`），而 `testWidgets` 默认跑在
+  /// FakeAsync 里。只 `pump` 假时钟是不够的：socket 的完成回调来自**真实**事件
+  /// 循环，而它在假 zone 里排队的后续微任务要等 `pump` 才刷 —— 两条时间线得
+  /// 交替推进，否则 `_init()` 会一直挂在 `getPlayableSource` 上。
+  ///
+  /// 所以每轮先 `runAsync` 让真实事件循环走一小段，再 `pump` 刷一次假时钟。
+  /// （`runAsync` 会 fork 一个用真实定时器/微任务的 zone，是 Flutter 给这种
+  /// 「必须真异步」场景的官方口子。）
   Future<FakePlayerEngine> pumpPlayer(
     WidgetTester tester, {
     required int siteId,
@@ -88,6 +115,9 @@ void main() {
     );
     // 等异步初始化链：取地址 → open → attach → 读历史。
     for (var i = 0; i < 20; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
       await tester.pump(const Duration(milliseconds: 50));
     }
     return engine;
