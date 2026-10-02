@@ -41,8 +41,8 @@ void main() {
       // I: 盘（虚拟化文件系统）的 package_config —— 8660 轮后开始被系统
       // 拒绝访问，子进程起不来，整条长跑判红。见 [stageChildStubs]。
       stubDir = stageChildStubs([
-        Platform.script.resolve('support/rpc_child.dart').toFilePath(),
-        Platform.script.resolve('support/rpc_child_crash.dart').toFilePath(),
+        resolveTestSupportFile('rpc_child.dart'),
+        resolveTestSupportFile('rpc_child_crash.dart'),
       ]);
     });
 

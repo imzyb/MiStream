@@ -6,6 +6,7 @@ import 'package:spider_host/src/host/host_api.dart';
 import 'package:spider_host/src/host/spider_host.dart';
 import 'package:test/test.dart';
 
+import 'support/child_staging.dart';
 import 'support/tcp_process_launcher.dart';
 
 /// 真子进程的端到端：验证 `SpiderHost` 在**真进程 + 真进程生命周期**下
@@ -21,9 +22,7 @@ void main() {
 
     setUp(() {
       children = [];
-      childScript = Platform.script
-          .resolve('support/rpc_child.dart')
-          .toFilePath();
+      childScript = resolveTestSupportFile('rpc_child.dart');
     });
 
     tearDown(() async {

@@ -21,6 +21,54 @@ import 'dart:io';
 
 Directory? _stagingDir;
 
+/// 解析 `test/support/` 下某个桩文件的绝对路径。
+///
+/// ⚠️ **不能只用 `Platform.script.resolve(...)`** —— 它在两种跑法下含义不同：
+///
+/// | 跑法 | `Platform.script` | 相对解析 |
+/// | --- | --- | --- |
+/// | `dart run test/xxx_test.dart` | 测试文件的真实路径 | ✅ 正确 |
+/// | **`dart test`** | **预编译产物** `<tmp>/dart_test.kernel.<hash>/xxx_test.dart` | ❌ 必然落空 |
+///
+/// CI 的 `melos run test` 走的是 `dart test`，于是 `real_process_host_test` 与
+/// `host_soak_test` 这 8 条真子进程用例在三个平台上**全红**，报的是
+/// `Could not find file .../dart_test.kernel.<hash>/support/rpc_child.dart`。
+/// 本地用 `dart run` 跑却全绿 —— 这个差异藏了很久。
+///
+/// 兜底用 `Directory.current`：`dart test` 的 cwd 是**包目录**。再从 cwd 向上找
+/// 几层，兼容 cwd 落在子目录的情况。
+String resolveTestSupportFile(String name) {
+  final beside = Platform.script.resolve('support/$name');
+  if (File(beside.toFilePath()).existsSync()) return beside.toFilePath();
+
+  final suffix = [
+    'test',
+    'support',
+    name,
+  ].join(Platform.pathSeparator);
+
+  var dir = Directory.current;
+  for (var depth = 0; depth < 4; depth++) {
+    final candidate = File('${dir.path}${Platform.pathSeparator}$suffix');
+    if (candidate.existsSync()) return candidate.path;
+    final parent = dir.parent;
+    if (parent.path == dir.path) break;
+    dir = parent;
+  }
+
+  // 用 join 而不是相邻字符串字面量：后者会被
+  // `missing_whitespace_between_adjacent_strings` 判为疑似漏了空格的笔误
+  // （CI 是 --fatal-infos，会直接红）。
+  throw ArgumentError(
+    [
+      '找不到测试桩 $name：',
+      'Platform.script=${Platform.script}',
+      '（dart test 下指向预编译产物，不是源码目录）、',
+      'cwd=${Directory.current.path}',
+    ].join(),
+  );
+}
+
 /// 把 [sources]（桩文件的绝对路径）复制到本机临时目录，返回该目录。
 ///
 /// 同一进程内重复调用复用同一个目录，只在首次真正复制。返回目录里的文件名
