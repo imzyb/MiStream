@@ -69,8 +69,11 @@ class _HomePageState extends State<HomePage> {
     if (forceRefresh) assembly.homeUseCase.clearCache();
 
     try {
-      // 片源选择器列出全部启用站点；能否实际取数由 HomeUseCase 逐个试，
-      // 这里不预先过滤，否则用户看不到「有源但不支持」这件事。
+      // 片源选择器列出**全部**启用站点，这里不预先过滤——否则用户看不到
+      // 「有源但不支持」这件事。但「支持与否」只有一把尺子：`listSources`
+      // 给出的 `isUsable`（= `HomeUseCase._siteHasRuntime`）既决定选择器里
+      // 哪些可点，也决定取数时哪些会被试。两者必须同口径，否则会出现
+      // 「能点但必然失败」或「点不到却仍被取数」这类各写一半的状态。
       _availableSites = await assembly.homeUseCase.listSources();
 
       final homeResult = await assembly.homeUseCase.getHomeData(

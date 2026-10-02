@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:live/live.dart';
 import 'package:media_kit_video/media_kit_video.dart' as mkv;
+import 'package:mistream/app/app.dart' show AppScope;
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
 import 'package:mistream/application/resume_policy.dart';
 import 'package:mistream/features/common/common.dart'
@@ -618,10 +619,27 @@ class _CategoryDetailPageState extends State<_CategoryDetailPage> {
   int _pageCount = 1;
   final ScrollController _scrollController = ScrollController();
 
+  /// 装配来自 `AppScope`，不再读全局可变单例。
+  ///
+  /// 此前用 `globalRouterAssembly`（由 `setGlobalRouterAssembly` 写入）：在
+  /// 「同时存在两个装配实例」的场景（测试、多窗口）下会静默取错对象。这里与
+  /// `DetailPage` / `SearchPage` / `DownloadPage` 统一走 `AppScope.of(context)`。
+  AppAssembly? _assembly;
+
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 取装配放在这里而不是 `initState`：`AppScope.of` 用的是
+    // `getInheritedWidgetOfExactType`（不建立依赖，放 `initState` 也不算错），
+    // 但首次取数要等 context 就绪，放这里语义更直白。
+    if (_assembly != null) return;
+    _assembly = AppScope.of(context);
     unawaited(_loadData());
   }
 
@@ -639,7 +657,7 @@ class _CategoryDetailPageState extends State<_CategoryDetailPage> {
   }
 
   Future<void> _loadData() async {
-    final assembly = globalRouterAssembly;
+    final assembly = _assembly;
     if (assembly == null) return;
 
     setState(() => _loading = true);
@@ -674,7 +692,7 @@ class _CategoryDetailPageState extends State<_CategoryDetailPage> {
   Future<void> _loadMore() async {
     if (_loading || _page >= _pageCount) return;
 
-    final assembly = globalRouterAssembly;
+    final assembly = _assembly;
     if (assembly == null) return;
 
     setState(() => _loading = true);
