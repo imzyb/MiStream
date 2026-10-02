@@ -2040,7 +2040,106 @@ Dart 3.13 扫全仓得 **149 条**，其中 48 条 `strict_raw_type` 全在
   是唯一能验证它们的地方。
 - **`prefer_initializing_formals` 是放行而非修复**：9 处告警被抑制。要真消掉只能把对应
   字段改公开（扩大公开 API），不该由一条风格规则驱动。
-- **`tools/release_check.ps1` 仍在静默空扫**（打印 `扫描目录：-BuildDir`），本次未动。
+- **`tools/release_check.ps1` 仍在静默空扫**，本次未动。~~打印 `扫描目录：-BuildDir`~~
+  ——当时把乱码读成了 `-BuildDir`，实际打印的是变量名 `BuildDir`（`$` 被吃掉）。
+  真正的原因与修复见下一节。
+
+## 本次会话（2026-10-02）· 四：合规扫描门禁是**假的**，Release 因此发不出包
+
+### 现象
+
+`lint` 修好之后（见上一节），Release 流水线仍然出不了包。CI run `37029615096`
+（tag `v0.1.0-m10-4`）在第 11 步「合规扫描（安装包不含源配置）」失败，而**前面
+的 Windows 构建已经成功**：
+
+```
+At D:\a\MiStream\MiStream\tools\release_check.ps1:51 char:77
+The string is missing the terminator: ".
+    + CategoryInfo : ParserError
+##[error]Process completed with exit code 1.
+```
+
+### 根因：`.ps1` 存成了 UTF-8 **无 BOM**
+
+Windows PowerShell 5.1 的 `-File` 对**没有 BOM** 的脚本按 **ANSI 码页**解码，
+不看文件内容。中文被拆成乱码后，乱码还会把紧随其后的 ASCII 字符（`$`、`"`）
+一并吃掉——于是同一份文件在不同机器上被改写成**两个不同的程序**：
+
+| 机器 ANSI 码页 | 结果 |
+| --- | --- |
+| CI runner（CP1252） | 第 51 行收尾引号被吃掉 → `ParserError` → exit 1，Release 挂 |
+| 本机（CP936） | 不报错，但 `$files = Get-ChildItem ...` 整段被吞进字符串字面量，`$files` 恒为 null → **扫描 0 个文件后判为通过** |
+
+也就是说：**这条合规门禁在本机一直是假的**，只是没人在意「扫描 0 个文本资源」
+这句话。CP936 下双引号总数从 20 变 17，语法却仍然成立，所以它连报错都没有。
+
+定位手法（可复现）：用 .NET 按各码页解码源码，再交给真正的 PowerShell 解析器：
+
+| 码页 | 解析错误 |
+| --- | --- |
+| CP1252 | **1 个 @51:77**，与 CI 日志逐字一致 |
+| CP936 | 0 个（静默失效） |
+| UTF-8 | 0 个 |
+
+### 修复
+
+1. 给三个含非 ASCII 的 `.ps1` 加 UTF-8 BOM（`release_check` /
+   `build_jvm_runtime` / `build_spider_js_runtime`）。有 BOM 时 PS 5.1 按 UTF-8
+   读取，两种码页下行为一致。纯 ASCII 的 `jvm_smoke_test.ps1` 不动。
+2. `release_check.ps1` 补一条守卫：**扫到 0 个文本资源直接失败**。真实构建产物里
+   至少有 `flutter_assets/FontManifest.json` 与 `NativeAssetsManifest.json`，
+   「空集」只可能意味着脚本被改坏、路径写错或匹配规则失效。
+3. `tools/arch_check` 新增 **`ps1-bom`** 规则（含非 ASCII 的 `.ps1`/`.psm1`
+   必须带 BOM），进 `melos run check:arch`，CI 与 Release 的 arch 门禁都覆盖它。
+4. `docs/10-开发规范.md` §3.1 记入该规则。
+
+### 验证
+
+| 项 | 修复前 | 修复后 |
+| --- | --- | --- |
+| `powershell -File tools/release_check.ps1 -BuildDir apps/mistream/build` | `扫描目录：BuildDir` / `扫描 0 个文本资源` / exit 0 | `扫描目录：apps/mistream/build` / `扫描 10 个文本资源` / exit 0 |
+
+反向用例（`-BuildDir` 指向夹具）：
+
+| 用例 | 结果 |
+| --- | --- |
+| 含 `api.php` 的目录 | exit 1，准确报出 `leak.json:api\.php` |
+| 无文本资源的目录 | exit 1，新守卫触发 |
+| 不存在的目录 | exit 1 |
+
+其余证据：
+
+| 项 | 结果 |
+| --- | --- |
+| .NET 按 PS 5.1 实际路径复核 `release_check.ps1` | 有 BOM（按 UTF-8 读）**errors=0**；对照「仍按 CP1252 读」**errors=2** |
+| `dart run tools/arch_check/bin/arch_check.dart` | 分层纪律检查通过 |
+| 反向：临时去掉 `build_spider_js_runtime.ps1` 的 BOM | `[ps1-bom]` 报错，exit 1 |
+| `ps1-bom` 规则用例（进程内脚本，本机 `dart test` 起不了子进程） | **9 项通过 0 失败** |
+| `dart format --output=none --set-exit-if-changed .`（Dart 3.12.2） | 363 文件 **0 changed** |
+| `as_client.py errors .`（Dart 3.12.2） | 359 文件 **0 条** |
+
+### 顺带确认的两件事
+
+- **101 处 lint 修复没有回归**。改动前（`52a3d63`）与改动后（`5f9577f`）的
+  ubuntu test 失败用例逐条比对：`63 passed, 7 failed` / `120 passed, 8 failed`
+  完全一致，且改动后**少了**一条 `sync_frame_io_test.dart` 的耗时型用例（本次自然
+  通过）。`test` 三平台的红全是环境依赖（Chromium 沙箱、runner 无 Edge/Chrome、
+  真子进程/TCP），与本次改动无关，且该分支**历来每一次 CI 都是红的**。
+- **CI 的 `release-windows` 作业是好的**：它产出了 artifact
+  `mistream-windows-release`（38.2 MB），包内 `mistream.exe` + `data/app.so` +
+  `libmpv-2.dll` + `spider_js_runtime.exe` + quickjs/sqlite3 共 29 项，文本资源
+  只有两个 manifest。**所以「拿不到可实测的 Windows 包」从来不是构建的问题，
+  是合规门禁把发布那一步挡住了。**
+  另注：`spider_jvm_runtime.jar` 不在包里——`app_assembly.dart` 按仓库相对路径找
+  它，打包分发时 JVM 类 `csp_` 站点会走「JVM 运行时未配置」的降级分支（已文档化，
+  非静默缺陷）。
+
+### 仍未做（如实记）
+
+- **`melos run generate` 在 CI 上写 0 输出**（`Built with build_runner/aot in 13s;
+  wrote 0 outputs.`），`database.g.dart` 仍是靠入库解封的权宜之计，治本未做。
+- `tools/release_check.ps1` 的合规规则只有 `spider` / `api.php` / `vod_pic` 三条，
+  未做 license 扫描与体积门禁（`ci.yml` 末尾的 TODO(M10)）。
 
 
 
