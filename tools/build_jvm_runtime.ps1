@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $srcRoot = 'runtimes/spider_jvm/src/main/java'
 $libsDir = 'runtimes/spider_jvm/libs'
 $outDir = 'runtimes/spider_jvm/build/classes'

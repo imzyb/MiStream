@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:arch_check/arch_check.dart';
@@ -272,6 +273,69 @@ import 'package:storage/storage.dart';
     });
   });
 
+  group('ps1-bom', () {
+    const bom = [0xEF, 0xBB, 0xBF];
+
+    Future<void> writeScript(String relative, List<int> bytes) async {
+      final file = File(p.join(root.path, relative));
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(bytes);
+    }
+
+    test('含非 ASCII 且无 BOM 被抓', () async {
+      await writeScript(
+        p.join('tools', 'x.ps1'),
+        utf8.encode('Write-Output "扫描"\n'),
+      );
+
+      final violations = await checkScriptEncoding(root);
+
+      expect(violations, hasLength(1));
+      expect(violations.single.rule, 'ps1-bom');
+      expect(violations.single.file, 'tools/x.ps1');
+    });
+
+    test('含非 ASCII 且带 BOM 放行', () async {
+      await writeScript(
+        p.join('tools', 'x.ps1'),
+        [...bom, ...utf8.encode('Write-Output "扫描"\n')],
+      );
+
+      expect(await checkScriptEncoding(root), isEmpty);
+    });
+
+    test('纯 ASCII 脚本不要求 BOM', () async {
+      await writeScript(
+        p.join('tools', 'x.ps1'),
+        utf8.encode('Write-Output "ok"\n'),
+      );
+
+      expect(await checkScriptEncoding(root), isEmpty);
+    });
+
+    test('psm1 同样受约束', () async {
+      await writeScript(
+        p.join('tools', 'x.psm1'),
+        utf8.encode('Write-Output "扫描"\n'),
+      );
+
+      expect(await checkScriptEncoding(root), hasLength(1));
+    });
+
+    test('跳过目录里的脚本不参与检查', () async {
+      await writeScript(
+        p.join('.workbuddy-ai', 'x.ps1'),
+        utf8.encode('Write-Output "扫描"\n'),
+      );
+      await writeScript(
+        p.join('build', 'x.ps1'),
+        utf8.encode('Write-Output "扫描"\n'),
+      );
+
+      expect(await checkScriptEncoding(root), isEmpty);
+    });
+  });
+
   group('真实仓库', () {
     test('core_domain 确实是纯 Dart 包', () async {
       final repo = _findRepoRoot();
@@ -280,6 +344,18 @@ import 'package:storage/storage.dart';
       );
 
       final violations = await checkPureDartPackage(coreDomain, root: repo);
+
+      expect(
+        violations,
+        isEmpty,
+        reason: violations.map((v) => v.toString()).join('\n'),
+      );
+    });
+
+    test('仓库里的 PowerShell 脚本都带 BOM', () async {
+      final repo = _findRepoRoot();
+
+      final violations = await checkScriptEncoding(repo);
 
       expect(
         violations,
