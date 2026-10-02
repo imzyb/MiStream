@@ -35,36 +35,64 @@ void main() {
     });
 
     test('空白显式路径按未设置处理', () {
+      // 谓词一律为真：若空白路径被当成「显式配置」生效了，返回的会是
+      // kind=custom、path='   ' —— 这两条断言都能抓到。
+      // （早先这里用 `p.endsWith('msedge.exe')` 当谓词，只在 Windows 成立，
+      // 在 macOS/Linux 上候选表里没有 msedge.exe，于是必然返回 null 判红。）
       final locator = SnifferKernelLocator(
         explicitPath: '   ',
-        fileExists: (p) => p.endsWith('msedge.exe'),
+        fileExists: (_) => true,
       );
       final kernel = locator.locate();
       expect(kernel, isNotNull);
-      expect(kernel!.kind, SnifferKernelKind.edge);
+      expect(kernel!.kind, isNot(SnifferKernelKind.custom));
+      expect(kernel.path.trim(), isNotEmpty);
     });
   });
 
   group('优先级', () {
-    test('Edge 优先于 Chrome', () {
-      final locator = SnifferKernelLocator(
-        fileExists: (p) => p.contains('msedge.exe') || p.contains('chrome.exe'),
-      );
-      expect(locator.locate()!.kind, SnifferKernelKind.edge);
+    // ⚠️ 候选表**按平台分叉**（见 `SnifferKernelLocator._candidates()`）：
+    // Windows 上 Edge 随系统存在、命中率最高所以排第一；macOS 上 Chrome 更常见；
+    // Linux 则是发行版自带的 chromium。
+    //
+    // 早先这个 group 把断言写死在 Windows 上（谓词匹配 `msedge.exe` / `chrome.exe`，
+    // 还断言 `C:\Program Files (x86)\...`），于是 macOS 与 Linux 上 4 条全红 ——
+    // **是测试的错，不是定位器的错**。现在按平台断言「顺序」而不是断言某个写死的
+    // 路径，既跨平台成立，又能在有人改动候选表时照样变红。
+    SnifferKernelKind firstKindOnThisPlatform() {
+      if (Platform.isWindows) return SnifferKernelKind.edge;
+      if (Platform.isMacOS) return SnifferKernelKind.chrome;
+      return SnifferKernelKind.chromium;
+    }
+
+    test('候选全在时，命中本平台排第一的那个', () {
+      final locator = SnifferKernelLocator(fileExists: (_) => true);
+      expect(locator.locate()!.kind, firstKindOnThisPlatform());
     });
 
-    test('没有 Edge 时落到 Chrome', () {
-      final locator = SnifferKernelLocator(
-        fileExists: (p) => p.contains('chrome.exe'),
-      );
-      expect(locator.locate()!.kind, SnifferKernelKind.chrome);
+    test('跳过不存在的候选，命中第一个存在的', () {
+      // 只认第 2 个候选：第 1 个被判不存在，应当继续往后探测。
+      var calls = 0;
+      final locator = SnifferKernelLocator(fileExists: (_) => ++calls == 2);
+
+      final kernel = locator.locate();
+
+      expect(kernel, isNotNull, reason: '第 2 个候选存在，不该返回 null');
+      expect(calls, 2, reason: '命中后应立刻停止探测，不再问后面的候选');
     });
 
-    test('返回的路径确实通过了存在性检查', () {
-      const edge =
-          r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe';
-      final locator = SnifferKernelLocator(fileExists: (p) => p == edge);
-      expect(locator.locate()!.path, edge);
+    test('返回的路径就是通过存在性检查的那一个', () {
+      final probed = <String>[];
+      final locator = SnifferKernelLocator(
+        fileExists: (path) {
+          probed.add(path);
+          return probed.length == 2;
+        },
+      );
+
+      final kernel = locator.locate()!;
+
+      expect(kernel.path, probed.last);
     });
   });
 
