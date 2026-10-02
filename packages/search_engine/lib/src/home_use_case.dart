@@ -150,9 +150,19 @@ class HomeUseCase {
     final enabled = await sites.enabled(searchable: false);
     if (enabled.isEmpty) return [];
     if (siteId != null) {
-      // 用户显式选了某个源就尊重它，哪怕它缺运行时——否则点了没反应，
-      // 比报一个明确的错更难排查。
-      return enabled.where((site) => site.id == siteId).toList();
+      // 与首页片源选择器**同一把尺子**：选择器只让 `isUsable` 的源可点
+      // （`SourceOption.isUsable` → `_siteHasRuntime`），这里也必须同口径。
+      //
+      // 早先这里「无条件尊重用户显式选择，哪怕缺运行时」，理由是「点了没反应
+      // 比报一个明确的错更难排查」—— 那个理由在 UI 加上灰显与「(暂不支持)」
+      // 副标题之前成立。现在用户根本点不到不可用的源，这个分支在首页路径上
+      // **不可达**，属两种意图各写了一半（`docs/CODE_AUDIT_2026-09-27.md` P3-3）。
+      //
+      // 统一后的行为：显式选到缺运行时的源 → 返回空 → 上层给出明确错误，
+      // 而不是拿着一个注定失败的源去撞 8s 的建运行时超时。
+      return enabled
+          .where((site) => site.id == siteId && _siteHasRuntime(site))
+          .toList();
     }
     // 丢掉缺运行时的源。以前这里只看 type 分不出「type=3 的 csp_ 需要 JVM」，
     // 于是 105 个 csp_ 站点会被挨个去试、把 30s 探测预算烧光还全失败。
@@ -176,6 +186,15 @@ class HomeUseCase {
     });
     return usable;
   }
+
+  /// 取不到站点列表时的错误文案。
+  ///
+  /// 显式指定了 [siteId] 时不能说「无可用站点」—— 用户（或上次的
+  /// `workingSiteId`）指的是**某一个**源，笼统的文案会让人以为整份配置都坏了。
+  /// 缺运行时是这里最常见的成因（`type=3` 里 `csp_` 开头的需要 JVM，
+  /// ADR-006 降级为可选）。
+  static String _noSiteMessage(int? siteId) =>
+      siteId == null ? '无可用站点' : '所选片源不可用（缺少运行时或已停用）';
 
   /// 单次取数（含建运行时）的总时间预算；超过即停止继续探测。
   static const _probeBudget = Duration(seconds: 30);
@@ -300,10 +319,10 @@ class HomeUseCase {
     }
     final siteList = await _getEnabledSites(siteId: siteId);
     if (siteList.isEmpty) {
-      return const Err(
+      return Err(
         LocalError(
           code: ErrorCode.invalidArgument,
-          message: '无可用站点',
+          message: _noSiteMessage(siteId),
         ),
       );
     }
@@ -357,10 +376,10 @@ class HomeUseCase {
   }) async {
     final siteList = await _getEnabledSites(siteId: siteId);
     if (siteList.isEmpty) {
-      return const Err(
+      return Err(
         LocalError(
           code: ErrorCode.invalidArgument,
-          message: '无可用站点',
+          message: _noSiteMessage(siteId),
         ),
       );
     }
