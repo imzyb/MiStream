@@ -22,7 +22,7 @@
 | M11-M15 | — | 🔴 未启动 |
 
 > **口径说明**：上表的「出口标准 0 勾」不等于「代码未实现」。M1/M2 的实现
-> 与测试早已齐备（player_engine 142 用例、storage 47 用例），其出口标准
+> 与测试早已齐备（player_engine 142 用例、storage 54 用例），其出口标准
 > 之所以为 0，是因为条目本身要求**人工在真实环境验证**（硬解实测、2 小时
 > 长跑、迁移回滚、冷启动性能），而非缺代码。详见
 > [进度审计报告](docs/PROGRESS_AUDIT_2026-09-19.md)。
@@ -80,6 +80,16 @@
       但它 105 个站点全是 `type=3` + `csp_`（需 JVM，ADR-006 降级为可选），
       所以「从零起播」仍然勾不上——**卡在缺一个 type=1/3(.js) 的可播源**，
       不再是导入本身的问题。详见下一节。
+      **2026-10-02 更正：上面这个判断是错的，`csp_` 那条路本来就该能走。**
+      用户实测截图报「所有站点均无法连接（共尝试 106 个：城市影视:
+      spider jar 不存在: ./spider.jar）」——不是缺可播源，是**这批 `csp_`
+      站点全被一个相对路径 bug 挡住了**：配置根级 `spider` 写成
+      `"./spider.jar;md5;…"`，而 `SiteRepository.configSourceSpider` 原样返回，
+      下游 `JvmRuntimeFactory._ensureJar` 见它不是 http(s) 就当**本地文件路径**
+      去找。已修（见文末「本次会话（2026-10-02）· 二」）。修后该配置
+      105 个站点全部解析出可下载的绝对 URL，链路证据 14/14。
+      仍未勾「从零起播」的唯一原因变成了**本机起不了 java 子进程**
+      （命名管道缺陷），需在用户机器上实测。
 - [x] 聚合搜索源隔离 → `search_engine/test/search_use_case_test.dart`（超时/崩溃不阻塞）
 - [x] 可读错误码 → `features/player/widgets/player_states.dart`（含嗅探 4 类错误码文案）
 - [x] 关闭重开续播 → `apps/mistream/test/application/resume_policy_test.dart`（15 用例，覆盖不足 5s / 距片尾 30s 两条边界的含等于与不含等于、时长为零、无历史）+ `apps/mistream/test/features/player/player_resume_e2e_test.dart`（5 用例，驱动真实播放页验证 seek 到历史位置、三条不续播边界、进度写回历史）
@@ -1851,6 +1861,72 @@ M7 出口标准停在 3/4（剩「换台 P50 < 2s」卡真实网络），但**�
   **不是画得对不对**。
 - `router.dart` 里仍剩两处 `globalRouterAssembly`（`:251` 给
   `PlayerPageWrapper` 传参、`:315` 作回退），属「下一步」第 5 条的 P4 债务。
+
+---
+
+## 本次会话（2026-10-02）· 二：真实配置源「无法使用」——spider jar 相对路径
+
+**现象**（用户截图）：首页报
+「所有站点均无法连接（共尝试 106 个：城市影视: spider jar 不存在: ./spider.jar）」。
+
+**根因**（用户真实库 + 上游原文双证）：
+
+- 用户库里 `config_source` 只有一行（`订阅 2026-09-25`）：
+  `spider = './spider.jar;md5;af187c2a2be1bcbb5e183d77e740b21b'`、`spider_md5 = NULL`。
+- `SiteRepository.configSourceSpider` 把这一整串**原样**返回。
+- `JvmRuntimeFactory._ensureJar` 的判据是「不是 http(s) 就当本地文件路径」→
+  `File('./spider.jar').existsSync()` 为假 → 抛 `spider jar 不存在: ./spider.jar`
+  （`spider_runtime_factory.dart:652`）。
+- 该配置 **105 个站点全是 `type=3` + `csp_`**。注意站点列里写的 `runtime='http'`
+  是**陈旧值且不权威**——运行时由 `classifySiteRuntime(typeCode, api)` 现场重算，
+  所以照样进了 JVM 分支。整份配置因此全灭，首页只剩一句笼统文案。
+- 上游现状（2026-10-02 `curl` 实测）：`api.json` 里**仍是**
+  `"./spider.jar;md5;abc13bea…"` —— 相对路径不是历史遗留，是当前写法。
+  （顺带：`core_config.parseSpiderField` 只拆 md5、**不解析相对路径**，
+  所以这个 bug 对新导入的行同样成立，不只是旧数据。）
+
+**修法**：在**唯一读点** `configSourceSpider` 把相对路径按配置源 URL 解析成绝对地址
+（`resolveSpiderJarUrl`）。选这个位置的理由：4 个消费方（`app_assembly` /
+`detail_use_case` / `home_use_case` / `play_use_case`）全走这一个口，改一处全覆盖；
+且**旧数据不需要重新导入**。
+
+**刻意不做**：`configSourceSpiderMd5` **不回退**到 `spider` 字段里内联的 md5。
+实测旧行的内联 md5（`af187c2a…`）与内联 URL 同龄、已过期（上游现值 `abc13bea…`），
+采纳它等于拿一个已知过期的期望值去卡死一次本来能成功的下载。返回 null = 本次不校验；
+新导入的配置由 `parseSpiderField` 把 md5 正确拆进列，校验照常生效。
+
+### 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `analyze_inproc.dart` | 358 文件 **0 error / 0 warning / 0 info** |
+| `run_tests_shim.dart` | **217 例**全绿 |
+| `run_tests_storage.dart` | 47 → **54 例**全绿 |
+| `tools/arch_check` | 分层纪律检查通过 |
+| `verify_spider_jar_e2e.dart`（真实源 + 真实下载） | **14 项 0 失败**（java 子进程 1 项 SKIP，环境限制） |
+| `verify_user_db_spider.dart`（用户库副本） | **5 项 0 失败**，105/105 站点解析出绝对 URL |
+
+`verify_spider_jar_e2e.dart` 的闭环：真实源 → `installFromUrl` 落库（103 站点）→
+读回 `configSourceSpider` =
+`https://raw.githubusercontent.com/qist/tvbox/refs/heads/master/xiaosa/spider.jar`
+→ 真下载 **HTTP 200 / 1859860 字节** → 实算 md5 `abc13beac287a298e6b7ca91af7404cd`
+**等于**配置声明的值 → `_ensureJar` 的校验分支会通过。
+
+**反向验证**（各自变红）：
+
+| 摘掉的保障 | 结果 |
+| --- | --- |
+| `configSourceSpider` 的 `resolveSpiderJarUrl` | `+50 -4` —— 相对路径、已拆分相对路径、绝对 URL 剥离、空白归一 共 4 条转红 |
+| 改回 `configSourceSpiderMd5` 的内联回退 | `+52 -2` —— 2 条 md5 断言转红 |
+
+### 仍未做（如实记）
+
+- **JVM 实例创建本地证不了**：`Process.start` 直接抛
+  `ProcessException: 所有的管道范例都在使用中 (process_win.cc:744)`
+  （本机命名管道缺陷），脚本里记 SKIP。所以「jar 下得下来、md5 对得上」有硬证据，
+  「java 能加载它」没有——**需要在用户机器上实测一次**。
+- **用户库数据确实陈旧**：105 站点 vs 上游当前 103，`spider_md5` 为空。
+  建议顺手「刷新订阅」（会清库重建、拿到正确 md5）。但修后**不刷新也能用**。
 
 
 
