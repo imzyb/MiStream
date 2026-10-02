@@ -33,7 +33,12 @@ class AppAssembly {
   /// [downloadsRoot] 是下载根目录的绝对路径（`main.dart` 解析后传进来）。
   /// 为 `null` 时下载管理器不设删除边界 —— 只该出现在测试里，产品路径上
   /// 必须给值，否则「删除下载」会递归删掉应用目录之外的东西。
-  AppAssembly(this.database, this.repositories, {this.downloadsRoot}) {
+  AppAssembly(
+    this.database,
+    this.repositories, {
+    this.downloadsRoot,
+    this.enableBrowserSniffing = true,
+  }) {
     // Spider JS 运行时：优先使用编译后的 exe，fallback 到 dart run
     final exePath = _resolveSpiderJsPath();
     _hostApi = HostApi();
@@ -66,7 +71,7 @@ class AppAssembly {
       repositories.sites,
       runtimeFactory: _runtimeFactory,
       resolver: snifferResolver,
-      browserSniffer: browserSniffer.sniff,
+      browserSniffer: enableBrowserSniffing ? browserSniffer.sniff : null,
     );
     homeUseCase = HomeUseCase(
       repositories.sites,
@@ -116,6 +121,14 @@ class AppAssembly {
 
   /// 下载根目录；`null` 表示未配置（仅测试）。
   final String? downloadsRoot;
+
+  /// 是否启用浏览器嗅探兜底（`CdpSnifferLauncher`）。默认启用。
+  ///
+  /// **widget 测试必须关掉**：兜底会起一个真浏览器子进程，而 widget 测试的
+  /// FakeAsync 里起不来，于是它一直等到 `startupTimeout` 超时，测试表现为
+  /// 「pending timer」+ 取地址永不返回（`_init()` 走不到 `open`）。
+  /// 关掉之后 `PlayUseCase` 仍会走「直链形态的地址直接交给播放器」那条退路。
+  final bool enableBrowserSniffing;
 
   /// 聚合搜索用例。
   late final SearchUseCase searchUseCase;

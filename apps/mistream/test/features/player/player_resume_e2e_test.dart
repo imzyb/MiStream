@@ -4,8 +4,10 @@
 /// → 读到该进度 → 首个播放证据出现后 seek 到续播点。同时验证两条不续播的
 /// 边界（进度太靠前、已接近片尾）在真实页面上也确实不 seek。
 ///
-/// 这里驱动真实的 [PlayerPageWrapper]，只把两处外部依赖换成受控实现：
-/// 播放引擎（`FakePlayerEngine`，位置可手动推进）与装配（内存库 + mock 源）。
+/// 这里驱动真实的 [PlayerPageWrapper]，只把三处外部依赖换成受控实现：
+/// 播放引擎（`FakePlayerEngine`，位置可手动推进）、装配（内存库 + mock 源）、
+/// 以及**浏览器嗅探兜底**（关掉 —— 它要起真浏览器子进程，widget 测试的
+/// FakeAsync 里起不来，会把「取地址」永远挂住）。
 /// 这是该出口标准此前唯一无法自动化的部分——续播判断原先内嵌在 State 里
 /// 且依赖全局装配。
 library;
@@ -47,7 +49,7 @@ void main() {
     await server.start();
     db = AppDatabase.inMemory();
     repositories = Repositories(db);
-    assembly = AppAssembly(db, repositories);
+    assembly = AppAssembly(db, repositories, enableBrowserSniffing: false);
     // 导入 mock 配置，拿到真实站点与播放地址。
     final install = await ConfigInstallService(
       repositories,
