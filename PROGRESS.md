@@ -2182,5 +2182,189 @@ melos run generate
 - `spider_jvm_runtime.jar` 不进包：`app_assembly.dart` 按仓库相对路径找它，分发场景
   下 JVM 类 `csp_` 站点会走「JVM 运行时未配置」的降级分支。
 
+## 本次会话（2026-10-02）· 五：三平台 `test` 与 Linux 构建的红，逐条拆掉
+
+### 现象与归类
+
+`test` 三个平台历来每一次都红，`build-check（linux）` 也红。按平台分别统计失败集
+（`❌ test/...`），**平台分布本身就是根因线索**：
+
+| 平台 | 失败数 | 归类 |
+| --- | --- | --- |
+| windows | 8 | `host_soak` 4 + `real_process_host` 4 |
+| macos | 12 | 上面 8 + `kernel_locator` 4 |
+| ubuntu | 16 | 上面 12 + `kernel_process` 3 + `sync_frame_io` 1 |
+
+四类根因，**前两类与被测代码无关**。
+
+### 一、`Platform.script` 在 `dart test` 下不是源码路径（8 条 × 3 平台）
+
+`dart test` 会把测试**预编译**成 `<tmp>/dart_test.kernel.<hash>/xxx_test.dart`，于是
+`Platform.script.resolve('support/rpc_child.dart')` 必然落空：
+
+```
+Could not find file `C:\Users\RUNNER~1\AppData\Local\Temp\dart_test.kernel.e3f2c572\support\rpc_child.dart`
+Invalid argument(s): 桩文件不存在: /tmp/dart_test.kernel.KFQAIQ/support/rpc_child.dart
+test/support/child_staging.dart 35:7  stageChildStubs
+```
+
+而本地 `dart run test/xxx_test.dart` 下 `Platform.script` 是真实源码路径，**全绿** ——
+这个「跑法差异」让 bug 藏了很久。
+
+修复：`packages/spider_host/test/support/child_staging.dart` 新增
+`resolveTestSupportFile(name)`，先按 `Platform.script` 旁路找，落空再从
+`Directory.current`（`dart test` 的 cwd 就是**包目录**）向上 4 层找
+`test/support/<name>`；都找不到抛 `ArgumentError`，并把 `Platform.script` 与 cwd
+带进消息。`host_soak_test.dart` 与 `real_process_host_test.dart` 改用它。
+
+### 二、断言把平台写死（4 条 × mac/ubuntu）
+
+`SnifferKernelLocator._candidates()` 是**按平台分叉**的（Windows→edge、macOS→chrome、
+Linux→chromium），但 `kernel_locator_test` 的「优先级」组按 Windows 写死了
+`msedge.exe` / `C:\Program Files (x86)\...`。**是测试的错，不是定位器的错。**
+
+改为按当前平台断言「命中排第一的那个」；另两条改成只验证行为不变式（跳过不存在的
+候选、返回的路径就是通过存在性检查的那一个）。「空白显式路径按未设置处理」去掉了
+对 `custom` 的硬断言。
+
+### 三、Ubuntu 23.10+ 的 Chromium 沙箱（3 条，仅 ubuntu）
+
+```
+KernelLaunchException: 内核在端点就绪前退出（code=-6）；stderr:
+[…FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:129] No usable sandbox! …]
+```
+
+AppArmor 默认禁止非特权 user namespace。`真实内核启动` 组的 `skipReason` 只覆盖
+「找不到浏览器」，盖不住「浏览器在、但起不来」。
+
+测试侧**只在 Linux** 追加 `--no-sandbox`（Windows / macOS 沙箱可用，不加，让默认参数
+继续被真实覆盖）。
+
+**生产代码刻意没有这个回退**：嗅探内核要渲染不受信任的第三方页面，关沙箱是实打实的
+安全降级（Chromium 原文 "if you want to live dangerously"）。Linux 本身要到 **M13**
+才支持，所以现在只影响 CI 与将来的移植工作；M13 时必须解决。测试里的
+`--no-sandbox` **不能**拿来反推生产可用。
+
+### 四、性能护栏阈值给不出量级余量（1 条，仅 ubuntu）
+
+`sync_frame_io_test` 断言「1MB 逐字节读 <1000ms」，注释写「实测基线 668ms/MB，
+阈值留了 50% 余量，只拦量级性退化」—— **只有 1.5 倍却声称拦量级退化，这句自相矛盾
+就是线索**。CI 实测 2008ms（3 倍，宿主机调度噪声）。
+
+改为 5000ms（≈7.5 倍基线），注释里写清两次实测值与「先怀疑宿主机、再怀疑代码」。
+
+### 五、`build-check（linux）` 补一个 `libasound2-dev`
+
+`volume_controller/linux/CMakeLists.txt:50` 是 `find_package(ALSA REQUIRED)`：
+
+```
+CMake Error: Could NOT find ALSA (missing: ALSA_LIBRARY ALSA_INCLUDE_DIR)
+  flutter/ephemeral/.plugin_symlinks/volume_controller/linux/CMakeLists.txt:50 (find_package)
+```
+
+`ci.yml` 的「Linux 桌面构建依赖」补上 `libasound2-dev`。已核实**其余 Linux 插件不需要
+额外系统库**：`media_kit_video` 找不到 libs 包只打 WARNING 并编译一个 stub 插件
+（`MEDIA_KIT_LIBS_NOT_FOUND=1`），`jni` 是 `find_package(JNI COMPONENTS JVM)` 不带
+REQUIRED。**别再被 `media_kit: WARNING: package:media_kit_libs_*** not found.` 骗去装 mpv。**
+
+⚠️ `build-check` 变绿**只代表「能编译」**：`apps/mistream/pubspec.yaml` 只声明了
+`media_kit_libs_windows_video`，Linux / macOS 的产物里播放器就是那个 stub。这与 ROADMAP
+一致（**M13 macOS/Linux 移植**），**不是疏漏**；但也别因为绿了就以为 Linux 版能用。
+
+### 本地验证
+
+| 项 | 结果 |
+| --- | --- |
+| `dart format`（Dart 3.12.2，全仓） | `363 files (0 changed)` |
+| `analyze`（经 `as_client.py` 直连 analysis server，同源） | 4 个改动文件 **0 诊断** |
+| `check:arch`（`dart run tools/arch_check/bin/arch_check.dart`） | `分层纪律检查通过` |
+| `dart run test/real_process_host_test.dart` | **4/4** |
+| `dart run test/host_soak_test.dart` | **4/4** |
+| `dart run test/kernel_locator_test.dart` | **15/15** |
+| `verify_stub_resolve.dart`（桩路径兜底 3 种情形） | **9/9** |
+| 提交信息（复刻 `tools/commit_lint` 规则逐条校验） | 8 条 **0 error** |
+
+> `dart analyze` / `dart test` 本地跑不了（要起分析服务器 / `frontend_server`，撞命名
+> 管道缺陷），所以走 `as_client.py` 拿同源诊断。`kernel_process_test` 本地也跑不了
+> （要起 msedge）；`flutter test` 同样跑不了（flutter 工具自身要起 `git` / `where`，
+> 实测秒崩在 `CreateFile failed 231`）。这两条都属已知缺陷，与改动无关 —— 代价是
+> **`apps/mistream` 的 widget 测试改动只能在 CI 上验证**，本地没有实测数字。
+> 本次会话中本机管道资源还一度整体耗尽，连 `cmd /c echo` 都起不来。
+
+### 六、`test:flutter` 在 CI 里**从来没跑过** —— `melos run test` 是 `&&` 串联的
+
+修完上面五条后 `test:dart` **整段通过**，`test:flutter` 这才第一次真正执行，立刻
+暴露出 `apps/mistream` 的 5 条失败：
+
+```
+❌ test/features/player/player_resume_e2e_test.dart: 历史进度在中间时，重开播放页会 seek 到上次位置 (failed)
+订阅拉取失败：HTTP 400 · 0 字节（两次 UA 都试过；浏览器 UA 的结果：HTTP 400 · 0 字节）
+```
+
+`melos run test` 的定义是：
+
+```
+run: melos run test:dart --no-select && melos run test:flutter --no-select
+```
+
+`&&` 让 `test:flutter` 在 `test:dart` 失败时**直接跳过**。而 `test:dart` 历来每一次
+都红 —— 所以 `apps/mistream`（仓库里唯一的 Flutter 包）的 widget 测试**在 CI 里
+一次都没跑过**。这不是「新增失败」，是**长期被掩盖**。
+
+**三层原因**，都在测试侧（一层修掉才露出下一层）：
+
+1. `TestWidgetsFlutterBinding` 初始化时把 `HttpOverrides.global` 换成 mock，此后
+   所有 HTTP 一律返回 400（`_binding_io.dart` 的 `setupHttpOverrides`）。本文件的
+   受控外部依赖恰恰是本地 `MockSourceServer`，必须放行 → `setUpAll` 里置 null
+   （mock 只在 binding 初始化时装一次，而 `testWidgets` 在 `main()` 注册阶段就把
+   binding 建好了，置一次即够）。
+2. `_init()` 里的取地址要**真发 HTTP**，而 `testWidgets` 默认在 FakeAsync 里跑。
+   只 `pump` 假时钟时，socket 的真实完成回调与假 zone 里排队的微任务对不上节奏，
+   `_init()` 会一直挂在 `getPlayableSource` 上 → 改成每轮 `runAsync`（真实事件
+   循环）+ `pump`（假时钟）交替推进。
+3. 放行 HTTP 后暴露出更深的一层：mock 的播放地址是 `https://example.com/ep1.m3u8`，
+   而装配用的是 `SnifferResolver(verifyDirectMedia: true)` —— 它会**真去 fetch**，
+   404 之后静态嗅探判失败，于是回退到**浏览器嗅探**；widget 测试里起不了真浏览器，
+   `getPlayableSource` 因此永不返回，`_init()` 走不到 `open`（第 5 条报
+   `Bad state: 必须先 open 一个媒体`，其余报 `Pending timers: Timer 20s`，
+   而那个 20s 定时器的创建栈直接指向 `SnifferKernelProcess.launch`）。
+   → 给 `AppAssembly` 加 `enableBrowserSniffing`（默认 true，产品行为不变），
+   测试里传 false；关掉后 `PlayUseCase` 仍走「直链形态的地址直接交给播放器」
+   那条退路，取地址正常返回。
+
+> **教训一**：`melos run a && melos run b` 会让 b 的失败长期不可见。看到某个作业
+> 「历来全红」时，先确认它**每一段都真的执行了**，而不是只数失败条数。
+>
+> **教训二**：真实子进程测试的失败信息里，**pending timer 的创建栈**比断言行本身
+> 有用得多 —— 它直接指出「是谁没结束」。这次就是靠它从
+> `SnifferKernelProcess.launch` 一路逆推到浏览器嗅探兜底。
+
+### 结果：三平台 `test` 全绿（run `37041217809`，`9c1151f`）
+
+| 作业 | 结果 |
+| --- | --- |
+| `lint` / `arch` / `commitlint` | **success** |
+| `build-check（linux / macos / windows）` | **success**（linux 首次转绿） |
+| `release-windows` | **success** |
+| **`test（ubuntu / macos / windows）`** | **success**（三平台首次全绿） |
+
+实测数字（三平台一致）：`test:dart` 各包 `6 / 10 / 11 / 12 / 23 / 25 / 26 / 34 / 39 /
+52 / 54 / 66 / 69 / 70 / 72 / 90 / 98 / 116 / 128 / 137 / 186` 条通过，其中
+`runtimes/sniffer` 是 `220 passed, 64 skipped`；`test:flutter` 段 `137 passed`。
+**三平台 `❌` 计数均为 0**。
+
+`player_resume_e2e_test.dart` 的 5 条全部 ✅（含「重开播放页 seek 到上次位置」），
+`kernel_process_test.dart` 的 4 条真实内核启动全部 ✅ —— 这两组此前从未在 CI 里
+成功执行过。
+
+### 仍未做（如实记）
+
+- 生产侧「Ubuntu 23.10+ 沙箱」未修：涉及安全权衡，需单独决策（见上）。
+- `kernel_process_test` 的真实浏览器启动在共享 runner 上**仍可能偶发超时**（同一
+  提交两次 CI 里一次三条全绿、一次首条 30s 超时）。已把 `startupTimeout` 放到 60s；
+  若仍复发，下一步是「启动失败重试一次」而不是继续加时间。
+- 合规规则仍只有 `spider` / `api.php` / `vod_pic` 三条，未做 license 扫描与体积门禁。
+- 草稿 Release `v0.1.0-m10-5` 未发布；`spider_jvm_runtime.jar` 仍未进包。
+
 
 
