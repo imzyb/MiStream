@@ -18,7 +18,7 @@ dependencies:
   drift: ">=2.34.0 <2.34.1"
   meta: ^1.18.0
   path: ^1.9.0
-  sqlite3: ^3.0.0
+  sqlite3: ^3.7.0
 
 dev_dependencies:
   build_runner: ^2.5.0
