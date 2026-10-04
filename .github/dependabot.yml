@@ -18,19 +18,27 @@ updates:
     # flutter 把传递依赖钉死（test_api 0.7.11、meta 1.18.0），下面这些包一升级
     # 就必然在 `flutter pub get` 阶段 version solving failed。
     #
-    # 关联的已关闭 PR（2026-10-04）：
+    # 关联的已关闭 PR（2026-10-04，关闭评论里都贴了 CI 日志原文）：
     #   #5  test                → test_api 0.7.12 vs SDK 钉的 0.7.11
     #   #6  meta                → SDK 把 meta 钉在 1.18.0
     #   #10 very_good_analysis  → 11.0.0 要求 Dart SDK ^3.13.0
     #   #11 drift_dev / melos   → drift_dev 2.35.1 要求 analyzer >=13.0.0
+    #   #16 drift               → 2.34.4 与刻意 pin 的 drift_dev 2.34.0 不兼容
+    #   #17 sqlite3             → 3.7.0 与 SDK 钉的 meta 1.18.0 互斥
     #
-    # 解锁条件：Flutter stable 升到 Dart 3.13 后，删掉这段 `ignore:` 即可整批放开。
+    # 注：`drift` 与 `drift_dev` 必须同进同退 —— packages/storage/pubspec.yaml 把
+    # drift_dev 钉在 >=2.34.0 <2.34.1，所以 drift 运行时的升级也一并不能收。
+    #
+    # 解锁条件：Flutter stable 升到 Dart 3.13 后，删掉这段 `ignore:` 即可整批放开
+    # （同时去掉 pubspec.yaml / packages/storage/pubspec.yaml 里那几处硬钉）。
     ignore:
       - dependency-name: test
       - dependency-name: meta
       - dependency-name: very_good_analysis
+      - dependency-name: drift
       - dependency-name: drift_dev
       - dependency-name: melos
+      - dependency-name: sqlite3
 
   - package-ecosystem: github-actions
     directory: /
