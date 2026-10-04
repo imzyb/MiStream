@@ -2844,9 +2844,23 @@ INFO  missing_whitespace_between_adjacent_strings  tools/check_jvm_runtime_bundl
   （后者覆盖 `listSources` 的数据，不覆盖 widget 树）。
   已刻意避开 `AlertDialog` 的 `IntrinsicWidth` 与 `flex` 子项的交互（改用
   `ConstrainedBox`），因为那个交互无法实测。
-- **用户手上的便携包仍是坏的**：本次修的是**未来构建**。用户要么重新下完整包，
-  要么把 `runtimes/spider_jvm/` 放到 `mistream.exe` 同级目录（③的第 1 条候选，
-  已实测可用）。
+- ~~**用户手上的便携包仍是坏的**~~ —— **已就地救活（2026-10-04 追加）**。
+  把 `runtimes/spider_jvm/`（1 个 runtime jar + 31 个 libs）放到
+  `mistream.exe` 同级目录即可，已实测可用：
+
+  - 门禁脚本 `check_jvm_runtime_bundle.dart --bundle <包>` → `runtime verified`。
+  - 用复刻**旧版** `_projectRoot()` 的探针（`probe_old_jvm_resolution.dart`）
+    复核：旧 exe 的 `_projectRoot()` 从 exe 起向上找 `runtimes/`，**i=0 即命中
+    exe 同级**，两种 cwd 都返回「可用」且**没走隐式 cwd 兜底** —— 所以**不必等
+    新构建**，用户手上那个 exe 现在就能用（前置条件 `java` 17.0.12 已装）。
+  - 启动冒烟：`java -cp "build/spider_jvm_runtime.jar;libs/*" io.mistream.jvm.Main`
+    喂空输入 → 干净退出 0；对照写错 jar 名 → `ClassNotFoundException`、去掉
+    libs → `NoClassDefFoundError: org/objectweb/asm/ClassVisitor`，证明
+    「干净退出」是真加载成功。
+  - 产出修好的整包 `outputs/mistream-v0.1.0-m10-5-windows-x64-jvmfix.zip`
+    （61 条目 / 59.3 MB，含 32 个 `runtimes/` 条目，`testzip()` 完整性 OK）。
+    注意它内含的是 **m10-5 的旧 app 代码 + 补入的运行时**，不含本次的 UI 引导与
+    解析加固；完整修复仍要等下一次 CI 构建。
 
 ### 收尾状态
 
@@ -2854,7 +2868,12 @@ INFO  missing_whitespace_between_adjacent_strings  tools/check_jvm_runtime_bundl
 `tools/check_jvm_runtime_bundle.dart`）。
 
 - `8c53634` fix(spider): JVM 运行时随包分发，修 csp_ 站点全不可用
-- 后续一个小提交：修 `as_client.py` 抓出的 2 条
-  `missing_whitespace_between_adjacent_strings`（相邻字符串改列表 + `join()`）
+- `d65d514` fix(spider): 相邻字符串字面量改用列表 + join()
+  （`as_client.py` 抓出的 2 条 `missing_whitespace_between_adjacent_strings`）
+
+验证：`as_client.py errors .` = **0 条 / 361 文件**；`run_tests_shim.dart` =
+**217 passed**；`arch_check` 通过；`dart format --set-exit-if-changed` = 0 changed；
+`commit_lint`（文件模式）exit 0。
+
 
 
