@@ -2722,3 +2722,106 @@ CI 覆盖不到**运行时行为**，这两项需要在真机上做：
 合并后的 `main`（`c7eded9`）CI：**9 success + 1 skipped**（`commitlint` 只在
 `pull_request` 事件跑，push 到 main 时显示 skipped 属预期），无失败项。
 
+---
+
+## 本次会话（2026-10-04）· 十：修「105 个站点全部不支持」——JVM 运行时没随包
+
+### 现象
+
+用户报告：导入的配置里 **105 个站点全部显示「暂不支持」，一个都用不了**。
+
+### 根因（逐环节实测，不是推断）
+
+1. 用户库（`%APPDATA%/com.mistream/mistream/data/mistream.db`，表 `site`）里
+   **103 行全部是 `type_code=3` 且 `api` 以 `csp_` 开头** —— 正是
+   `classifySiteRuntime` 判为 `SiteRuntimeKind.jvm` 的那一类。
+2. 用户跑的是**便携包**（`C:\Users\Administrator\Desktop\mistream-windows-release\`）。
+3. 该包里**没有 `runtimes/` 目录，也没有任何 `.jar`**（`find` 实测）。
+4. 断链点：`_resolveJvmConfig()` 返回 `null` → `supports(jvm) == false` →
+   `SourceOption.hasRuntime == false` → 站点灰显 +「(暂不支持)」。
+
+**根因**：`apps/mistream/windows/CMakeLists.txt` 里**从来没有**
+`runtimes/spider_jvm` 的 install 规则。`spider_js` 有，`spider_jvm` 没有 ——
+于是打包产物永远缺这个目录。而 `release.yml` 确实构建了 jar（`jvm:build` 那一步
+是绿的），只是**构建完没人把它拷进产物**，也没有任何断言检查它。
+
+补充一条容易误判的事实：**JVM 运行时本身是好的**。`JarLoader` 是真实的
+dex→jar 链路，`tools/jvm_smoke_test.ps1` 对真实 dex jar 跑出过
+`handshake` / `spider.create`（capabilities: home,homeVideoContent,category,
+detail,search,play,action）/ `spider.home` 493 字节真实数据。坏的只有打包。
+
+### 修法（五项）
+
+| # | 改动 | 文件 |
+| --- | --- | --- |
+| ① | 打包带上 JVM 运行时 | `apps/mistream/windows/CMakeLists.txt` |
+| ② | 发布门禁：产物必须含运行时 | `tools/check_jvm_runtime_bundle.dart`（新）、`ci.yml`、`release.yml` |
+| ③ | 解析加固：候选顺序 + 显式 cwd | `apps/mistream/lib/application/app_assembly.dart` |
+| ④ | 前置检查与 UI 引导 | `jvm_runtime_status.dart`（新）、`home_page.dart`、`home_use_case.dart` |
+| ⑤ | 文档修正 | `runtimes/spider_jvm/README.md`、`docs/11-构建与发布.md`、`README.md` |
+
+**①的取舍**：install 规则用 `OPTIONAL`，不是硬失败。`build/` 与 `libs/` 都不入库
+（根 `.gitignore` 的 `build/` 命中前者），jar 由 `melos run jvm:build` 现场编译、
+需要外部 JDK 17。ADR-006 把它定为「实验性可选组件」，所以没装 JDK 的本地构建不该
+被它拦死；硬约束放在发布门禁那一层。configure 阶段打一条 STATUS 说明纳没纳入。
+
+**③的顺序**（`_jvmRuntimeDirCandidates()`）：exe 同级 → 从 exe 逐级向上 →
+`%APPDATA%/com.mistream/mistream` → cwd。最后一条以前是**隐式**的（旧
+`_projectRoot()` 向上找失败时直接 `return Directory.current`，把 cwd 伪装成
+项目根），现在它是有名字、有注释、排在最后的候选。
+
+### 验证（每条都指向可复现的证据）
+
+| 验证项 | 手法 | 结果 |
+| --- | --- | --- |
+| ① 真的拷进产物 | 从 `CMakeLists.txt` **原文抽出** install 块，配最小 CMake 工程真跑 `cmake --install --config Release` | 产出 `runtimes/spider_jvm/build/spider_jvm_runtime.jar` + `libs/` 31 个 jar = 32 个文件 |
+| ① `OPTIONAL` 生效 | 同上，把 REPO_ROOT 指向「有 libs 无 build」的假仓库 | configure 打「未构建」提示，**install 仍 exit 0**，产物只缺 jar |
+| ② 门禁正向 | 对上面那份完整产物跑 | `Spider JVM 依赖：31 个 jar` / `verified` / exit 0 |
+| ② 门禁反向 | 用户的便携包、本地 Release 产物、空 libs、0 字节 jar、目录不存在 | **5 种全部 exit 1**，且各给出对应的具体缺失项 |
+| ③ 候选顺序 | `probe_jvm_resolution.dart` 模拟 exe 路径 + `--cwd` | 打包布局命中 [1]（exe 同级），仓库树 [9] 同样命中但**未被选中** → 优先级正确 |
+| ③ 旧隐式兜底 | 同一个便携包，cwd 分别设为包目录与仓库根 | 前者 `null（不可用）`、后者 `可用` —— 旧代码里这个差异**诊断里看不出来**，现在它是第 [7] 条带「← 命中」的候选 |
+| ③ 盘根守卫 | 观察候选列表 | 到 `C:\` 后停止，没有重复 10 次同一路径 |
+| ④⑤ 静态检查 | `.workbuddy-ai/scripts/analyze_inproc.dart`（进程内 analyzer） | 全仓 **360 文件 error=0 warning=0 info=0** |
+| ④⑤ 分层纪律 | `dart run tools/arch_check/bin/arch_check.dart` | 通过 |
+| ④⑤ 格式 | `dart format --set-exit-if-changed` | 改动文件 0 changed |
+| ⑤ JDK 版本对齐 | 读 jar 内 `Main.class` 字节 6-7 | major **61 = Java 17**，与 ADR-006 要求的 JRE 17+ 一致 |
+
+### 顺手堵掉的两个同类隐患
+
+1. **`build_jvm_runtime.ps1` 没固定字节码目标**。原命令是
+   `javac -encoding UTF-8 -cp <libs> -d <out>`，字节码版本**跟着编译器走**。
+   CI 的 `windows-latest` 不保证永远是 JDK 17，一旦镜像升到 21 就会静默产出
+   major 65 的 jar，而用户按 README 装的是 JRE 17 → `UnsupportedClassVersionError`。
+   已加 `--release 17`，并给两条流水线加 `actions/setup-java@v4`（temurin 17）钉版。
+   本地重编译后实测仍为 major 61、大小逐字节不变（JDK 17 编译时 `--release 17`
+   不改变输出）。
+2. **`debugJvmConfig()` / `debugSpiderJsPath()` 声明了但全仓无人调用**，而这次故障
+   最需要的信息恰恰是「为什么不可用」—— `debugJvmConfig()` 只回一个 `null`，
+   不区分「没装 JRE」「jar 没编译」「目录没随包」这三种修法完全不同的成因。
+   新增 `debugJvmRuntimeReport()`，逐条打印候选目录与命中情况。
+
+### 仍未做（需要真机 / 环境恢复）
+
+- **端到端整包构建未在本机验证**：`flutter build windows --release` 起不来 ——
+  本机 Dart 的 `Process.start` 全面失败（`CreateFile failed 231` /
+  `ERROR_PIPE_BUSY`），`flutter analyze`、`flutter test`、`dart analyze` 都受影响
+  （`dart run` / `dart format` 正常）。①的验证是用 CMake 单独跑 install 规则做的，
+  **不是**完整的 `flutter build` 产物。
+- **UI 未在真机跑过**：`flutter test` 同样起不来，片源选择器的新布局
+  （`ConstrainedBox` 限高 + 实验性标记 + 确认弹窗）只过了静态检查。
+  已刻意避开 `AlertDialog` 的 `IntrinsicWidth` 与 `flex` 子项的交互（改用
+  `ConstrainedBox`），因为那个交互无法实测。
+- **lint 规则未跑**：进程内分析器跑不了 `linter`（pub 上最新 `linter` 只支持
+  `analyzer ^5.2.0`，与本仓 12.1.0 不兼容），所以 `very_good_analysis` 的 lint
+  只过了人工核对。风险项 `use_build_context_synchronously` 已确认有
+  `if (!pickerCtx.mounted) return;` 守卫。
+- **用户手上的便携包仍是坏的**：本次修的是**未来构建**。用户要么重新下完整包，
+  要么把 `runtimes/spider_jvm/` 放到 `mistream.exe` 同级目录（③的第 1 条候选，
+  已实测可用）。
+
+### 收尾状态
+
+改动：10 个文件修改 + 2 个新增（`jvm_runtime_status.dart`、
+`tools/check_jvm_runtime_bundle.dart`），`git diff --stat` 565 insertions / 70 deletions。
+
+

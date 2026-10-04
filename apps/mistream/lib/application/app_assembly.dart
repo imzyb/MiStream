@@ -15,6 +15,7 @@ import 'package:meta/meta.dart';
 import 'package:mistream/application/config_install_service.dart';
 import 'package:mistream/application/detail_use_case.dart';
 import 'package:mistream/application/download_use_case.dart';
+import 'package:mistream/application/jvm_runtime_status.dart';
 import 'package:mistream/application/live_epg_settings.dart';
 import 'package:mistream/application/live_sort_settings.dart';
 import 'package:mistream/application/live_source_fetcher.dart';
@@ -42,6 +43,8 @@ class AppAssembly {
     // Spider JS 运行时：优先使用编译后的 exe，fallback 到 dart run
     final exePath = _resolveSpiderJsPath();
     _hostApi = HostApi();
+    // 先算好运行时快照再建工厂：UI 要靠它把「不可用」讲成「缺什么、怎么办」。
+    jvmRuntimeStatus = _resolveJvmRuntimeStatus();
     _runtimeFactory = SpiderRuntimeFactory(
       spiderJsPath: exePath,
       hostApi: _hostApi,
@@ -188,6 +191,11 @@ class AppAssembly {
   /// 宿主 API。
   late final HostApi _hostApi;
 
+  /// JVM 运行时（实验性可选组件）的可用性快照，供 UI 做灰显说明与安装引导。
+  ///
+  /// 构造时算一次并缓存：片源选择器每次打开都会读它，而解析要扫文件系统。
+  late final JvmRuntimeStatus jvmRuntimeStatus;
+
   /// 恢复上次导入配置时存下的 EPG 模板。
   ///
   /// 配置原文不入库，模板是单独存的一份；不恢复的话重启后节目单永远是空的。
@@ -266,6 +274,49 @@ class AppAssembly {
   /// 诊断：当前解析到的 JVM 配置；`null` 表示 JVM 不可用。
   static SpiderJvmConfig? debugJvmConfig() => _resolveJvmConfig();
 
+  /// 诊断：JVM 运行时**为什么**可用/不可用。
+  ///
+  /// 逐条列出候选目录与命中情况。这条信息的价值在于区分四种病因 —— 它们在界面上
+  /// 都只表现为「(暂不支持)」，但修法完全不同：
+  ///
+  ///   - `java:` 一行显示「未找到」→ 用户没装 JRE（ADR-006 要求用户自装 17+）
+  ///   - 所有候选都是 `jar=无 libs=无` → 运行时没随包出厂 / 没编译
+  ///   - `python3:` 一行显示「未找到」→ 需要 dex 转换的 jar 会失败
+  ///   - 某条候选带「← 命中」且 java/python3 都在 → 运行时在位，问题在别处
+  ///
+  /// 以前只有 [debugJvmConfig] 回一个 `null`，上面几种情况在诊断里长得一模一样。
+  static String debugJvmRuntimeReport() {
+    final sep = Platform.pathSeparator;
+    final buffer = StringBuffer();
+    final javaPath = _resolveJavaPath();
+    buffer.writeln(
+      'java: ${javaPath ?? '未找到（JAVA_HOME 与 PATH 里都没有 java 可执行文件）'}',
+    );
+    final pythonPath = resolvePythonPath(
+      pathValue: Platform.environment['PATH'],
+    );
+    buffer.writeln(
+      'python3: ${pythonPath ?? '未找到（dex→jar 转换器 enjarify 需要它）'}',
+    );
+    final hitDir = _resolveJvmRuntimeDir();
+    buffer.writeln('命中目录: ${hitDir?.path ?? '无'}');
+    var index = 0;
+    for (final runtimeDir in _jvmRuntimeDirCandidates()) {
+      index++;
+      final hasJar = File(
+        '${runtimeDir.path}${sep}build${sep}spider_jvm_runtime.jar',
+      ).existsSync();
+      final hasLibs = Directory('${runtimeDir.path}${sep}libs').existsSync();
+      final hit = hasJar && hasLibs;
+      buffer.writeln(
+        '[$index] ${runtimeDir.path} '
+        'jar=${hasJar ? '有' : '无'} libs=${hasLibs ? '有' : '无'}'
+        '${hit ? '  ← 命中' : ''}',
+      );
+    }
+    return buffer.toString();
+  }
+
   /// 定位 spider_js_runtime 可执行文件。
   ///
   /// 开发时通过 `dart run` 执行 Dart 脚本；编译后优先使用同目录下的 exe。
@@ -295,32 +346,77 @@ class AppAssembly {
   /// 解析 JVM 运行时（spider_jvm）配置。
   ///
   /// 需要 java + 编译好的 spider_jvm_runtime.jar + libs 目录。找不到 java 或
-  /// jar 时返回 null（csp_ 站点将报「JVM 运行时未配置」）。
+  /// 运行时文件时返回 null（csp_ 站点将报「JVM 运行时未配置」）。
+  ///
+  /// 运行时目录逐条试 [_jvmRuntimeDirCandidates]。**第一条候选必须是 exe 同级
+  /// 目录**：便携包解压后 `runtimes/` 就在 exe 旁边。0.1.0 的产物里压根没有
+  /// 这个目录（CMake 缺 install 规则），于是 105 个 csp_ 站点全部灰显成
+  /// 「(暂不支持)」。
   static SpiderJvmConfig? _resolveJvmConfig() {
     final javaPath = _resolveJavaPath();
-    final base = _projectRoot();
-    final runtimeJar = File(
-      '${base.path}${Platform.pathSeparator}runtimes'
-      '${Platform.pathSeparator}spider_jvm${Platform.pathSeparator}build'
-      '${Platform.pathSeparator}spider_jvm_runtime.jar',
-    );
-    final libsDir = Directory(
-      '${base.path}${Platform.pathSeparator}runtimes'
-      '${Platform.pathSeparator}spider_jvm${Platform.pathSeparator}libs',
-    );
-    if (javaPath == null || !runtimeJar.existsSync() || !libsDir.existsSync()) {
-      return null;
-    }
-    final cacheDir = Directory(
-      '${Directory.systemTemp.path}'
-      '${Platform.pathSeparator}mistream-jvm-spiders',
-    );
+    if (javaPath == null) return null;
+    final runtimeDir = _resolveJvmRuntimeDir();
+    if (runtimeDir == null) return null;
+    final sep = Platform.pathSeparator;
     return SpiderJvmConfig(
       javaPath: javaPath,
-      runtimeJarPath: runtimeJar.path,
-      libsDirPath: libsDir.path,
-      jarCacheDir: cacheDir,
+      runtimeJarPath:
+          '${runtimeDir.path}${sep}build${sep}spider_jvm_runtime.jar',
+      libsDirPath: '${runtimeDir.path}${sep}libs',
+      jarCacheDir: Directory(
+        '${Directory.systemTemp.path}${sep}mistream-jvm-spiders',
+      ),
     );
+  }
+
+  /// 找到第一条同时具备 `build/spider_jvm_runtime.jar` 与 `libs/` 的候选目录；
+  /// 都没有则返回 `null`。
+  ///
+  /// 判定条件与发布门禁 `tools/check_jvm_runtime_bundle.dart` **必须一致** ——
+  /// 两边不一致的话，门禁放行的包在运行时仍会被判为不可用（或反之），
+  /// 而这两处恰恰是最容易各自漂移的地方。
+  static Directory? _resolveJvmRuntimeDir() {
+    final sep = Platform.pathSeparator;
+    for (final runtimeDir in _jvmRuntimeDirCandidates()) {
+      final hasJar = File(
+        '${runtimeDir.path}${sep}build${sep}spider_jvm_runtime.jar',
+      ).existsSync();
+      final hasLibs = Directory('${runtimeDir.path}${sep}libs').existsSync();
+      if (hasJar && hasLibs) return runtimeDir;
+    }
+    return null;
+  }
+
+  /// 采集 JVM 运行时的可用性快照（供 UI 做安装引导）。
+  static JvmRuntimeStatus _resolveJvmRuntimeStatus() => JvmRuntimeStatus(
+    javaPath: _resolveJavaPath(),
+    pythonPath: resolvePythonPath(
+      pathValue: Platform.environment['PATH'],
+    ),
+    runtimeDirPath: _resolveJvmRuntimeDir()?.path,
+  );
+
+  /// 定位 Python3 可执行文件（dex→jar 转换器 enjarify 需要它）。
+  ///
+  /// 与 java 一样只用 `existsSync` 探测、不起子进程（本机进程创建有已知缺陷，
+  /// 见 [findExecutableOnPath]）。找不到只影响需要 dex 转换的 jar 源，
+  /// **不影响** JS / HTTP 源，所以它的缺失不参与 `available` 的判定。
+  ///
+  /// ⚠️ 已知局限：这只判断「解释器在不在」。Windows 上 Microsoft Store 的
+  /// `WindowsApps\python.exe` 是个应用执行别名占位符，`existsSync` 为真但一跑
+  /// 就弹应用商店 —— 本函数会把它当成「装了 Python」。要排除它就得读重解析点，
+  /// 代价与收益不成比例；真正要用的地方（`JarLoader`）会跑一次并给出准确报错。
+  @visibleForTesting
+  static String? resolvePythonPath({String? pathValue}) {
+    // 顺序有意义：`python.exe` 优先，`py.exe` 是 Windows 启动器，放最后。
+    final names = Platform.isWindows
+        ? const ['python.exe', 'python3.exe', 'py.exe']
+        : const ['python3', 'python'];
+    for (final name in names) {
+      final found = findExecutableOnPath(pathValue, name);
+      if (found != null) return found;
+    }
+    return null;
   }
 
   /// 定位 java 可执行文件：`JAVA_HOME` 优先，其次在 `PATH` 里逐个目录找。
@@ -373,18 +469,52 @@ class AppAssembly {
     return null;
   }
 
-  /// 向上找项目根目录（含 runtimes/ 的目录）。
-  static Directory _projectRoot() {
+  /// JVM 运行时目录（即 `runtimes/spider_jvm/`）的候选列表，顺序即优先级。
+  ///
+  /// 1. **exe 同级**：`<exe 目录>/runtimes/spider_jvm/` —— 打包产物的正规布局，
+  ///    便携包解压后 `runtimes/` 与 `mistream.exe` 平级。这一条必须排第一。
+  /// 2. **从 exe 逐级向上**：开发态命中仓库根下的 `runtimes/spider_jvm/`
+  ///    （`flutter run` 的 exe 在 `apps/mistream/build/windows/x64/runner/Release/`，
+  ///    要往上 6 层才到仓库根，所以循环上限给到 10）。
+  /// 3. **应用数据目录**：`%APPDATA%/com.mistream/mistream/runtimes/spider_jvm/`
+  ///    —— 给「应用装在 Program Files 等只读目录、用户装不了东西进去」留一条
+  ///    用户可自行放置运行时的路（ADR-006 本就要求用户自己装 JRE）。
+  /// 4. **当前工作目录**：显式列出。
+  ///
+  /// ⚠️ 第 4 条以前是**隐式**的：旧 `_projectRoot()` 在向上找失败时直接
+  /// `return Directory.current`，把 cwd 伪装成「项目根」。后果是同一个产物
+  /// 「从仓库根启动」探测通过、「双击 exe」探测失败，而诊断输出里看不出是 cwd
+  /// 在起作用 —— 排查时会把注意力引向完全错误的方向。现在它是一条有名字、
+  /// 有注释、排在最后的候选。
+  ///
+  /// ⚠️ 第 3 条的路径是**手工拼接**的，与 `app_paths.dart` 立的规矩（一律走
+  /// `getApplicationSupportDirectory()`，不拼环境变量）相悖。这里是有意为之：
+  /// 本函数在 [AppAssembly] 构造函数里**同步**执行，而
+  /// `getApplicationSupportDirectory()` 是异步的，没法 await。因此它只作
+  /// **尽力而为的兜底**：`APPDATA` 缺失时整条候选跳过，不会给出错误答案。
+  /// 应用数据目录的权威定义仍以 `app_paths.dart` 为准。
+  static Iterable<Directory> _jvmRuntimeDirCandidates() sync* {
+    final sep = Platform.pathSeparator;
+    final runtimeSuffix = '${sep}runtimes${sep}spider_jvm';
+
+    // 1 + 2：exe 同级，再逐级向上。
     var dir = File(Platform.resolvedExecutable).parent;
     for (var i = 0; i < 10; i++) {
-      if (Directory(
-        '${dir.path}${Platform.pathSeparator}runtimes',
-      ).existsSync()) {
-        return dir;
-      }
-      dir = dir.parent;
+      yield Directory('${dir.path}$runtimeSuffix');
+      final parent = dir.parent;
+      // 到盘根后 `parent` 就是它自己，再往上只会重复同一条候选。
+      if (parent.path == dir.path) break;
+      dir = parent;
     }
-    return Directory.current;
+
+    // 3：应用数据目录（尽力而为，见上面的说明）。
+    final appData = Platform.environment['APPDATA'];
+    if (appData != null && appData.isNotEmpty) {
+      yield Directory('$appData${sep}com.mistream${sep}mistream$runtimeSuffix');
+    }
+
+    // 4：当前工作目录。
+    yield Directory('${Directory.current.path}$runtimeSuffix');
   }
 }
 

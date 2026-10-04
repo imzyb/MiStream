@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mistream/app/router.dart' show globalRouterAssembly;
 import 'package:mistream/application/app_assembly.dart' show AppAssembly;
+import 'package:mistream/application/jvm_runtime_status.dart'
+    show JvmRuntimeStatus;
 import 'package:mistream/features/common/common.dart'
     show
         BreakpointContext, // ignore: unused_shown_name -- 提供 context.isDesktop 扩展
@@ -185,51 +187,128 @@ class _HomePageState extends State<HomePage> {
 
   void _showSourcePicker() {
     if (_availableSites.isEmpty) return;
+    final unusableCount = _availableSites.where((s) => !s.isUsable).length;
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('切换片源 (${_availableSites.length}个)'),
         contentPadding: const EdgeInsets.fromLTRB(0, 12, 0, 0),
         content: SizedBox(
-          width: 420,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: _availableSites.length,
-            itemBuilder: (ctx, i) {
-              final site = _availableSites[i];
-              final isSelected = site.id == _currentSite?.id;
-              final usable = site.isUsable;
-              return ListTile(
-                title: Text(
-                  site.name,
-                  style: TextStyle(
-                    color: usable ? null : Theme.of(ctx).disabledColor,
-                  ),
+          width: 460,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 有不可用站点才提示，且提示必须说清**缺什么、怎么办**。
+              // 只灰显不给引导，用户看到的是一整屏完全相同的「不可用」——
+              // 分不清是配置坏了、软件坏了还是少装了个可选组件。
+              // ADR-006 的「后果」一节把这条写成了硬要求。
+              if (unusableCount > 0)
+                _UnavailableSourcesNotice(
+                  count: unusableCount,
+                  status: _assembly?.jvmRuntimeStatus,
                 ),
-                subtitle: Text(
-                  usable ? site.api : '${site.api} (暂不支持)',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(ctx).textTheme.bodySmall,
+              // 用 ConstrainedBox 限高而不是 Flexible：AlertDialog 会把 content
+              // 包进 IntrinsicWidth，而本机 flutter test 起不来（OS error 231），
+              // 我没法实测「IntrinsicWidth + flex 子项」是否稳。ConstrainedBox
+              // 不参与 flex 布局，行为可以纯靠读代码确定。高度随窗口缩放，避免
+              // 小窗口下 notice + 列表把弹窗撑溢出。
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(ctx).height * 0.45,
                 ),
-                trailing: isSelected
-                    ? Icon(
-                        Icons.check,
-                        color: Theme.of(ctx).colorScheme.primary,
-                      )
-                    : null,
-                onTap: usable
-                    ? () {
-                        Navigator.pop(ctx);
-                        _switchSource(site);
-                      }
-                    : null,
-              );
-            },
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _availableSites.length,
+                  itemBuilder: (ctx, i) {
+                    final site = _availableSites[i];
+                    final isSelected = site.id == _currentSite?.id;
+                    final usable = site.isUsable;
+                    return ListTile(
+                      title: Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              site.name,
+                              style: TextStyle(
+                                color: usable
+                                    ? null
+                                    : Theme.of(ctx).disabledColor,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (site.isExperimentalJar) ...[
+                            const SizedBox(width: 6),
+                            const _ExperimentalJarChip(),
+                          ],
+                        ],
+                      ),
+                      subtitle: Text(
+                        usable
+                            ? site.api
+                            : '${site.api} · '
+                                  '${site.unavailableReason ?? '暂不支持'}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(ctx).textTheme.bodySmall,
+                      ),
+                      trailing: isSelected
+                          ? Icon(
+                              Icons.check,
+                              color: Theme.of(ctx).colorScheme.primary,
+                            )
+                          : null,
+                      onTap: usable
+                          ? () => unawaited(_confirmAndSwitch(ctx, site))
+                          : null,
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
+  }
+
+  /// 切换片源；jar 源先要一次**显式确认**。
+  ///
+  /// ADR-006 决策第 4 条：「UI 中对 jar 源标注『实验性 · 二进制不可审计』，
+  /// 需用户显式确认后才加载」。这里就是那次确认 —— 不是走过场的提示框，
+  /// 而是把「不可审计」这件事讲明白再让用户决定。
+  Future<void> _confirmAndSwitch(
+    BuildContext pickerCtx,
+    SourceOption site,
+  ) async {
+    if (site.isExperimentalJar) {
+      final confirmed = await showDialog<bool>(
+        context: pickerCtx,
+        builder: (confirmCtx) => AlertDialog(
+          title: const Text('实验性 · 二进制不可审计'),
+          content: const Text(
+            '这个片源来自闭源 jar 二进制，MiStream 无法审计它做了什么。\n\n'
+            '当前只承诺「纯 Java 逻辑 + 已 shim 的 android API 子集」可运行，'
+            '不承诺任意 jar 可用（见 ADR-006）。\n\n'
+            '确认后才会加载。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(confirmCtx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(confirmCtx, true),
+              child: const Text('仍然使用'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    if (!pickerCtx.mounted) return;
+    Navigator.pop(pickerCtx);
+    _switchSource(site);
   }
 
   /// 全部分类弹窗：首页只展示前 8 个，这里给出完整清单。
@@ -492,6 +571,81 @@ class _HomeSkeleton extends StatelessWidget {
               runSpacing: 8,
               children: List.generate(8, (_) => block(width: 72, height: 36)),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 「实验性 · 二进制不可审计」标记。
+///
+/// ADR-006 要求这个定性**出现在 UI 上**（另外两处是 README 与 ROADMAP），
+/// 且 jar 源即使运行时齐备也要用户显式确认后才加载。放在片源名旁边而不是
+/// 塞进副标题，是因为副标题在窄窗口会被省略号截掉 —— 定性一旦被截掉，
+/// 「不可审计」这个警告就等于没写。
+class _ExperimentalJarChip extends StatelessWidget {
+  const _ExperimentalJarChip();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.tertiaryContainer,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        '实验性 · 二进制不可审计',
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onTertiaryContainer,
+        ),
+      ),
+    );
+  }
+}
+
+/// 片源不可用时的说明条：讲清缺什么、怎么补。
+///
+/// 文案取自 `JvmRuntimeStatus.missingItems`，而不是在这里再判一遍 —— 判定逻辑
+/// 只能有一处，否则界面说的和实际做的迟早会不一致。
+class _UnavailableSourcesNotice extends StatelessWidget {
+  const _UnavailableSourcesNotice({required this.count, this.status});
+
+  /// 不可用的片源数量。
+  final int count;
+
+  /// JVM 运行时快照；装配不可用时为 `null`。
+  final JvmRuntimeStatus? status;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final missing = status?.missingItems ?? const <String>[];
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$count 个片源当前不可用',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            missing.isEmpty
+                ? '这些片源所需的运行时未就绪。'
+                : missing.map((item) => '· $item').join('\n'),
+            style: theme.textTheme.bodySmall,
           ),
         ],
       ),

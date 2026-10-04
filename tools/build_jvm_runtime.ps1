@@ -19,7 +19,12 @@ New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 
 $files = Get-ChildItem $srcRoot -Recurse -Filter "*.java"
 Write-Output "Compiling $($files.Count) java files..."
-$argList = @('-encoding','UTF-8','-cp', $libs, '-d', $outDir) + ($files | ForEach-Object { $_.FullName })
+# `--release 17` 不能省：不加的话字节码版本跟着**编译器**走。CI 的 windows-latest
+# 不保证永远是 JDK 17，一旦镜像升到 JDK 21，这里会静默产出 major 65 的 jar，而
+# ADR-006 要求用户自己装的是 **JRE 17+** —— 产物在用户机器上直接
+# UnsupportedClassVersionError，本地与 CI 都全绿，只有用户看到「站点全不可用」。
+# 钉住 target 让「编译用 JDK」与「运行用 JRE」两个版本解耦。
+$argList = @('-encoding','UTF-8','--release','17','-cp', $libs, '-d', $outDir) + ($files | ForEach-Object { $_.FullName })
 & javac @argList
 if ($LASTEXITCODE -ne 0) { Write-Error "javac 失败 $LASTEXITCODE"; exit $LASTEXITCODE }
 

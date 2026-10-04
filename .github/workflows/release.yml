@@ -28,6 +28,14 @@ jobs:
       - run: melos run generate
       - name: 门禁
         run: melos run check:arch && melos run analyze
+      - name: 安装 JDK 17（编译 spider_jvm_runtime.jar）
+        # 与 ci.yml 的 release-windows 一致：钉住 17。ADR-006 要求用户自行安装
+        # JRE 17+，编译环境必须与运行环境对齐，不能让 runner 的默认 JDK 决定
+        # 产物的字节码版本。
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
       - name: 安装 libmpv/quickjs/jvm
         # quickjs:install 与 spider-js:bundle 在下面的 CMake 里也会跑一次，是幂等的；
         # 这里显式列出是为了让「Release 需要哪些 native 依赖」在流水线里可见。
@@ -46,6 +54,13 @@ jobs:
         run: >
           dart run tools/check_spider_js_bundle.dart
           --bundle apps/mistream/build/windows/x64/runner/Release --smoke
+      - name: 校验产物含 JVM 运行时
+        # 0.1.0 的便携包漏了 runtimes/spider_jvm，用户装上后整份 csp_ 配置
+        # （105 个站点）全部显示「(暂不支持)」，而当时 CI 全绿。这条断言就是
+        # 把那次静默降级变成发布链红。
+        run: >
+          dart run tools/check_jvm_runtime_bundle.dart
+          --bundle apps/mistream/build/windows/x64/runner/Release
       - name: 合规扫描（安装包不含源配置）
         # 显式传构建目录：脚本的默认值是 apps/mistream/build，传参让 CI 与本地
         # 手动执行走同一条路径，且目录不存在时脚本会直接失败而不是静默通过。

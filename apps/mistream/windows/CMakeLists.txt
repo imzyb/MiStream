@@ -155,3 +155,43 @@ install(FILES
   DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
+
+# Spider JVM 运行时（实验性可选组件，定位见 docs/adr/006）。
+#
+# 包内布局必须与 AppAssembly._resolveJvmConfig() 的查找约定严格一致 —— 它按
+# `<exe 目录>/runtimes/spider_jvm/` 找下面这两样，启动命令是
+# `java -cp <jar>;<libs>/* io.mistream.jvm.Main`：
+#   runtimes/spider_jvm/build/spider_jvm_runtime.jar
+#   runtimes/spider_jvm/libs/*.jar
+#
+# ⚠️ 这条规则曾经**完全不存在**。后果不是「少个可选功能」，而是 0.1.0 的便携包
+# 里一个 csp_ 站点都用不了：`_resolveJvmConfig()` 返回 null → supports(jvm)=false
+# → 站点列表把 105 个站点全部灰显成「(暂不支持)」。用户的报告是「获取的 105 个
+# 站点全部显示不支持」，根因就在这几行的缺失。
+#
+# 为什么是 OPTIONAL 而不是像 spider_js 那样硬失败：`build/`（根 .gitignore 第 6 行
+# 的 `build/` 命中）与 `libs/` 都不入库，jar 由 `melos run jvm:build` 现场编译、
+# 需要外部 JDK 17。ADR-006 把它定为「实验性可选组件」，因此没装 JDK 的本地构建
+# 不该被它拦死。真正的兜底是发布门禁 tools/check_jvm_runtime_bundle.dart ——
+# 发布链产物缺 jar 会直接红，本地构建则只在这里留一条可见的线索。
+set(SPIDER_JVM_DIR "${REPO_ROOT}/runtimes/spider_jvm")
+set(SPIDER_JVM_JAR "${SPIDER_JVM_DIR}/build/spider_jvm_runtime.jar")
+if(EXISTS "${SPIDER_JVM_JAR}")
+  message(STATUS "Spider JVM 运行时：已纳入产物（${SPIDER_JVM_JAR}）")
+else()
+  message(STATUS
+    "Spider JVM 运行时：未构建（${SPIDER_JVM_JAR} 不存在）——本次产物不含 JVM 支持，"
+    "csp_ 站点会显示「暂不支持」。先跑 `melos run jvm:build`（需 JDK 17）再构建。")
+endif()
+
+install(FILES "${SPIDER_JVM_JAR}"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}/runtimes/spider_jvm/build"
+  CONFIGURATIONS Profile;Release
+  COMPONENT Runtime
+  OPTIONAL)
+
+install(DIRECTORY "${SPIDER_JVM_DIR}/libs"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}/runtimes/spider_jvm"
+  CONFIGURATIONS Profile;Release
+  COMPONENT Runtime
+  OPTIONAL)

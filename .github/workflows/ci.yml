@@ -148,6 +148,19 @@ jobs:
       - run: melos run generate
       - name: 安装 libmpv（Release 播放内核）
         run: melos run libmpv:install
+      - name: 安装 JDK 17（编译 spider_jvm_runtime.jar）
+        # 必须**钉住 17**，不能让 runner 用默认 JDK。build_jvm_runtime.ps1 里的
+        # `--release 17` 已经保证字节码目标版本，但编译器的版本仍会影响输出；
+        # ADR-006 要求用户自行安装的是 JRE 17+，编译环境与运行环境要对齐。
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: 编译 Spider JVM 运行时（jar 不入库，必须现场构建）
+        # runtimes/spider_jvm/build/ 被根 .gitignore 的 `build/` 排除，干净检出里
+        # 没有 jar。漏掉这一步，CMake 的 install 规则会因 OPTIONAL 静默跳过，
+        # 产物里就没有 runtimes/ —— 用户装上后 105 个 csp_ 站点全部「(暂不支持)」。
+        run: melos run jvm:build
       - name: 构建 Release（CMake 内自动跑 quickjs:install + spider-js:bundle）
         working-directory: apps/mistream
         run: flutter build windows --release
@@ -155,6 +168,12 @@ jobs:
         run: >
           dart run tools/check_spider_js_bundle.dart
           --bundle apps/mistream/build/windows/x64/runner/Release --smoke
+      - name: 校验产物含 JVM 运行时
+        # 与上一条对称。JS 那条此前有、JVM 这条此前没有，于是「JVM 运行时没打进包」
+        # 这件事在 CI 上完全不可见。
+        run: >
+          dart run tools/check_jvm_runtime_bundle.dart
+          --bundle apps/mistream/build/windows/x64/runner/Release
       - name: 上传 Release 产物
         uses: actions/upload-artifact@v7
         with:

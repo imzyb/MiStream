@@ -71,6 +71,7 @@ class SourceOption {
     required this.api,
     required this.typeCode,
     this.hasRuntime = false,
+    this.unavailableReason,
   });
 
   /// 站点 id，跳详情页时作为路由参数。
@@ -92,6 +93,21 @@ class SourceOption {
   /// 其余 `type=3` 走 JS。实测某真实配置 105 个站点全是 `csp_`，
   /// 用全局标志会把它们全判成可用。
   final bool hasRuntime;
+
+  /// 不可用时的**原因**（面向用户的中文短句）；可用时为 `null`。
+  ///
+  /// 只写「(暂不支持)」是不够的。实测那份 105 个站点的配置，用户在界面上看到
+  /// 的是一整屏完全相同的「(暂不支持)」—— 他无法判断这是「配置坏了」
+  /// 「软件坏了」还是「少装了个可选组件」，只能来问。原因必须写在脸上。
+  final String? unavailableReason;
+
+  /// 是否是 jar 形态的源（`api` 以 `csp_` 开头）。
+  ///
+  /// 即 ADR-006 里那类「实验性 · 二进制不可审计」的源。**即使运行时齐备，
+  /// 也要用户显式确认后才加载**（ADR-006 决策第 4 条），所以 UI 需要单独
+  /// 认出这一类，不能只靠 [hasRuntime]。
+  bool get isExperimentalJar =>
+      classifySiteRuntime(typeCode: typeCode, api: api) == SiteRuntimeKind.jvm;
 
   /// 当前实现能否直接取数。
   bool get isUsable => hasRuntime;
@@ -133,8 +149,27 @@ class HomeUseCase {
           api: s.api,
           typeCode: s.typeCode,
           hasRuntime: _siteHasRuntime(s),
+          unavailableReason: _runtimeGapReason(s),
         ),
     ];
+  }
+
+  /// 站点不可用的原因；可用时返回 `null`。
+  ///
+  /// 与 [_siteHasRuntime] **共用同一把尺子**（`classifySiteRuntime`），否则
+  /// 「能不能用」和「为什么不能用」会各说各话 —— 那种状态下 UI 会把一个可用的
+  /// 源说成缺运行时，用户照着提示去装 JRE 也修不好。
+  String? _runtimeGapReason(Site s) {
+    if (_siteHasRuntime(s)) return null;
+    return switch (classifySiteRuntime(typeCode: s.typeCode, api: s.api)) {
+      // 这两种成因在界面上必须分开说：JVM 运行时是可选的、要用户自己动手装
+      // （ADR-006），而 JS 运行时是产品自带的能力 —— 后者缺失属于装包不完整。
+      SiteRuntimeKind.jvm => '需要 JVM 运行时（实验性可选组件）',
+      SiteRuntimeKind.js => '需要 JS 运行时（当前装配未就绪）',
+      SiteRuntimeKind.unsupported => '类型不支持（type=${s.typeCode}）',
+      // HTTP 类零脚本，[_siteHasRuntime] 对它恒真，走不到这里。
+      SiteRuntimeKind.http => null,
+    };
   }
 
   /// 该站点在当前装配下能否直接取数。
