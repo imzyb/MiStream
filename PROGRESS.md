@@ -2435,3 +2435,94 @@ limit，然后 **re-run** —— 代码一行都不用动。
 
 
 
+## 本次会话（2026-10-04）· 七：六个 dependabot PR —— 清库存 + 治本
+
+仓库转 public 之后，CI 不再受计费阻塞，于是把挂着的 dependabot PR 一并处理。
+**先重新拉取而不是照搬旧清单**：之前记的「#1、#5、#6、#8、#9、#10」已经过期
+（#8 已消失，#11 是新出现的），6 个 PR 的 head 也都被 dependabot 在 10-04 动过。
+
+### 实时复核结果（2026-10-04）
+
+| # | 标题 | base | head | mergeable | 判定 |
+|---|------|------|------|-----------|------|
+| 1 | `ci(deps): Bump actions/checkout from 4 to 7` | `a46d7ff` | `f45e2fc` | clean | 可修 |
+| 5 | `chore(deps): bump test from 1.31.0 to 1.31.1` | `afb9166` | `8e66df3` | unstable | 钉死 |
+| 6 | `chore(deps): bump meta from 1.18.0 to 1.19.0` | `afb9166` | `177ee77` | **dirty** | 钉死 |
+| 9 | `chore(deps): bump yaml from 3.1.3 to 3.1.4` | `01b0de4` | `32a7854` | clean | **绿** |
+| 10 | `chore(deps): bump very_good_analysis from 10.3.0 to 11.0.0` | `01b0de4` | `378768f` | unstable | 钉死 |
+| 11 | `chore(deps): bump melos and drift_dev` | `01b0de4` | `26243ba` | unstable | 钉死 |
+
+注意 #5 / #6 的 base 还停在 **`afb9166`**（两个月前的旧 main），而 #9 / #10 / #11
+的 base 已经是 `01b0de4`（PR #4 的合并提交）。#5 / #6 那两个八月的 run 的
+`refs/pull/N/merge` 指向旧 main，**复跑没有意义** —— 结论只能从日志里直接读。
+
+### #9：直接合掉
+
+改动只有 `pubspec.lock` 与 `tools/arch_check/pubspec.yaml`（+3/−3）。复跑后十道门禁
+全绿（含 `release-windows`），head 仍是审查过的 `32a7854`。
+
+- 合并方式：merge commit（与 #4 一致），带 `sha=32a7854…` 校验
+- merge commit = **`a2139c5`**
+
+### #1：一次「陈旧 diff」的完整翻车与修复
+
+这是本次最值得记的一条 —— **一个 mergeable: clean 的 PR，合进去是错的**。
+
+`actions/checkout` 在仓库里出现在两个 workflow：
+
+| 文件 | main 上的出现处 |
+|------|----------------|
+| `.github/workflows/ci.yml` | **6 处**（`release-windows` 那处是 PR #4 合并后才有的） |
+| `.github/workflows/release.yml` | **1 处** |
+
+而 #1 的原始 diff 是 `1 文件 +5/−5` —— 只碰了 `ci.yml` 的 **5 处**，共 7 处里漏了 2 处。
+原因是它的分支是 2026-08-04 从旧 main 建的，dependabot 生成 diff 时那份 `ci.yml`
+只有 5 处 checkout、也还没有 `release-windows` job。
+
+三次尝试，逐次取证：
+
+1. **直接看分支内容** —— `gh_checkout_count.py main f45e2fc`：
+   main 是 `6 处 全 v4`，分支是 `5 处 全 v7`，且分支里**根本没有 `release-windows`**。
+2. **`PUT /pulls/1/update-branch`**（把 main 合进分支）—— HTTP 202，新 head `b624351`。
+   再数：分支变成 `6 处：5×v7 + 1×v4`。**没修好。** 因为 update-branch 只是把 main
+   合进来，并不会让 dependabot **重新扫描** manifest，第 6 处永远是 v4。
+3. **`@dependabot recreate`**（丢弃分支、按当前 main 重新生成 diff）—— 生效。
+   新 head `4724b27`，commits 回到 1，diff 变成 `2 文件 +7/−7`：
+   `ci.yml` **6×v7** + `release.yml` **1×v7** = 7 处全覆盖，还顺带补上了旧 diff
+   从未触及的 `release.yml` 那一处。
+
+> 教训：dependabot 的 `mergeable: clean` 只说明**三方合并不冲突**，不说明
+> **改动是完整的**。只要 base 前进时目标文件结构变过，老 PR 的 diff 就会「合法地
+> 漏改」。判断依据必须是自己去数目标文件里的出现处，而不是看 GitHub 给的状态。
+
+### #5 / #6 / #10 / #11：关闭 + 留证
+
+四个 PR 的失败**不是代码问题**，是 Flutter stable（3.44.8 = Dart 3.12.2）把传递
+依赖钉死了。关闭评论里逐字贴了 CI 日志原文，摘录：
+
+- **#5 test**：`Note: test_api is pinned to version 0.7.11 by flutter_test from the flutter SDK.` → `test 1.31.1 depends on test_api 0.7.12` → `version solving failed.`
+- **#6 meta**：`Note: meta is pinned to version 1.18.0 by flutter from the flutter SDK.` → `core_domain depends on meta ^1.19.0 … flutter from sdk is forbidden.`
+- **#10 very_good_analysis**：`very_good_analysis 11.0.0 requires SDK version ^3.13.0` → `version solving failed.`
+- **#11 drift_dev/melos**：`drift_dev 2.35.1 depends on analyzer >=13.0.0 <15.0.0` → 与 SDK 的 `test_api 0.7.11` 互斥。
+
+引文先用 `gh_verify_reasons.py` 从每个 PR head 的失败 job 日志里重新抓取、逐字核对，
+再写进评论 —— 避免把转述当原文留在公开记录里。
+
+### 治本：`dependabot.yml` 加 `ignore`
+
+光关 PR 不够，下周 dependabot 还会为同样几个包重开、重红。所以在
+`.github/dependabot.yml` 的 `pub` 生态下加了 `ignore:`，挡住
+`test` / `meta` / `very_good_analysis` / `drift_dev` / `melos`，并把「为什么挡、
+关联哪几个 PR、什么条件下放开」写进注释。
+
+> **解锁条件**：Flutter stable 升到 Dart 3.13 后，删掉那段 `ignore:` 即可整批放开。
+
+### 本轮产出
+
+| 项 | 结果 |
+|----|------|
+| #9 合并 | merge commit **`a2139c5`** |
+| #1 | 经 `@dependabot recreate` 修成 7/7 全覆盖，待 CI 绿后合并 |
+| #5 / #6 / #10 / #11 | 关闭，各留逐字日志原文 |
+| `dependabot.yml` | 新增 5 条 `ignore` 规则（YAML 已校验可解析） |
+
