@@ -2526,3 +2526,105 @@ limit，然后 **re-run** —— 代码一行都不用动。
 | #5 / #6 / #10 / #11 | 关闭，各留逐字日志原文 |
 | `dependabot.yml` | 新增 5 条 `ignore` 规则（YAML 已校验可解析） |
 
+## 本次会话（2026-10-04）· 八：清完一批又冒一批 —— 第二轮 dependabot
+
+### ⚠️ 起因：`open-pull-requests-limit` 一直在挡积压
+
+`dependabot.yml` 里 `pub` 生态设了 `open-pull-requests-limit: 5`。这个上限**按生态
+分别算**，达到上限后 dependabot 不再开新 PR，但也不会忘记待升级项。
+
+第七节把 pub 的 5 个名额（#5/#6/#9/#10/#11）清空后，**几秒内**就冒出了
+**7 个新 PR**：5 个 pub（#14–#18）+ 2 个 github-actions（#12/#13）。
+它们 base 都是当时最新 main，**没有陈旧 diff 风险**。
+
+新列表里**没有** `test`/`meta`/`very_good_analysis`/`drift_dev`/`melos` ——
+证明第七节加的 `ignore` 规则生效了。
+
+### 逐个体检（依据都是 CI 日志原文）
+
+| # | 依赖 | 版本 | PR CI | 判定 |
+|---|------|------|-------|------|
+| 14 | `archive` | 4.0.9 → 4.3.0 | **10/10 绿** | ✅ 已合并 |
+| 15 | `html` | 0.15.6 → 0.15.7 | 9 绿 / windows test 红 | ✅ 复跑绿，已合并 |
+| 16 | `drift` | 2.34.0 → 2.34.4 | test ×3 红 | ❌ 真实失败，已关闭 |
+| 17 | `sqlite3` | 3.5.1 → 3.7.0 | **10/10 全红** | ❌ 真实失败，已关闭 |
+| 12 | `actions/upload-artifact` | 4 → **7** | 10/10 绿 | ⚠️ MAJOR → issue #19 |
+| 13 | `softprops/action-gh-release` | 2 → **3** | 10/10 绿（**空绿**） | ⚠️ MAJOR → issue #20 |
+| 18 | `media_kit_video` | 1.3.1 → **2.0.1** | 10/10 绿 | ⚠️ MAJOR → issue #21 |
+
+**#17 的「10 个全红」要特别小心** —— 那是计费假红的同型指纹。查证后确认
+`runner_id` 非 0、`steps` 非空，是**真失败**，原因是同一堵 SDK 墙：
+
+```
+Because storage depends on sqlite3 ^3.7.0 and no versions of sqlite3 match >3.7.0 <4.0.0, sqlite3 3.7.0 is required.
+So, because mistream depends on flutter_test from sdk which depends on meta 1.18.0, version solving failed.
+```
+
+**#16 撞上的是仓库自己刻意的 pin**：`packages/storage/pubspec.yaml` 把 `drift_dev`
+钉在 `>=2.34.0 <2.34.1`，而 `drift 2.34.4` 里 `GeneratedDatabase` 已没有
+`allSchemaEntities`，钉住的 `drift_dev 2.34.0` 直接编译不过：
+
+```
+drift_dev-2.34.0/lib/src/services/schema/verifier_common.dart:45:28: Error:
+The getter 'allSchemaEntities' isn't defined for the type 'GeneratedDatabase'.
+```
+
+→ 结论：**`drift` 与 `drift_dev` 必须同进同退**，ignore 里要一起挡。
+
+**#15 是竞态抖动，不是 html 的问题**。首次失败用例是
+`test/real_process_host_test.dart` 的「真子进程（TCP 回连）换新」：
+
+```
+Expected: an object with length of a value greater than or equal to <2>
+  Actual: [Instance of 'LaunchedChild']
+   Which: has length of <1>
+```
+
+判据：整份日志里 `package:html` 出现 **0 次**；失败的是真子进程类测试。
+复跑后 10/10 全绿。
+
+### ⚠️ 发现一个「空绿」：`release.yml` 不在 PR CI 覆盖范围内
+
+| 文件 | 触发条件 | PR CI 是否覆盖 |
+|------|---------|---------------|
+| `ci.yml` | `pull_request` + `push: main` | ✅ 覆盖 |
+| `release.yml` | **仅 `push: tags: v*`** | ❌ **完全不覆盖** |
+
+所以 **#13 那 10 个绿 check 一行都没验证到它的改动**（它只改了 `release.yml`）。
+第七节里 PR #1 对 `release.yml` 的 checkout 升级，同样是空绿。
+**判断一个 PR 的 CI 是否有意义，先看它改的文件属不属于 `ci.yml` 的管辖范围。**
+
+### MAJOR 升级：按规范单独开 issue
+
+`docs/10-开发规范.md` §7 写着「MAJOR 升级单独开 issue 评估」，所以没有「全绿就合」：
+
+- **#19** ← PR #12（upload-artifact 4→7）
+- **#20** ← PR #13（action-gh-release 2→3）—— 特别注明 CI 空绿，只有真跑发布链才能验证
+- **#21** ← PR #18（media_kit_video 1.3.1→2.0.1）—— 注明 CI 不真解码，要走播放矩阵手工回归
+
+三个 PR 上也各留了指向对应 issue 的评论。
+
+### 治本更新：ignore 从 5 条扩到 7 条
+
+新增 `drift` 与 `sqlite3`（理由见上），提交 **`d35d51c`**。
+现在挡住的是：`test` / `meta` / `very_good_analysis` / `drift` / `drift_dev` /
+`melos` / `sqlite3`。
+
+### 本轮产出
+
+| 项 | 结果 |
+|----|------|
+| #14 archive 4.3.0 | 合并 → **`7cacd42`** |
+| #15 html 0.15.7 | 复跑确认抖动后合并 → **`7658a2f`** |
+| #16 drift / #17 sqlite3 | 关闭，各留逐字日志原文 |
+| #12 / #13 / #18 | 未合，转 issue **#19 / #20 / #21** |
+| `dependabot.yml` | ignore 扩到 7 条 → **`d35d51c`** |
+
+### 一个操作教训（值得记）
+
+在 Git Bash 里用 `python -c "..."`（双引号）时，正文里的**反引号会被 bash 先做
+命令替换**，内容被静默删除、命令还返回 0。本轮给三个 PR 发的评论全中招
+（`按  §7「...」` 里 `docs/10-开发规范.md` 整段消失）。
+**凡正文含反引号 / 反斜杠 / `$` / `!` 的，一律写成 `.py` 脚本文件再跑。**
+已用 `PATCH /issues/comments/{id}` 修回。
+
