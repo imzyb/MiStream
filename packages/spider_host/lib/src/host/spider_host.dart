@@ -9,7 +9,9 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:core_domain/core_domain.dart';
 
@@ -101,6 +103,169 @@ defaultProcessLauncher(
   return (
     stdin: process.stdin,
     stdout: process.stdout,
+    exitCode: process.exitCode,
+    kill: process.kill,
+  );
+}
+
+/// `CreateFile failed 231` = `ERROR_PIPE_BUSY`。
+///
+/// 本机 Dart VM 建子进程 stdio 管道时必报这个（`process_win.cc:744`），
+/// 见 [resilientProcessLauncher]。
+const int kPipeBusyErrorCode = 231;
+
+/// 把回环 socket 包成 [IOSink]，供 [StdioRpcChannel] 写入。
+class _SocketSink implements IOSink {
+  _SocketSink(this._socket);
+
+  final Socket _socket;
+
+  @override
+  void add(List<int> data) => _socket.add(data);
+
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) {}
+
+  @override
+  Future<void> addStream(Stream<List<int>> stream) =>
+      stream.forEach(_socket.add);
+
+  @override
+  Future<void> flush() => _socket.flush();
+
+  @override
+  Future<void> close() => _socket.close();
+
+  @override
+  Encoding get encoding => utf8;
+
+  @override
+  set encoding(Encoding _) {}
+
+  @override
+  void write(Object? object) => _socket.write(object);
+
+  @override
+  void writeAll(Iterable<Object?> iterable, [String separator = '']) =>
+      _socket.writeAll(iterable, separator);
+
+  @override
+  void writeCharCode(int charCode) => _socket.writeCharCode(charCode);
+
+  @override
+  void writeln([Object? object = '']) => _socket.writeln(object);
+
+  @override
+  Future<void> get done => _socket.done;
+}
+
+/// 管道优先、回环 TCP 兜底的启动器。
+///
+/// 存在的理由：本机（Windows + Dart VM）`Process.start` 建 stdio 管道会抛
+/// `ProcessException(errorCode: 231)`（`ERROR_PIPE_BUSY`），**任何**子进程都起不来。
+/// 这里先用 [defaultProcessLauncher]；只有识别到正是这个错误时，才换成
+/// 「宿主先监听回环端口 → `inheritStdio` 起子进程 → 子进程回连」，
+/// 并给子进程追加 `--port=<n>` 告诉它端口。两条路的 RPC 载荷完全一致，
+/// 只有传输不同。
+///
+/// 只对 `errorCode == [kPipeBusyErrorCode]` 兜底：exe 不存在、权限被拒这类失败
+/// 必须原样抛出去，否则会被伪装成「子进程起不来」而查错方向。
+///
+/// 子进程必须支持 `--port=<n>`（JVM 运行时支持；JS/Python 运行时不支持，
+/// 不要给它们用这个启动器）。
+///
+/// [primary] 仅用于测试注入「一定会失败的管道启动」；生产不传。
+/// [useConsolelessSibling] 见 [_consolelessSibling]。
+ProcessLauncher resilientProcessLauncher({
+  ProcessLauncher? primary,
+  Duration connectTimeout = const Duration(seconds: 20),
+  bool useConsolelessSibling = true,
+}) {
+  final piped = primary ?? defaultProcessLauncher;
+  return (String executable, List<String> arguments) async {
+    try {
+      return await piped(executable, arguments);
+    } on ProcessException catch (e) {
+      if (e.errorCode != kPipeBusyErrorCode) rethrow;
+      stderr.writeln(
+        <String>[
+          '[spider_host] stdio 管道不可用（ERROR_PIPE_BUSY），',
+          '改用回环 TCP 起 $executable',
+        ].join(),
+      );
+      return _launchLoopback(
+        useConsolelessSibling ? _consolelessSibling(executable) : executable,
+        arguments,
+        connectTimeout,
+      );
+    }
+  };
+}
+
+/// 把 `java.exe` 换成同目录的 `javaw.exe`。
+///
+/// 回退路径必须用 `inheritStdio`——只有它同时给出进程句柄（`exitCode` / `kill`）
+/// 又不建管道。但控制台子程序被无控制台的父进程（GUI 应用）用 `inheritStdio`
+/// 拉起时，Windows 会**新分配一个控制台窗口**弹到用户桌面上（实测：conhost.exe
+/// 数量 +1）。`javaw.exe` 是 GUI 子系统，永远不会分配控制台，所以换掉它。
+///
+/// 找不到 `javaw.exe` 时原样返回——宁可弹个窗口，也不要起不来。
+String _consolelessSibling(String executable) {
+  final file = File(executable);
+  final segments = file.uri.pathSegments;
+  if (segments.isEmpty) return executable;
+  if (segments.last.toLowerCase() != 'java.exe') return executable;
+  final sibling = File(
+    '${file.parent.path}${Platform.pathSeparator}javaw.exe',
+  );
+  return sibling.existsSync() ? sibling.path : executable;
+}
+
+/// 监听回环端口 → `inheritStdio` 起子进程 → 等它回连，然后把 socket 当 stdio 用。
+Future<
+  ({
+    IOSink stdin,
+    Stream<List<int>> stdout,
+    Future<int> exitCode,
+    bool Function([ProcessSignal signal]) kill,
+  })
+>
+_launchLoopback(
+  String executable,
+  List<String> arguments,
+  Duration connectTimeout,
+) async {
+  final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+  final port = server.port;
+  Process process;
+  try {
+    process = await Process.start(
+      executable,
+      [...arguments, '--port=$port'],
+      // 关键：不建 stdio 管道，否则照样撞 ERROR_PIPE_BUSY。
+      mode: ProcessStartMode.inheritStdio,
+    );
+  } on Object {
+    await server.close();
+    rethrow;
+  }
+
+  Socket socket;
+  try {
+    socket = await server.first.timeout(
+      connectTimeout,
+      onTimeout: () {
+        process.kill();
+        throw TimeoutException('子进程未在 $connectTimeout 内回连回环端口 $port');
+      },
+    );
+  } finally {
+    await server.close();
+  }
+
+  return (
+    stdin: _SocketSink(socket),
+    stdout: socket.cast<Uint8List>(),
     exitCode: process.exitCode,
     kill: process.kill,
   );

@@ -15,6 +15,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * 2.0。支持 docs/08 的管理方法（handshake/ping/shutdown/stats）与 spider 调用
  * （create/destroy/home/category/detail/search/play/action）。
  *
+ * 传输默认走 stdin/stdout；命令行带 {@code --port=<n>} 时改走回环 TCP（宿主侧
+ * 撞到 stdio 管道缺陷时的备用路径，见 {@link #codecFrom}）。
+ *
  * JSON 编解码用 gson（在运行时 classpath）。错误码对齐 docs/08 §7：
  * -32000 以下运行时层，-32100 以下 spider 层。
  */
@@ -52,7 +55,7 @@ public final class Main {
         // 宿主上下文必须是 Application：jar 里的 Init 会把 context 直接
         // checkcast 成 android.app.Application 再存起来（见 SpiderBridge#initHost）
         SpiderBridge bridge = new SpiderBridge(loader, new android.app.Application());
-        Main runtime = new Main(new FrameCodec(), bridge);
+        Main runtime = new Main(codecFrom(args), bridge);
         try {
             runtime.run();
         } catch (UncheckedIOException e) {
@@ -61,6 +64,51 @@ public final class Main {
             }
             System.exit(1);
         }
+    }
+
+    /**
+     * 选传输：默认 stdin/stdout；带 {@code --port=<n>} 时改连宿主的回环端口。
+     *
+     * 为什么要有这条备用路径：本机 Dart VM 的 {@code Process.start} 建 stdio 管道
+     * 会报 {@code CreateFile failed 231}（ERROR_PIPE_BUSY），子进程根本起不来。
+     * 宿主侧撞到这个错误时会改用「{@code inheritStdio} 起进程 + 回环 TCP 传数据」
+     * 起本运行时，并用 {@code --port} 把端口告诉它。两条路径共用同一套 LSP 分帧，
+     * 区别只是 {@link FrameCodec} 拿到的流不同。
+     *
+     * 注：走这条路径时宿主用 {@code javaw.exe}（GUI 子系统）而不是 {@code java.exe}，
+     * 否则控制台程序会新分配一个控制台窗口弹到用户桌面上。
+     */
+    private static FrameCodec codecFrom(String[] args) {
+        Integer port = parsePort(args);
+        if (port == null) return new FrameCodec();
+        try {
+            java.net.Socket socket = new java.net.Socket();
+            socket.setTcpNoDelay(true);
+            socket.connect(
+                new java.net.InetSocketAddress(
+                    java.net.InetAddress.getLoopbackAddress(), port),
+                15_000);
+            System.err.println("[jvm] 已回连宿主回环端口 " + port);
+            return new FrameCodec(socket.getInputStream(), socket.getOutputStream());
+        } catch (IOException e) {
+            System.err.println("[jvm] 回连端口 " + port + " 失败: " + e);
+            System.exit(2);
+            return new FrameCodec();
+        }
+    }
+
+    /** 从命令行取 {@code --port=<n>}；没有或解析失败返回 null。 */
+    private static Integer parsePort(String[] args) {
+        if (args == null) return null;
+        for (String a : args) {
+            if (a == null || !a.startsWith("--port=")) continue;
+            try {
+                return Integer.valueOf(a.substring("--port=".length()).trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private static List<java.io.File> classpathEntries() {

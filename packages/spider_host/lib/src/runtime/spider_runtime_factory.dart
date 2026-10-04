@@ -373,7 +373,7 @@ class SpiderRuntimeFactory {
   /// JVM 运行时（spider_jvm）配置；`null` 时 csp_ 站点不可用。
   final SpiderJvmConfig? jvm;
 
-  /// 测试注入：JVM 子进程启动器。默认 [defaultProcessLauncher]。
+  /// 测试注入：JVM 子进程启动器。默认 [resilientProcessLauncher]。
   final ProcessLauncher? jvmLauncher;
 
   /// 测试注入：JS 子进程启动器。默认 [defaultProcessLauncher]。
@@ -387,6 +387,13 @@ class SpiderRuntimeFactory {
   /// 覆盖最坏情况下前几次退避（1s+2s+4s+8s）加进程启动；再久就认为这个宿主
   /// 救不回来了，弃掉重建。熔断会立刻唤醒等待者，不必等满这个时间。
   static const Duration _hostReadyTimeout = Duration(seconds: 20);
+
+  /// 默认 JVM 启动器：stdio 管道优先，撞 `ERROR_PIPE_BUSY` 时回退回环 TCP。
+  ///
+  /// 为什么 JVM 用回退而 JS 不用：回退要求子进程认 `--port=<n>`，目前只有
+  /// spider_jvm 的 Main 支持。JS 运行时（runtime_child.dart）没有这条开关，
+  /// 给它挂回退只会换来一次握手超时。
+  static final ProcessLauncher _defaultJvmLauncher = resilientProcessLauncher();
 
   SpiderHost? _jsHost;
   SpiderHost? _jvmHost;
@@ -458,7 +465,7 @@ class SpiderRuntimeFactory {
       executable: config.javaPath,
       arguments: ['-cp', config.classpath, 'io.mistream.jvm.Main'],
       hostApi: hostApi,
-      launcher: jvmLauncher,
+      launcher: jvmLauncher ?? _defaultJvmLauncher,
     );
     _jvmHost = host;
 

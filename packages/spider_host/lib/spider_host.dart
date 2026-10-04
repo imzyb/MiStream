@@ -15,7 +15,9 @@ export 'src/host/spider_host.dart'
         kHandshakeTimeout,
         kHeartbeatInterval,
         kHeartbeatMissLimit,
-        kMaxRestartAttempts;
+        kMaxRestartAttempts,
+        kPipeBusyErrorCode,
+        resilientProcessLauncher;
 export 'src/rpc/frame_parser.dart'
     show
         FrameComplete,
