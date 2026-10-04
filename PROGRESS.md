@@ -2628,3 +2628,97 @@ Expected: an object with length of a value greater than or equal to <2>
 **凡正文含反引号 / 反斜杠 / `$` / `!` 的，一律写成 `.py` 脚本文件再跑。**
 已用 `PATCH /issues/comments/{id}` 修回。
 
+## 本次会话（2026-10-04）· 九：四个 MAJOR 升级逐个评估并落地
+
+第八节把 4 个 MAJOR 转成了 issue #19/#20/#21/#24。本节把它们**真正评估到底并合并**。
+
+### 总览
+
+| PR | 依赖 | 版本 | 结论 | merge commit |
+|----|------|------|------|--------------|
+| #12 | `actions/upload-artifact` | 4 → 7 | ✅ 合并（CI 端到端验证） | `e17a0df` |
+| #13 | `softprops/action-gh-release` | 2 → 3 | ✅ 合并（**真跑发布链验证**） | `94c4ccb` |
+| #18 | `media_kit_video` | 1.3.1 → 2.0.1 | ✅ 合并（静态核对） | `68a6136` |
+| #23 | `go_router` | 14.8.1 → 18.0.2 | ✅ 合并（静态核对） | `c7eded9` |
+
+### #12 upload-artifact 4 → 7
+
+- v5.0.0 起改用 Node 24（GitHub 标 BREAKING，但属运行时）；v6.0.0 同样 Node 24，
+  要求 self-hosted runner ≥ 2.327.1（本仓库用托管 runner，不受限）；
+  v7.0.0 新增 **opt-in** 的 `archive: false` + 内部 bundle 改 ESM。
+- 仓库只用 `name` + `path`，且 `path` 指向目录，不适用单文件直传 → **无影响**。
+- **验证**：`ci.yml` 的 `release-windows` 里「上传 Release 产物」这一步用的就是
+  `upload-artifact@v7`，在 run `37183178677` 里实际执行并成功 → 端到端验证，非空绿。
+
+### #13 action-gh-release 2 → 3 —— 真跑了一次发布链
+
+v3.0.0 的**唯一变化**是把运行时从 Node 20 迁到 Node 24，**无输入项变更**。
+
+但这个 PR 只改 `release.yml`，而 `release.yml` 仅在 `push v* tag` 时触发 ——
+PR 上那 10 个绿 check 一行都没覆盖它。所以**打了临时 tag 真跑一次**：
+
+| 项 | 结果 |
+|----|------|
+| 临时 tag | `v0.0.0-ghrelease-v3-test`（指向当时的 main `94c4ccb`） |
+| 触发 run | `37185491384` · Release workflow · **completed/success** |
+| job「构建并发布草稿」 | **13 个 step 全绿**，含 `创建草稿 Release`（本 PR 改的那一步） |
+| 产出 | 草稿 Release + `mistream-v0.0.0-ghrelease-v3-test-windows-x64.zip`（40,271,844 字节） |
+| 顺带验证 | 只在 tag 时跑的 `门禁` / `合规扫描` / `打包` 三步 |
+
+验证后已删除临时 tag 与草稿 Release，仓库回到只有原有的 `v0.1.0-m10-5`。
+
+### #18 media_kit_video 1.3.1 → 2.0.1
+
+`2.0.0` 的**唯一 BREAKING** 是移除 `screen_brightness` 与 `volume_controller` 两个依赖。
+
+- 仓库对这两个包**零引用**——因为两处 `Video` 都传 `controls: null`，不用内置控件，
+  而这两个包正是被内置控件用的。`pubspec.lock` 里它们确实被移除，与 changelog 一致。
+- 实际用到的 API **未变**：`VideoController(Player)`、`Video(controller:, controls:)`。
+- `media_kit_video` 只被 `apps/mistream` 引用；`packages/player_engine` 用的是
+  `media_kit` 核心包，未受影响。
+- 2.0.0/2.0.1 正是为 **Flutter 3.38.x** 适配的版本（2.0.1 修了 3.38.x 崩溃与 linux 硬解），
+  仓库基线是 3.44.8。
+
+### #23 go_router 14.8.1 → 18.0.2（跨 4 个 MAJOR）
+
+| 版本 | breaking change | 仓库是否受影响 |
+|------|----------------|---------------|
+| 15.0.0 | URL 改大小写敏感（`caseSensitive` 默认 `true`） | ❌ 路由 path/name 全小写，且**无任何字符串字面量导航** |
+| 16.0.0 | `GoRouteData` 重构（需 `go_router_builder ≥3`） | ❌ 零引用 |
+| 17.0.0 | `ShellRoute` 导航默认通知 observers | ❌ 未注册任何 observers |
+| 18.0.0 | 迁 material_ui/cupertino_ui；最低 Flutter 3.44/Dart 3.12 | ✅ 满足（3.44.8 / 3.12.2） |
+
+仓库用到的 `matchedLocation` / `pathParameters` / `extra` / `pushNamed`
+在这 4 个 MAJOR 里**均无变更**。
+
+### ⚠️ 又踩了一次「clean 但不对」：#23 与 #18 同时改 `pubspec.lock`
+
+`#18`（media_kit_video）与 `#23`（go_router）都要改 `pubspec.lock`。先合 #18 后，
+#23 显示 **`mergeable: clean`** —— 因为两处改动落在锁文件的不同区域，Git 文本三方合并
+「成功」了。
+
+但 **`pubspec.lock` 是生成文件，不该靠文本合并**（这正是第一节 #1 那类坑的同型）。
+所以对 #23 用了 `@dependabot recreate`：新 head `7ead03a`、base 变成含 #18 的最新 main、
+lock 由 dependabot 重新解析，CI 10/10 绿后才合并。
+
+### 仍未验证的（如实记）
+
+CI 覆盖不到**运行时行为**，这两项需要在真机上做：
+
+- **#18**：真实解码播放 —— 按 `docs/10-开发规范.md` §6.2 的播放矩阵过一遍
+  （H.264 / HEVC / AV1 / HDR / ASS 字幕 / 多音轨）。
+- **#23**：真实导航 —— 首页 → 详情 → 播放 → 返回；带 `pathParameters` 的路由
+  （`/detail/:siteId/:vodId`、`/player/:siteId/:vodId/:flag`）能正确解析；
+  从播放页返回不重建首页。历史坑见 SKILL.md「换 pathParameters 必须补 didUpdateWidget」。
+
+### 收尾状态
+
+**开着的 PR：0 个。开着的 issue：0 个。**
+
+四个评估 issue（#19 / #20 / #21 / #24）已全部关闭，并各补了一条**处置结论**评论
+（记明合并 commit、验证方式、以及仍未做的运行时回归项）——关闭动作本身不写理由，
+评论才是证据，避免「关了但没人知道为什么」。
+
+合并后的 `main`（`c7eded9`）CI：**9 success + 1 skipped**（`commitlint` 只在
+`pull_request` 事件跑，push 到 main 时显示 skipped 属预期），无失败项。
+
