@@ -1,21 +1,25 @@
 import 'package:live/live.dart';
 import 'package:test/test.dart';
 
-/// 真实 txt 样本：原样抄自 `live.zbds.top/tv/iptv4.txt` 的前若干行，
+/// 真实 txt 样本：取自 `live.zbds.top/tv/iptv4.txt` 那类订阅的前若干行，
 /// 把各条边界行都留下（分组标记、同名多地址、尾随 `#`、尾随逗号、
 /// `;` 歧义、HTML 实体）。
+///
+/// **主机名已脱敏**为 `*.example.net`：原样本里都是可直连的真实直播源，
+/// 不适合进公开仓库。脱敏只换主机名、不动任何边界写法，所以这些用例覆盖的
+/// 解析路径与脱敏前完全一致。
 const _realTxt = '''
 央视频道,#genre#
-CCTV1,http://74.91.26.218:82/live/cctv1hd.m3u8
-CCTV1,http://101.66.194.125:9901/tsfile/live/0001_1.m3u8?key=txiptv&playlive=0&authid=0
-CCTV1,http://1.197.250.140:9901/tsfile/live/0001_1.m3u8?key=txiptv&playlive=1&authid=0
-CCTV2,http://101.66.194.125:9901/tsfile/live/0002_1.m3u8?key=txiptv&playlive=0&authid=0
+CCTV1,http://a.example.net:82/live/cctv1hd.m3u8
+CCTV1,http://b.example.net:9901/tsfile/live/0001_1.m3u8?key=demokey&playlive=0&authid=0
+CCTV1,http://c.example.net:9901/tsfile/live/0001_1.m3u8?key=demokey&playlive=1&authid=0
+CCTV2,http://b.example.net:9901/tsfile/live/0002_1.m3u8?key=demokey&playlive=0&authid=0
 卫视频道,#genre#
-新疆卫视,http://218.84.12.186:8001/hls/main/playlist.m3u8?zxinjd;http://218.84.12.186:8001/hls/main/playlist.m3u8zxinjd
-云霄综合,http://live.zzyxxw.com:85/live/xwzh.m3u8?fujian,
-延边卫视,http://l.cztvcloud.com/channels/lantian/SXxinchang2/720p.m3u8#
-浙江经济生活,http://ali-m-l.cztv.com/channels/lantian/channel03/1080p.m3u8#https://ali-m-l.cztv.com/channels/lantian/channel003/1080p.m3u8
-太谷新闻综合,https://p2.vzan.com/slowlive/596867413819827251/live.m3u8?zbid=1725814272&amp;amp;tpid=1516989100&amp;amp;type=0
+新疆卫视,http://d.example.net:8001/hls/main/playlist.m3u8?zxinjd;http://d.example.net:8001/hls/main/playlist.m3u8zxinjd
+云霄综合,http://e.example.net:85/live/xwzh.m3u8?fujian,
+延边卫视,http://f.example.net/channels/lantian/SXxinchang2/720p.m3u8#
+浙江经济生活,http://g.example.net/channels/lantian/channel03/1080p.m3u8#https://g.example.net/channels/lantian/channel003/1080p.m3u8
+太谷新闻综合,https://h.example.net/slowlive/596867413819827251/live.m3u8?zbid=1725814272&amp;amp;tpid=1516989100&amp;amp;type=0
 ''';
 
 /// 标准 m3u 写法：频道名在 `#EXTINF` 行的**最后一个逗号之后**。
@@ -74,7 +78,7 @@ void main() {
       final cctv1 = result.channels.firstWhere((c) => c.name == 'CCTV1');
 
       expect(cctv1.allUrls.length, 3);
-      expect(cctv1.url, 'http://74.91.26.218:82/live/cctv1hd.m3u8');
+      expect(cctv1.url, 'http://a.example.net:82/live/cctv1hd.m3u8');
       expect(cctv1.extraUrls.length, 2);
     });
 
@@ -89,8 +93,8 @@ void main() {
       final zj = result.channels.firstWhere((c) => c.name == '浙江经济生活');
 
       expect(zj.allUrls, [
-        'http://ali-m-l.cztv.com/channels/lantian/channel03/1080p.m3u8',
-        'https://ali-m-l.cztv.com/channels/lantian/channel003/1080p.m3u8',
+        'http://g.example.net/channels/lantian/channel03/1080p.m3u8',
+        'https://g.example.net/channels/lantian/channel003/1080p.m3u8',
       ]);
     });
 
@@ -106,7 +110,7 @@ void main() {
       final result = parser.parse(_realTxt);
       final yx = result.channels.firstWhere((c) => c.name == '云霄综合');
 
-      expect(yx.allUrls, ['http://live.zzyxxw.com:85/live/xwzh.m3u8?fujian']);
+      expect(yx.allUrls, ['http://e.example.net:85/live/xwzh.m3u8?fujian']);
     });
 
     test('URL 里的 `&amp;` 不被 `;` 拆开', () {
