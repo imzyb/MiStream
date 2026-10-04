@@ -10,7 +10,7 @@ environment:
   sdk: ^3.12.0
 
 dependencies:
-  archive: ^4.0.0
+  archive: ^4.3.0
   # 与下面锁住的 drift_dev 2.34.0 成对：drift 自 2.34.1 起改了 drift3_preview
   # 的 GeneratedDatabase（新增 schema、去掉 allSchemaEntities），drift_dev
   # 2.34.0 的 schema verifier 编不过，migration_test 直接加载失败。
