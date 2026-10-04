@@ -29,6 +29,29 @@ coverage/
 *.iml
 *.iws
 
+# 生成代码（ADR-008：drift 产物不提交，CI 走 build_runner）
+**/*.g.dart
+# 2026-10-02 说明：这里曾给 packages/storage/lib/src/database/database.g.dart 开过一条
+# 例外并把产物入库，因为 `melos run generate` 在 CI 里写 **0 个输出**（melos 会 cd 进
+# packages/storage 跑单包构建，在 pub workspace 下不产出任何东西），干净检出因此缺
+# drift 产物、analyze 报 613 个「生成符号未定义」，发布链一个包都产不出。
+# 根因已在 pubspec.yaml 的 generate 脚本修掉：改走 `build_runner build --workspace`
+# （仓库根一次构建整个 workspace），CI 实测 `wrote 55 outputs`。例外已回退，产物不再入库。
+
+# QuickJS native 产物（runtimes/spider_js/native/build.bat 本地构建，不入库）。
+# 源码与构建脚本在 native/ 下受版本管理；二进制不进仓库，理由见 docs/10 §10
+# 与 ROADMAP 风险 R5（体积预算）。
+runtimes/spider_js/**/*.dll
+runtimes/spider_js/**/*.obj
+runtimes/spider_js/**/*.lib
+runtimes/spider_js/**/*.exp
+
 # 系统
 .DS_Store
 Thumbs.db
+
+# AI 助手工作区（含记忆与项目数据，属本地环境，不入库）
+.workbuddy-ai/
+
+# Flutter 工具链临时状态
+**/.flutter_tool_state

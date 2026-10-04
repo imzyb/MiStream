@@ -196,6 +196,9 @@ final class ErrorCode {
   /// 返回值不符合 schema，`detail['errors']` 列出字段。
   static const invalidResultSchema = ErrorCode(-32105, 'INVALID_RESULT_SCHEMA');
 
+  /// Spider 返回的结果解析失败。
+  static const spiderParseFailed = ErrorCode(-32108, 'SPIDER_PARSE_FAILED');
+
   /// 正常执行但无数据。不是错误，供 UI 区分「空」与「失败」。
   static const emptyResult = ErrorCode(-32106, 'EMPTY_RESULT');
 
@@ -305,6 +308,14 @@ final class ErrorCode {
 
   /// 解析成功但没有任何可用站点。
   static const configEmpty = ErrorCode(1005, 'CONFIG_EMPTY');
+
+  /// 返回的不是 TVBox JSON 配置（是网页/图片等）。
+  ///
+  /// 常见于「接口地址指向的是导航页」或「源对非客户端请求返回占位图」
+  /// 的源——比如某些接口用 UA 区分客户端，浏览器拿到 HTML 导航页、
+  /// 真实客户端才拿到 JSON。此时让用户看到明确原因，而不是笼统的
+  /// 「解码失败」。
+  static const configNotJson = ErrorCode(1006, 'CONFIG_NOT_JSON');
 
   // ---------------------------------------------------------------------
   // 本地：存储
@@ -503,6 +514,7 @@ final class ErrorCode {
     memoryLimitExceeded,
     methodNotImplemented,
     invalidResultSchema,
+    spiderParseFailed,
     emptyResult,
     requestCancelled,
     permissionDenied,
@@ -526,6 +538,7 @@ final class ErrorCode {
     configSchemaInvalid,
     configUnsupportedVersion,
     configEmpty,
+    configNotJson,
     dbOpenFailed,
     dbMigrationFailed,
     dbBackupFailed,

@@ -6,5 +6,8 @@ library;
 
 export 'package:core_domain/src/error/app_error.dart';
 export 'package:core_domain/src/error/app_result.dart';
+export 'package:core_domain/src/episode/episode_index.dart' show EpisodeIndex;
 export 'package:core_domain/src/error/error_code.dart';
 export 'package:core_domain/src/error/result.dart';
+export 'package:core_domain/src/site/site_runtime.dart'
+    show SiteRuntimeKind, classifySiteRuntime, kCspApiPrefix;

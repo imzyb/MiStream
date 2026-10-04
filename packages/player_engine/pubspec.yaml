@@ -12,6 +12,12 @@ environment:
 dependencies:
   core_domain:
     path: ../core_domain
+  # media_kit 的核心包是纯 Dart 的（依赖里没有 flutter SDK），所以
+  # MediaKitEngine 能住在这个纯 Dart 包里，而 Flutter widget 层
+  # （media_kit_video）只被 apps/mistream 依赖。这不是巧合而是选它的理由之一：
+  # 若核心包也拖 Flutter，player_engine 就得整包变成 Flutter 包，
+  # 连带纯逻辑的单测都要跑在 flutter test 下。
+  media_kit: ^1.2.6
   meta: ^1.18.0
 
 dev_dependencies:

@@ -1,0 +1,72 @@
+[
+  {
+    "name": "a&&href 提取链接",
+    "method": "pdfh",
+    "html": "<div><a href=\"http://ex.com/1\">A</a><a href=\"http://ex.com/2\">B</a></div>",
+    "rule": "a&&href",
+    "expected": "http://ex.com/1"
+  },
+  {
+    "name": "a&&Text 提取文本",
+    "method": "pdfh",
+    "html": "<div><a href=\"http://ex.com/1\">剧集1</a></div>",
+    "rule": "a&&Text",
+    "expected": "剧集1"
+  },
+  {
+    "name": "img&&src 提取封面",
+    "method": "pdfh",
+    "html": "<div><img src=\"cover.jpg\"></div>",
+    "rule": "img&&src",
+    "expected": "cover.jpg"
+  },
+  {
+    "name": "body&&.list&&a&&href 链式",
+    "method": "pdfh",
+    "html": "<body><div class=\"list\"><a href=\"url1\">1</a><a href=\"url2\">2</a></div></body>",
+    "rule": "body&&.list&&a&&href",
+    "expected": "url1"
+  },
+  {
+    "name": "pdfa 提取全部链接",
+    "method": "pdfa",
+    "html": "<div><a href=\"url1\">1</a><a href=\"url2\">2</a><a href=\"url3\">3</a></div>",
+    "rule": "a&&href",
+    "expected": ["url1", "url2", "url3"]
+  },
+  {
+    "name": "pdfa 提取全部文本",
+    "method": "pdfa",
+    "html": "<div><a href=\"url1\">剧A</a><a href=\"url2\">剧B</a></div>",
+    "rule": "a&&Text",
+    "expected": ["剧A", "剧B"]
+  },
+  {
+    "name": "不存在的选择器返回空",
+    "method": "pdfh",
+    "html": "<div><a href=\"url1\">1</a></div>",
+    "rule": "body&&.nonexistent&&a&&href",
+    "expected": ""
+  },
+  {
+    "name": "空 HTML 返回空",
+    "method": "pdfh",
+    "html": "",
+    "rule": "a&&href",
+    "expected": ""
+  },
+  {
+    "name": "属性名大小写不敏感",
+    "method": "pdfh",
+    "html": "<IMG SRC=\"cover.jpg\"><a HREF=\"url1\">1</a>",
+    "rule": "a&&href",
+    "expected": "url1"
+  },
+  {
+    "name": "嵌套标签的文本提取",
+    "method": "pdfh",
+    "html": "<div class=\"title\"><h1>测试<span>影片</span></h1></div>",
+    "rule": ".title&&Text",
+    "expected": "测试影片"
+  }
+]

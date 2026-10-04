@@ -1,0 +1,257 @@
+[
+  {
+    "name": "jsonpath 取根成员",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.code"
+    ],
+    "expected": [0]
+  },
+  {
+    "name": "jsonpath 通配取数组字段",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.data.list[*].vod_name"
+    ],
+    "expected": ["甲","乙","丙"]
+  },
+  {
+    "name": "jsonpath 过滤比较",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.data.list[?(@.vod_id>1)].vod_name"
+    ],
+    "expected": ["乙","丙"]
+  },
+  {
+    "name": "jsonpath 命不中给空数组",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.missing"
+    ],
+    "expected": []
+  },
+  {
+    "name": "jsonpath 负下标不命中（参考实现不支持负下标）",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.data.list[-1].vod_name"
+    ],
+    "expected": []
+  },
+  {
+    "name": "jsonpath 切片左闭右开",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.data.list[0:2].vod_id"
+    ],
+    "expected": [1,2]
+  },
+  {
+    "name": "jsonpath 递归下降取成员",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$..vod_name"
+    ],
+    "expected": ["甲","乙","丙"]
+  },
+  {
+    "name": "jsonpath 存在性过滤：空数组也算命中（JS 里 [] 是真值）",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.data.list[?(@.tags)].vod_name"
+    ],
+    "expected": ["甲","乙","丙"]
+  },
+  {
+    "name": "jsonpath 过滤相等（数字）",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.data.list[?(@.vod_id==2)].vod_name"
+    ],
+    "expected": ["乙"]
+  },
+  {
+    "name": "jsonpath 过滤相等（字符串）",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.data.list[?(@.vod_name==\"甲\")].vod_id"
+    ],
+    "expected": [1]
+  },
+  {
+    "name": "jsonpath 过滤大于等于",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.data.list[?(@.vod_id>=2)].vod_id"
+    ],
+    "expected": [2,3]
+  },
+  {
+    "name": "jsonpath 过滤逻辑与",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.data.list[?(@.vod_id>1&&@.vod_id<3)].vod_id"
+    ],
+    "expected": [2]
+  },
+  {
+    "name": "jsonpath 过滤逻辑或",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.data.list[?(@.vod_id==1||@.vod_id==3)].vod_id"
+    ],
+    "expected": [1,3]
+  },
+  {
+    "name": "jsonpath 存在性过滤取 id",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.data.list[?(@.tags)].vod_id"
+    ],
+    "expected": [1,2,3]
+  },
+  {
+    "name": "jsonpath 的 .length 按 JS 属性语义取字符串长度",
+    "method": "jsonpath",
+    "args": [
+      {"code":0,"msg":"ok","data":{"total":3,"list":[{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]}},
+      "$.data.list[0].vod_name.length"
+    ],
+    "expected": [1]
+  },
+  {
+    "name": "pjfh 取字符串",
+    "method": "pjfh",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.msg",
+    "expected": "ok"
+  },
+  {
+    "name": "pjfh 取嵌套字符串",
+    "method": "pjfh",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.data.list[0].vod_name",
+    "expected": "甲"
+  },
+  {
+    "name": "pjfh 命中数字 0 得到空串（假值被 `|| ''` 吞掉）",
+    "method": "pjfh",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.code",
+    "expected": ""
+  },
+  {
+    "name": "pjfh 命中数字原样返回数字，不转字符串",
+    "method": "pjfh",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.data.total",
+    "expected": 3
+  },
+  {
+    "name": "pjfh 规则不以 $. 开头会自动补上",
+    "method": "pjfh",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "data.total",
+    "expected": 3
+  },
+  {
+    "name": "pjfh 用 || 回退到第一个非假值",
+    "method": "pjfh",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.missing||$.msg",
+    "expected": "ok"
+  },
+  {
+    "name": "pjfh 命中数组时原样返回数组",
+    "method": "pjfh",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.data.list[0].tags",
+    "expected": ["x","y"]
+  },
+  {
+    "name": "pjfh 空数组算真值，原样返回（JS 里 [] 是真值）",
+    "method": "pjfh",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.data.list[2].tags",
+    "expected": []
+  },
+  {
+    "name": "pjfh JSON 文本非法时给空串",
+    "method": "pjfh",
+    "html": "not json",
+    "rule": "$.a",
+    "expected": ""
+  },
+  {
+    "name": "pj 空 base 下给出根相对路径（参考实现行为，照搬不修）",
+    "method": "pj",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.data.list[0].vod_pic",
+    "expected": "/a.jpg"
+  },
+  {
+    "name": "pj 有 base 时按 base 拼接",
+    "method": "pj",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.data.list[1].vod_pic",
+    "baseUrl": "http://a.com/x/",
+    "expected": "http://a.com/x/b.jpg"
+  },
+  {
+    "name": "pj 命中数字时经 urljoin 转成字符串",
+    "method": "pj",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.data.total",
+    "expected": "/3"
+  },
+  {
+    "name": "pj 空数组经 urljoin 强转后变空串",
+    "method": "pj",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.data.list[2].tags",
+    "expected": ""
+  },
+  {
+    "name": "pj 数组经 urljoin 强转成逗号串",
+    "method": "pj",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.data.list[0].tags",
+    "expected": "/x,y"
+  },
+  {
+    "name": "pjfa 多项命中给命中集合",
+    "method": "pjfa",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.data.list[*].vod_name",
+    "expected": ["甲","乙","丙"]
+  },
+  {
+    "name": "pjfa 单次命中且本身是数组时展开该项",
+    "method": "pjfa",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.data.list",
+    "expected": [{"vod_id":1,"vod_name":"甲","vod_pic":"a.jpg","tags":["x","y"]},{"vod_id":2,"vod_name":"乙","vod_pic":"b.jpg","tags":["y"]},{"vod_id":3,"vod_name":"丙","vod_pic":"c.jpg","tags":[]}]
+  },
+  {
+    "name": "pjfa 命不中给空数组",
+    "method": "pjfa",
+    "html": "{\"code\":0,\"msg\":\"ok\",\"data\":{\"total\":3,\"list\":[{\"vod_id\":1,\"vod_name\":\"甲\",\"vod_pic\":\"a.jpg\",\"tags\":[\"x\",\"y\"]},{\"vod_id\":2,\"vod_name\":\"乙\",\"vod_pic\":\"b.jpg\",\"tags\":[\"y\"]},{\"vod_id\":3,\"vod_name\":\"丙\",\"vod_pic\":\"c.jpg\",\"tags\":[]}]}}",
+    "rule": "$.missing",
+    "expected": []
+  }
+]

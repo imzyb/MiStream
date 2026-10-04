@@ -92,6 +92,7 @@ Future<List<Violation>> runAllChecks(Directory root) async => [
     pathContains: p.join('lib', 'features'),
   ),
   ...await checkIgnoreComments(root),
+  ...await checkScriptEncoding(root),
 ];
 
 /// 校验 [packageDir] 是纯 Dart 包：pubspec 依赖与源码 import 都在白名单内。
@@ -152,12 +153,18 @@ Future<List<Violation>> checkForbiddenImports(
   final violations = <Violation>[];
   await for (final file in _dartFiles(dir)) {
     final content = await file.readAsString();
+    final lines = const LineSplitter().convert(content);
     for (final match in _directive.allMatches(content)) {
       final uri = match[2]!;
       if (!uri.startsWith('package:')) continue;
 
       final name = uri.substring('package:'.length).split('/').first;
       if (!forbidden.contains(name)) continue;
+
+      final lineIdx = _lineOf(content, match.start) - 1;
+      final line = lineIdx >= 0 && lineIdx < lines.length ? lines[lineIdx] : '';
+      // 允许 `// ignore: layering -- 理由` 显式豁免
+      if (line.contains('ignore:') && line.contains('layering')) continue;
 
       violations.add(
         Violation(
@@ -203,6 +210,48 @@ Future<List<Violation>> checkIgnoreComments(Directory root) async {
         ),
       );
     }
+  }
+
+  return violations;
+}
+
+/// 校验含非 ASCII 的 PowerShell 脚本都带 UTF-8 BOM。
+///
+/// Windows PowerShell 5.1 的 `-File` 对**没有 BOM** 的脚本按 ANSI 码页解码，
+/// 不看文件里有什么内容。中文因此被拆成乱码，而且乱码还会把紧随其后的 ASCII
+/// 字符（`$`、`"`）一起吃掉——脚本被悄悄改写成另一个程序，且改法随码页而变：
+///
+/// - 本机 ANSI=CP936 时 `tools/release_check.ps1` 仍能解析，但 `$files` 的赋值
+///   整段被吞进字符串字面量，扫描恒为 0 个文件、合规门禁恒过；
+/// - CI runner ANSI=CP1252 时同一份文件直接
+///   `ParserError: The string is missing the terminator: "`，把 Release 打挂
+///   （CI run 37029615096 第 11 步）。
+///
+/// 加 BOM 是唯一能让两种码页都读到正确文本的改法。纯 ASCII 的脚本不受影响，
+/// 所以只约束含非 ASCII 的文件。
+Future<List<Violation>> checkScriptEncoding(Directory root) async {
+  const bom = [0xEF, 0xBB, 0xBF];
+  final violations = <Violation>[];
+
+  await for (final file in _filesWithExtension(root, const {'.ps1', '.psm1'})) {
+    final bytes = await file.readAsBytes();
+    if (!bytes.any((byte) => byte > 0x7F)) continue;
+
+    final hasBom =
+        bytes.length >= 3 &&
+        bytes[0] == bom[0] &&
+        bytes[1] == bom[1] &&
+        bytes[2] == bom[2];
+    if (hasBom) continue;
+
+    violations.add(
+      Violation(
+        rule: 'ps1-bom',
+        file: _relative(file.path, root),
+        message:
+            '含非 ASCII 的 PowerShell 脚本必须带 UTF-8 BOM：无 BOM 时 Windows PowerShell 5.1 按 ANSI 码页解码，中文会连带吃掉紧随其后的 ASCII 字符（美元符、引号），在 CP936 上静默失效、在 CP1252 上直接 ParserError',
+      ),
+    );
   }
 
   return violations;
@@ -281,11 +330,33 @@ Stream<File> _dartFiles(Directory dir) async* {
   }
 }
 
+Stream<File> _filesWithExtension(Directory dir, Set<String> extensions) async* {
+  if (!dir.existsSync()) return;
+
+  await for (final entity in dir.list(followLinks: false)) {
+    if (entity is Directory) {
+      if (_isSkippedDirectory(p.basename(entity.path))) continue;
+      yield* _filesWithExtension(entity, extensions);
+      continue;
+    }
+    if (entity is! File) continue;
+    if (extensions.any(entity.path.endsWith)) yield entity;
+  }
+}
+
 bool _isSkippedDirectory(String segment) =>
     segment == '.dart_tool' ||
     segment == '.git' ||
     segment == 'build' ||
-    segment == 'ephemeral';
+    segment == 'ephemeral' ||
+    // 工具暂存目录：不在版本控制里（见 .gitignore），装的是排查问题时写的一次性
+    // 探针脚本。它们**不是项目源码**，不该被分层纪律与 ignore 理由规则管——真
+    // 按源码标准要求，一次探针就会把 M0 门禁顶红，而那和产品代码的健康度无关。
+    // （`analyze_inproc.dart` 这类长期用的脚本也在这里，需要它时直接跑。）
+    segment == '.workbuddy-ai' ||
+    // drift schema 迁移验证代码（`melos run schema:update` 生成），
+    // 与 `*.g.dart` 同样视为生成物，不参与分层纪律检查。
+    segment == 'schema_versions.dart';
 
 int _lineOf(String content, int offset) =>
     '\n'.allMatches(content.substring(0, offset)).length + 1;

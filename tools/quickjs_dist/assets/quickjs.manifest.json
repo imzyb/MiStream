@@ -1,0 +1,16 @@
+{
+  "version": "2026-08-18",
+  "platform": "windows-x64",
+  "note": "libquickjs.dll 为仓库本地 MinGW 定制构建（JSObject 布局非 mainline，见 runtimes/spider_js/README.md）；quickjs_wrapper.dll 由 native/build.bat（MSVC）产出；quickjs.dll 为 libquickjs.dll 的别名副本。三份均 vendor 在 tools/quickjs_dist/vendor/ 并锁哈希，重编 wrapper 后必须更新本清单。",
+  "files": {
+    "libquickjs.dll": {
+      "sha256": "b75d31083988f38d24429189a3ba847038cc54578b77894dc6ce46bb5e8f52e1"
+    },
+    "quickjs_wrapper.dll": {
+      "sha256": "b2923691ef7a9dce9e18a8b5ac96693afdfe9489fdf114693e29550ed0664ef5"
+    },
+    "quickjs.dll": {
+      "sha256": "b75d31083988f38d24429189a3ba847038cc54578b77894dc6ce46bb5e8f52e1"
+    }
+  }
+}

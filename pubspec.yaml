@@ -26,16 +26,32 @@ workspace:
   - packages/player_engine
   - packages/storage
   - packages/plugin_host
+  - packages/search_engine
+  - packages/play_engine
+  - packages/source_adapter
   - packages/theme_engine
+  - packages/media_sniffer
+  - packages/live
+  - packages/download
+  - packages/text_codec
   - runtimes/spider_js
   - runtimes/spider_python
   - runtimes/spider_jvm
   - runtimes/sniffer
   - tools/arch_check
   - tools/commit_lint
+  - tools/libmpv_dist
+  - tools/mock_source_server
+  - tools/quickjs_dist
+  - tools/theme_lint
 
 dev_dependencies:
-  melos: ^8.2.2
+  # 上界锁在 7.8.2：melos 自 7.8.2 起要求 cli_util ^0.5.0，而 stable 基线上
+  # 唯一可用的 drift_dev（≤2.34.0，见 packages/storage/pubspec.yaml）要
+  # cli_util ^0.4.0，两者互斥。整条约束链的起点是 Flutter 3.44.x stable 的
+  # flutter_test 钉死 test_api 0.7.11。等 stable 跟进 Dart 3.13 后一并放开。
+  melos: ">=7.8.0 <7.8.2"
+  test: ^1.31.0
   very_good_analysis: ^10.3.0
 
 melos:
@@ -88,6 +104,10 @@ melos:
       description: 分层纪律与 ignore 注释校验（ROADMAP M0 出口标准 ③）
       run: dart run tools/arch_check/bin/arch_check.dart
 
+    theme:lint:
+      description: 校验主题包（docs/06-插件系统.md §9 的 `mistream theme lint`）
+      run: dart run tools/theme_lint/bin/theme_lint.dart
+
     check:all:
       description: M0 出口标准一键校验
       run: >
@@ -95,3 +115,47 @@ melos:
         melos run analyze --no-select &&
         melos run check:arch --no-select &&
         melos run test --no-select
+
+    generate:
+      description: 生成 drift 代码（ADR-008：产物不提交，CI 与本地都走 build_runner）
+      # ⚠️ 必须带 --workspace，且**不能**写 packageFilters。
+      #
+      # 原写法是 `dart run build_runner build --delete-conflicting-outputs` 配
+      # `packageFilters: dependsOn: build_runner`：melos 会 cd 进 packages/storage
+      # 跑一次**单包构建**。在 pub workspace 下这次构建实测写 **0 个输出**
+      # （CI 日志 `Built with build_runner/aot in 13s; wrote 0 outputs.`），
+      # database.g.dart 于是永远生成不出来，只能靠入库解封发布链。
+      #
+      # `--workspace` 是「构建当前 workspace 内的全部包」，由仓库根跑一次，
+      # 因此必须去掉 packageFilters（没有它 melos 才在根目录执行；format:check /
+      # analyze 都是这么跑的）。`--delete-conflicting-outputs` 自 build_runner
+      # 2.15 起已列入 removedOptions，只会打一句警告，顺手删掉。
+      run: dart run build_runner build --workspace
+
+    schema:update:
+      description: 刷新 drift schema 快照并重生成迁移验证代码（改表后跑一次）
+      run: >
+        dart run drift_dev schema dump lib/src/database/database.dart drift_schemas/ &&
+        dart run drift_dev schema generate drift_schemas/ lib/src/database/schema_versions.dart
+      packageFilters:
+        dirExists: drift_schemas
+
+    libmpv:install:
+      description: 下载并校验 libmpv（锁定版本 + SHA256），装进 build/libmpv
+      run: dart run tools/libmpv_dist/bin/libmpv_dist.dart install
+
+    quickjs:install:
+      description: 校验并安装 vendored QuickJS DLL 到 spider_js 引擎目录
+      run: dart run tools/quickjs_dist/bin/quickjs_dist.dart install
+
+    jvm:build:
+      description: 编译 spider_jvm_runtime.jar（需 JDK17，libs 已随包）
+      run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_jvm_runtime.ps1
+
+    spider-js:bundle:
+      description: 编译并验证 Windows Spider JS AOT 运行时包
+      run: >
+        powershell -NoProfile -ExecutionPolicy Bypass
+        -File tools/build_spider_js_runtime.ps1
+        -Configuration Release
+        -OutputDirectory build/spider_js

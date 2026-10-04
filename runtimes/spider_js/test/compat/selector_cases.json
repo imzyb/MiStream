@@ -1,0 +1,177 @@
+[
+  {
+    "name": "tag.class 复合选择器",
+    "method": "pdfh",
+    "html": "<div class=\"a\">错</div><p class=\"a\">对</p>",
+    "rule": "p.a&&Text",
+    "expected": "对"
+  },
+  {
+    "name": "tag#id 复合选择器",
+    "method": "pdfh",
+    "html": "<div id=\"t\">错</div><h1 id=\"t2\">对</h1>",
+    "rule": "h1#t2&&Text",
+    "expected": "对"
+  },
+  {
+    "name": "多类名同时限定",
+    "method": "pdfh",
+    "html": "<div class=\"item\">错</div><div class=\"item active\">对</div>",
+    "rule": ".item.active&&Text",
+    "expected": "对"
+  },
+  {
+    "name": "后代选择器（空格分隔）",
+    "method": "pdfh",
+    "html": "<div class=\"list\"><span><a href=\"u1\">1</a></span></div>",
+    "rule": ".list a&&href",
+    "expected": "u1"
+  },
+  {
+    "name": "后代选择器取全部",
+    "method": "pdfa",
+    "html": "<div class=\"list\"><a href=\"u1\">1</a><a href=\"u2\">2</a></div><a href=\"u3\">3</a>",
+    "rule": ".list a&&href",
+    "expected": ["u1", "u2"]
+  },
+  {
+    "name": "子选择器 >",
+    "method": "pdfa",
+    "html": "<ul class=\"m\"><li>1</li><li><ul><li>深</li></ul></li></ul>",
+    "rule": ".m>li&&Text",
+    "expected": ["1", "深"]
+  },
+  {
+    "name": "属性存在选择器",
+    "method": "pdfa",
+    "html": "<a href=\"u1\">1</a><a>2</a><a href=\"u3\">3</a>",
+    "rule": "a[href]&&href",
+    "expected": ["u1", "u3"]
+  },
+  {
+    "name": "属性等值选择器",
+    "method": "pdfh",
+    "html": "<div data-id=\"1\">错</div><div data-id=\"2\">对</div>",
+    "rule": "[data-id='2']&&Text",
+    "expected": "对"
+  },
+  {
+    "name": "属性前缀选择器 ^=",
+    "method": "pdfa",
+    "html": "<a href=\"/vod/1\">1</a><a href=\"/live/2\">2</a><a href=\"/vod/3\">3</a>",
+    "rule": "a[href^='/vod']&&href",
+    "expected": ["/vod/1", "/vod/3"]
+  },
+  {
+    "name": "属性后缀选择器 $=",
+    "method": "pdfa",
+    "html": "<img src=\"a.jpg\"><img src=\"b.png\"><img src=\"c.jpg\">",
+    "rule": "img[src$='.jpg']&&src",
+    "expected": ["a.jpg", "c.jpg"]
+  },
+  {
+    "name": "属性包含选择器 *=",
+    "method": "pdfh",
+    "html": "<a href=\"/play/1-2-3.html\">1</a><a href=\"/detail/9.html\">2</a>",
+    "rule": "a[href*='play']&&href",
+    "expected": "/play/1-2-3.html"
+  },
+  {
+    "name": "分组选择器逗号",
+    "method": "pdfa",
+    "html": "<h1>标题</h1><h2>副标题</h2><p>正文</p>",
+    "rule": "h1,h2&&Text",
+    "expected": ["标题", "副标题"]
+  },
+  {
+    "name": "链式 && 逐级下钻",
+    "method": "pdfh",
+    "html": "<body><div class=\"wrap\"><div class=\"inner\"><a href=\"deep\">x</a></div></div></body>",
+    "rule": "body&&.wrap&&.inner&&a&&href",
+    "expected": "deep"
+  },
+  {
+    "name": "链式中途无匹配返回空",
+    "method": "pdfh",
+    "html": "<div class=\"wrap\"><a href=\"u\">x</a></div>",
+    "rule": ".wrap&&.missing&&a&&href",
+    "expected": ""
+  },
+  {
+    "name": "链式中途无匹配 pdfa 返回空列表",
+    "method": "pdfa",
+    "html": "<div class=\"wrap\"><a href=\"u\">x</a></div>",
+    "rule": ".wrap&&.missing&&a&&href",
+    "expected": []
+  },
+  {
+    "name": "多个父节点各自展开后合并",
+    "method": "pdfa",
+    "html": "<div class=\"g\"><a href=\"1\">a</a></div><div class=\"g\"><a href=\"2\">b</a></div>",
+    "rule": ".g&&a&&href",
+    "expected": ["1", "2"]
+  },
+  {
+    "name": "id 选择器",
+    "method": "pdfh",
+    "html": "<div id=\"main\"><span>命中</span></div><span>未命中</span>",
+    "rule": "#main&&span&&Text",
+    "expected": "命中"
+  },
+  {
+    "name": "标签选择器取全部同名标签",
+    "method": "pdfa",
+    "html": "<li>1</li><li>2</li><li>3</li>",
+    "rule": "li&&Text",
+    "expected": ["1", "2", "3"]
+  },
+  {
+    "name": "规则两侧空格被忽略",
+    "method": "pdfh",
+    "html": "<div class=\"t\"><a href=\"u\">x</a></div>",
+    "rule": " .t && a && href ",
+    "expected": "u"
+  },
+  {
+    "name": "class 名含连字符",
+    "method": "pdfh",
+    "html": "<div class=\"module-item-title\"><a href=\"u\">x</a></div>",
+    "rule": ".module-item-title&&a&&href",
+    "expected": "u"
+  },
+  {
+    "name": "data- 属性提取",
+    "method": "pdfa",
+    "html": "<img data-original=\"/p/1.jpg\"><img data-original=\"/p/2.jpg\">",
+    "rule": "img&&data-original",
+    "expected": ["/p/1.jpg", "/p/2.jpg"]
+  },
+  {
+    "name": "属性名大小写不敏感（data-Src 写法）",
+    "method": "pdfh",
+    "html": "<img DATA-SRC=\"/p/1.jpg\">",
+    "rule": "img&&data-src",
+    "expected": "/p/1.jpg"
+  },
+  {
+    "name": "属性不存在返回空串",
+    "method": "pdfh",
+    "html": "<a href=\"u\">x</a>",
+    "rule": "a&&title",
+    "expected": ""
+  },
+  {
+    "name": "属性值为空串",
+    "method": "pdfh",
+    "html": "<a href=\"\">x</a>",
+    "rule": "a&&href",
+    "expected": ""
+  },
+  {
+    "name": "深层嵌套逐级命中",
+    "method": "pdfh",
+    "html": "<div class=\"a\"><div class=\"b\"><div class=\"c\"><div class=\"d\"><span>底</span></div></div></div></div>",
+    "rule": ".a&&.b&&.c&&.d&&span&&Text",
+    "expected": "底"
+  }
+]

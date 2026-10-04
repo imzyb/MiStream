@@ -1,0 +1,17 @@
+name: libmpv_dist
+description: >
+  libmpv 随包分发工具：从固定来源下载、校验 SHA256、解包并安装。
+  锁版本与 hash 的依据见 docs/03-技术选型.md §2 与 ROADMAP M1。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  crypto: ^3.0.7
+  meta: ^1.18.0
+
+dev_dependencies:
+  test: ^1.31.0

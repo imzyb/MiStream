@@ -10,4 +10,21 @@ environment:
   sdk: ^3.12.0
 
 dependencies:
+  archive: ^4.0.0
+  # 与下面锁住的 drift_dev 2.34.0 成对：drift 自 2.34.1 起改了 drift3_preview
+  # 的 GeneratedDatabase（新增 schema、去掉 allSchemaEntities），drift_dev
+  # 2.34.0 的 schema verifier 编不过，migration_test 直接加载失败。
+  # 两者必须成对升降。
+  drift: ">=2.34.0 <2.34.1"
   meta: ^1.18.0
+  path: ^1.9.0
+  sqlite3: ^3.0.0
+
+dev_dependencies:
+  build_runner: ^2.5.0
+  # 上界锁在 2.34.1：从该版本起 drift_dev 要求 analyzer ^13，逆推出
+  # test_api ≥0.7.12，而 Flutter 3.44.x stable 的 flutter_test 钉死
+  # test_api 0.7.11，版本解析必然失败（CI run 31493615676 九个 job 全挂）。
+  # 等 Flutter stable 跟进 Dart 3.13 后再放开。基线见 docs/03 §2。
+  drift_dev: ">=2.34.0 <2.34.1"
+  test: ^1.31.0

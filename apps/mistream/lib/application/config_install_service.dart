@@ -1,0 +1,253 @@
+/// 配置安装服务：把解析好的 TVBox 配置落库，并置引导完成标记。
+///
+/// 解码与解析复用 `core_config` 的 `ConfigImportService.import`（纯函数，
+/// 不碰库）；本服务只负责持久化，这样 Presentation 层就不必直连 `storage`
+/// （`docs/10` §3.3，由 `tools/arch_check` 强制）。
+library;
+
+import 'package:core_config/core_config.dart';
+import 'package:core_domain/core_domain.dart';
+import 'package:live/live.dart';
+import 'package:mistream/application/live_epg_settings.dart';
+import 'package:punycoder/punycoder.dart';
+import 'package:storage/storage.dart';
+
+/// 将配置 URL 中的 Unicode 域名规范化为 ASCII/Punycode。
+///
+/// 保留 scheme、端口、查询参数和路径；无效或无法转换时返回原值，
+/// 交由 HTTP 层返回可读错误。
+String normalizeConfigUrl(String rawUrl) {
+  final value = rawUrl.trim();
+  final schemeEnd = value.indexOf('://');
+  if (schemeEnd < 0) return value;
+
+  final prefix = value.substring(0, schemeEnd + 3);
+  final rest = value.substring(schemeEnd + 3);
+  final authorityEnd = RegExp(r'[/\\?#]').firstMatch(rest)?.start;
+  final authority = authorityEnd == null
+      ? rest
+      : rest.substring(0, authorityEnd);
+  final suffix = authorityEnd == null ? '' : rest.substring(authorityEnd);
+  final hostStart = authority.lastIndexOf('@') + 1;
+  final hostPort = authority.substring(hostStart);
+  final colon = hostPort.lastIndexOf(':');
+  final host = colon > 0 ? hostPort.substring(0, colon) : hostPort;
+  if (!host.runes.any((rune) => rune > 0x7f)) return value;
+
+  try {
+    final asciiHost = domainToAscii(host);
+    final authorityPrefix = authority.substring(0, hostStart);
+    final port = colon > 0 ? hostPort.substring(colon) : '';
+    return '$prefix$authorityPrefix$asciiHost$port$suffix';
+  } on Object {
+    return value;
+  }
+}
+
+/// 引导完成标记的设置键。
+///
+/// 唯一定义处——之前引导页与启动入口各写各的字面量，很容易写歪。
+final SettingKey<bool> kOnboardingDoneKey = SettingKey.boolKey(
+  'onboarding_done',
+);
+
+/// 配置安装服务。
+class ConfigInstallService {
+  /// 以仓储集合构造。
+  ///
+  /// [fetcher] 可注入，便于测试替换传输层；不传时每次拉取临时建一个并在
+  /// 结束时关闭。
+  ///
+  /// [liveImporter] 为 `null` 时**不导入直播源**（只装站点）。测试与不关心
+  /// 直播的调用方走这条路。
+  ///
+  /// [epgFetcher] 用于把配置里的 `epg` 模板**当场**接进拉取器（不必等重启）。
+  /// 为 `null` 时模板仍然会落库，只是这一次会话不生效。
+  ConfigInstallService(
+    this._repositories, {
+    ConfigFetcher? fetcher,
+    LiveImporter? liveImporter,
+    EpgFetcher? epgFetcher,
+  }) : _fetcher = fetcher,
+       _liveImporter = liveImporter,
+       _epgFetcher = epgFetcher;
+
+  final Repositories _repositories;
+
+  /// 注入的拉取器；为 `null` 时按次创建。
+  final ConfigFetcher? _fetcher;
+
+  /// 直播订阅导入器；为 `null` 时跳过 `lives`。
+  final LiveImporter? _liveImporter;
+
+  /// 直播 EPG 拉取器；为 `null` 时只落库模板、不接线。
+  final EpgFetcher? _epgFetcher;
+
+  /// 引导是否已完成。
+  Future<bool> isOnboardingDone() =>
+      _repositories.settings.read(kOnboardingDoneKey, false);
+
+  /// 置引导完成标记（「跳过」与「导入成功」都走这里）。
+  Future<void> markOnboardingDone() =>
+      _repositories.settings.write(kOnboardingDoneKey, true);
+
+  /// 把 [result] 中的站点写入库，并置引导完成标记。
+  ///
+  /// [sourceUrl] 配置源 URL（用于 type=3 站点解析相对脚本路径，也用于解析
+  /// `lives[].url` 里的相对地址）。
+  /// 返回写入的站点数。
+  Future<int> install(
+    ConfigImportResult result, {
+    String name = '导入配置',
+    String? sourceUrl,
+  }) async {
+    final now = DateTime.now().toUtc();
+
+    final configSourceId = await _repositories.configSources.add(
+      ConfigSourcesCompanion.insert(
+        name: name,
+        url: Value(sourceUrl),
+        rawHash: '',
+        format: result.format,
+        spider: Value(result.config.spider),
+        spiderMd5: Value(result.config.spiderMd5),
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    for (final site in result.config.sites) {
+      await _repositories.sites.upsert(
+        SitesCompanion.insert(
+          configId: Value(configSourceId),
+          siteKey: site.key,
+          name: site.name,
+          typeCode: site.type,
+          // 按 type + api 判定，不要写死 'http'：type=3 里 api 以 csp_ 开头的
+          // 需要 JVM 运行时（ADR-006 降级为可选），其余走 JS。
+          runtime: classifySiteRuntime(
+            typeCode: site.type,
+            api: site.api,
+          ).wireName,
+          api: site.api,
+          ext: Value(site.ext),
+          searchable: Value(site.searchable),
+          quickSearch: Value(site.quickSearch),
+          filterable: Value(site.filterable),
+          priority: Value(site.priority),
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+    }
+
+    await _installLives(result.config.lives, sourceUrl: sourceUrl);
+    await markOnboardingDone();
+    return result.config.sites.length;
+  }
+
+  /// 顺带导入配置里的 `lives` 订阅，并把 `epg` 模板落库。
+  ///
+  /// TVBox 配置的 `lives` 是一组直播订阅源，此前**解析了但零消费方** ——
+  /// 「配置 → 频道列表」这一环是断的，用户在直播页只能看到一个空列表。
+  ///
+  /// 三条约定：
+  /// - **失败不冒泡**。站点已经装好了，直播源拉不到（源站跑路、网络抖动）
+  ///   不该让整份配置导入变成失败 —— 那是两件独立的事。
+  /// - **`baseUrl` 传 [sourceUrl]**：真实配置里 `lives[].url` 可能是
+  ///   `./list.txt` 这类相对路径，不解析就是一条永远 404 的地址。
+  /// - **EPG 模板与频道导入解耦**。模板先落库再接拉取器：源站今天挂了不代表
+  ///   明天还挂，模板留着下次还能用；而且配置原文不入库，不单独存一份的话
+  ///   重启后节目单就没了。
+  Future<void> _installLives(
+    List<LiveConfig> lives, {
+    String? sourceUrl,
+  }) async {
+    if (lives.isEmpty) return;
+
+    // 配置是模板的**唯一权威来源**：这次没有 `epg` 就写空，把上一份配置留下
+    // 的陈旧模板清掉，免得拉到一个早就换掉的接口。
+    final templates = <String>[
+      for (final live in lives)
+        if ((live.epg ?? '').trim().isNotEmpty) live.epg!.trim(),
+    ];
+    await saveLiveEpgTemplates(_repositories.settings, templates);
+    _epgFetcher?.updateTemplates(templates);
+
+    final importer = _liveImporter;
+    if (importer == null) return;
+
+    final subscriptions = <LiveSubscription>[
+      for (final live in lives)
+        if ((live.url ?? '').trim().isNotEmpty)
+          LiveSubscription(
+            url: live.url!,
+            name: live.name,
+            type: live.type,
+            userAgent: live.ua,
+            epgTemplate: live.epg,
+            logoTemplate: live.logo,
+          ),
+    ];
+    if (subscriptions.isEmpty) return;
+
+    try {
+      await importer.import(subscriptions, baseUrl: sourceUrl);
+    } on Object {
+      // 见上：直播是附加项，不该拖垮配置导入。单源失败已由 LiveImporter
+      // 内部逐条隔离，这里兜的是落库层面的异常。
+    }
+  }
+
+  /// 从 URL 拉取并安装配置，`replace` 为真时先清空旧订阅。
+  ///
+  /// 拉取交给 [ConfigFetcher]：它会先用 TVBox 客户端形态的 UA
+  /// （[kConfigFetchUserAgent]）请求，拿到 HTML/图片这类「明显不是配置」的
+  /// 内容时再用浏览器 UA 重试一次。失败信息里带着状态码、content-type 与
+  /// **整条重定向链**——「地址没错但被 302 踢到首页」这类问题正是靠它定位。
+  Future<Result<int, AppError>> installFromUrl(
+    String url, {
+    bool replace = true,
+    String? aesKey,
+  }) async {
+    final normalizedUrl = normalizeConfigUrl(url);
+    final uri = Uri.tryParse(normalizedUrl);
+    if (uri == null ||
+        (uri.scheme != 'http' && uri.scheme != 'https') ||
+        uri.host.isEmpty) {
+      return const Err(
+        LocalError(
+          code: ErrorCode.invalidArgument,
+          message: '配置地址无效，请输入完整的 HTTP/HTTPS 地址',
+        ),
+      );
+    }
+
+    final owned = _fetcher == null;
+    final fetcher = _fetcher ?? ConfigFetcher();
+    try {
+      // 判据用默认的 defaultConfigVerdict：只排除「明显不是配置」的内容
+      // （网页/图片），因为配置本身可能是 Base64 或 AES 密文，不是可读 JSON。
+      final outcome = await fetcher.fetch(normalizedUrl);
+      if (!outcome.isOk) return Err(outcome.error!);
+
+      final result = ConfigImportService.import(outcome.bytes!, aesKey: aesKey);
+      if (result.isErr) return Err(result.errorOrNull!);
+      if (replace) {
+        // 清理旧订阅与站点（保留收藏/历史）
+        await _repositories.sites.clear();
+        await _repositories.configSources.clear();
+      }
+      final count = await install(
+        result.valueOrNull!,
+        name: '订阅 ${DateTime.now().toIso8601String().substring(0, 10)}',
+        sourceUrl: normalizedUrl,
+      );
+      return Ok(count);
+    } on Object catch (e, st) {
+      return Err(AppError.from(e, st));
+    } finally {
+      if (owned) fetcher.close();
+    }
+  }
+}

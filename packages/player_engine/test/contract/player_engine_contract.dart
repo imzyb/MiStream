@@ -44,6 +44,16 @@ void runPlayerEngineContract({
       expect(result.isOk, isTrue, reason: 'open 应当成功');
     }
 
+    // 真引擎的状态是事件驱动、异步到达的：open 后状态不会立刻定型。
+    // 契约只断言「最终能到达的目标状态」，用轮询等它到位；假引擎同步定量，
+    // 首轮即命中，同一套用例照样通过。
+    Future<void> waitForState(PlayerState target) async {
+      for (var i = 0; i < 200 && engine.state != target; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(engine.state, target);
+    }
+
     group('调用顺序纪律', () {
       test('未 initialize 就 open 抛 StateError', () {
         expect(() => engine.open(createSource()), throwsStateError);
@@ -93,11 +103,15 @@ void runPlayerEngineContract({
         final subscription = engine.stateStream.listen(seen.add);
 
         await engine.open(createSource());
-        await pumpEventQueue();
+        // 等事件真的进入校验序列，而不是等 snapshot —— 快照先到、流还在投递，
+        // 抢跑取 cancel 会把 playing 事件弄丢。观察 on the `seen` 本身即断言目标。
+        for (var i = 0; i < 200 && !seen.contains(PlayerState.playing); i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
         await subscription.cancel();
 
         expect(seen, contains(PlayerState.opening));
-        expect(seen.last, PlayerState.playing);
+        expect(seen, contains(PlayerState.playing));
       });
 
       test('pause 与 play 之间可往返', () async {
@@ -248,13 +262,16 @@ void runPlayerEngineContract({
 
       test('同一条流可被多次订阅', () async {
         await openMedia();
-        final stream = engine.stateStream;
+        await waitForState(PlayerState.playing);
 
+        final stream = engine.stateStream;
+        // 订阅时补发的值是「此时」的当前值；两次订阅拿到的都是同一刻快照。
         final first = stream.first;
         final second = stream.first;
 
-        await expectLater(first, completion(engine.state));
-        await expectLater(second, completion(engine.state));
+        final received = await Future.wait([first, second]);
+        expect(received, hasLength(2));
+        expect(received[0], same(received[1]));
       });
 
       test('position 随 seek 推进且不倒退到负值', () async {

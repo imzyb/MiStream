@@ -1,0 +1,21 @@
+name: live
+description: >
+  直播TV模块：m3u文件解析、频道管理、分组收藏、EPG对接。
+  M7 直播TV，见 docs/02-系统架构.md。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  core_domain:
+    path: ../core_domain
+  storage:
+    path: ../storage
+  drift: ^2.22.0
+  meta: ^1.18.0
+
+dev_dependencies:
+  test: ^1.31.0

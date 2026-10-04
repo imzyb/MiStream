@@ -11,12 +11,57 @@ environment:
   sdk: ^3.12.0
 
 dependencies:
+  core_config:
+    path: ../../packages/core_config
+  core_domain:
+    path: ../../packages/core_domain
+  download:
+    path: ../../packages/download
   flutter:
     sdk: flutter
+  go_router: ^14.8.0
+  live:
+    path: ../../packages/live
+  media_kit: ^1.2.6
+  media_kit_libs_windows_video: ^1.0.9
+  media_kit_video: ^1.2.4
+  media_sniffer:
+    path: ../../packages/media_sniffer
+  # 纯注解包：application 层的纯逻辑（如 resume_policy）用它标注不可变
+  # 而不必引入 Flutter，这样这些逻辑能在 dart test 下测。
+  meta: ^1.16.0
+  path: ^1.9.0
+  # 数据库落盘位置按 docs/07-数据库设计.md 开头规定的各平台应用支持目录解析。
+  path_provider: ^2.1.0
+  player_engine:
+    path: ../../packages/player_engine
+  punycoder: ^0.3.0
+  search_engine:
+    path: ../../packages/search_engine
+  # 浏览器嗅探（CDP）。只在静态嗅探拿不到地址时才用到，见
+  # runtimes/sniffer 与 docs/ADR-005。
+  sniffer:
+    path: ../../runtimes/sniffer
+  source_adapter:
+    path: ../../packages/source_adapter
+  spider_host:
+    path: ../../packages/spider_host
+  storage:
+    path: ../../packages/storage
+  # 设计令牌、外观选择解析、主题包加载与对比度兜底（纯 Dart，见 docs/09-UI规范.md）。
+  theme_engine:
+    path: ../../packages/theme_engine
+  # GBK 码表与「字节 → 文本」的编码探测：老直播源站仍有 GBK 输出，只按
+  # UTF-8 解会整篇乱码。纯 Dart，无第三方依赖。
+  text_codec:
+    path: ../../packages/text_codec
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  mock_source_server:
+    path: ../../tools/mock_source_server
+  test: ^1.31.0
 
 # 不引 flutter_lints：全仓库统一用根 analysis_options.yaml 的 very_good_analysis，
 # 两套规则集叠加只会产生互相矛盾的告警（docs/10-开发规范.md §3.1）。

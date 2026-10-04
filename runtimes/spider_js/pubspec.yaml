@@ -10,4 +10,27 @@ environment:
   sdk: ^3.12.0
 
 dependencies:
+  # ASN.1 与 RSA 原语。两者本来就是 encrypt 的传递依赖（encrypt → pointycastle
+  # → asn1lib），此处显式提升为直接依赖：RSA 的 PEM 解析要用 asn1lib，
+  # rsaX 的三种 padding 要用 pointycastle，靠传递依赖拿到属于「碰运气」——
+  # encrypt 哪天换掉 pointycastle，这里就断了。
+  asn1lib: ^1.6.5
+  core_domain:
+    path: ../../packages/core_domain
+  crypto: ^3.0.6
+  encrypt: ^5.0.3
+  ffi: ^2.1.4
+  html: ^0.15.6
   meta: ^1.18.0
+  pointycastle: ^3.9.1
+  spider_host:
+    path: ../../packages/spider_host
+  # GBK 码表已移到 text_codec（HTTP 拉取层也要用同一份），本包只做转出口，
+  # 见 lib/src/drpy/gbk.dart。
+  text_codec:
+    path: ../../packages/text_codec
+
+dev_dependencies:
+  mock_source_server:
+    path: ../../tools/mock_source_server
+  test: ^1.31.0

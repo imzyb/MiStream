@@ -1,17 +1,54 @@
 /// Spider 子进程的宿主侧实现。
 ///
-/// **本包在 M3 落地**，当前只占位。
-///
-/// 计划中的公共 API（见 `docs/08-RPC协议.md`）：
-///
-/// - `SpiderHost`：子进程生命周期、进程池、握手、心跳、退避重启、熔断
-/// - `StdioRpcChannel`：LSP 风格分帧（`Content-Length` header + JSON body）、
-///   双向调用、`$/cancelRequest`、写队列背压
-/// - `HostApi`：`host.fetch`（域名白名单、SSRF 拦截、代理、超时、大小上限）、
-///   `host.storage`、`host.env`
-/// - `SpiderRuntime`：统一 Spider 接口的 Dart 侧定义与返回值 schema 校验
-/// - `RpcRecorder` / `RpcReplayer`：录制与回放，回放会话直接作为回归用例
-///
-/// 分帧与背压是自研清单第 4 项（`docs/03-技术选型.md` §3）：半包、粘包、
-/// 超大包、畸形数据都必须扛住，这是 M3 的出口标准之一。
+/// 见 `docs/08-RPC协议.md` 与 `docs/05-Spider引擎.md`。
 library;
+
+export 'src/host/host_api.dart'
+    show FetchResult, HostApi, HostFetchConfig, HostStorage;
+export 'src/host/spider_host.dart'
+    show
+        HandshakeResult,
+        ProcessLauncher,
+        SpiderHost,
+        defaultProcessLauncher,
+        kGracefulShutdownMs,
+        kHandshakeTimeout,
+        kHeartbeatInterval,
+        kHeartbeatMissLimit,
+        kMaxRestartAttempts;
+export 'src/rpc/frame_parser.dart'
+    show
+        FrameComplete,
+        FrameError,
+        FrameNeedMore,
+        FrameResult,
+        LspFrameParser,
+        kMaxHeaderBytes,
+        kMaxMessageBytes;
+export 'src/rpc/rpc_message.dart'
+    show
+        RpcMessage,
+        RpcNotification,
+        RpcRequest,
+        RpcResponse,
+        encodeFramed,
+        jsonRpcInternalError,
+        jsonRpcInvalidRequest,
+        jsonRpcMethodNotFound,
+        jsonRpcParseError,
+        kJsonRpcVersion;
+export 'src/rpc/rpc_recorder.dart'
+    show RecordingRpcChannel, RpcRecordEvent, RpcRecorder, RpcReplayer;
+export 'src/rpc/stdio_rpc_channel.dart'
+    show StdioRpcChannel, kDefaultRequestTimeout, kWriteQueueMax;
+export 'src/runtime/http_runtime.dart'
+    show HttpRequestParams, HttpResponseData, HttpRuntime;
+export 'src/runtime/spider_runtime_factory.dart'
+    show
+        HttpRuntimeAdapter,
+        JsRuntimeAdapter,
+        JvmRuntimeAdapter,
+        SpiderJvmConfig,
+        SpiderRuntime,
+        SpiderRuntimeFactory,
+        SpiderRuntimeType;

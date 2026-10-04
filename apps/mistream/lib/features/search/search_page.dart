@@ -1,0 +1,232 @@
+/// 搜索页面：搜索输入 + 源选择 + 流式结果。
+library;
+
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:mistream/app/app.dart';
+import 'package:mistream/features/common/common.dart'
+    show EmptyView, ResponsiveGridView;
+import 'package:mistream/features/home/widgets/media_card.dart';
+import 'package:search_engine/search_engine.dart';
+
+/// 搜索页面。
+class SearchPage extends StatefulWidget {
+  /// 构造搜索页。
+  const SearchPage({super.key});
+
+  @override
+  State<SearchPage> createState() => _SearchPageState();
+}
+
+class _SearchPageState extends State<SearchPage> {
+  final _controller = TextEditingController();
+  final _items = <SearchItem>[];
+  final _sourceStatuses = <SearchSourceStatus>[];
+  bool _searching = false;
+  bool _hasSearched = false;
+  StreamSubscription<SearchProgress>? _sub;
+
+  @override
+  void dispose() {
+    unawaited(_sub?.cancel());
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _search(String keyword) {
+    if (keyword.trim().isEmpty) return;
+
+    unawaited(_sub?.cancel());
+    setState(() {
+      _items.clear();
+      _sourceStatuses.clear();
+      _searching = true;
+      _hasSearched = true;
+    });
+
+    final assembly = AppScope.of(context);
+
+    _sub = assembly.searchUseCase
+        .search(keyword)
+        .listen(
+          (progress) {
+            if (!mounted) return;
+            setState(() {
+              _items
+                ..clear()
+                ..addAll(progress.items);
+              _sourceStatuses
+                ..clear()
+                ..addAll(progress.sourceStatuses);
+              _searching = !progress.isComplete;
+            });
+          },
+          onError: (_) {
+            if (mounted) setState(() => _searching = false);
+          },
+        );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: TextField(
+          controller: _controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: '搜索影片、剧集...',
+            border: InputBorder.none,
+          ),
+          onSubmitted: _search,
+        ),
+        actions: [
+          if (_searching)
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          IconButton(
+            icon: const Icon(Icons.clear),
+            onPressed: () {
+              unawaited(_sub?.cancel());
+              _controller.clear();
+              setState(() {
+                _items.clear();
+                _sourceStatuses.clear();
+                _searching = false;
+                _hasSearched = false;
+              });
+            },
+          ),
+        ],
+      ),
+      body: _items.isEmpty
+          ? _searching
+                ? _buildStatusList()
+                : _hasSearched
+                ? EmptyView(
+                    icon: Icons.search_off,
+                    title: '没有找到相关结果',
+                    subtitle: '换个关键词或片源再试试',
+                    action: OutlinedButton.icon(
+                      onPressed: () => _search(_controller.text),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('重新搜索'),
+                    ),
+                  )
+                : const EmptyView(
+                    icon: Icons.search,
+                    title: '输入关键词开始搜索',
+                    subtitle: '输入片名，支持多片源同时检索',
+                  )
+          : ResponsiveGridView(
+              itemCount: _items.length,
+              findChildIndexCallback: _indexOfKey,
+              itemBuilder: (context, index) {
+                final item = _items[index];
+                return MediaCard(
+                  // 稳定身份 = 合并去重键。结果会随源陆续返回而重排，带上它
+                  // Flutter 才能把卡片**挪**到新位置而不是按位置重建 —— 否则
+                  // 每来一个源，同一格就换成另一部片、封面重新加载淡入，整片
+                  // 网格反复闪。
+                  key: ValueKey(item.identityKey),
+                  title: item.title,
+                  coverUrl: item.coverUrl,
+                  remarks: item.remarks,
+                  onTap: () => _goDetail(item),
+                );
+              },
+            ),
+    );
+  }
+
+  /// 由 key 反查索引，配合 [ResponsiveGridView.findChildIndexCallback] 使用。
+  ///
+  /// `identityKey` 就是合并去重键、天然唯一，所以线性查找即可：结果规模是
+  /// 「源数 × 单源上限」（数百条），而每次重排只对**可见项**调用，代价可忽略。
+  int? _indexOfKey(Key key) {
+    if (key is! ValueKey<String>) return null;
+    final index = _items.indexWhere((item) => item.identityKey == key.value);
+    return index < 0 ? null : index;
+  }
+
+  Widget _buildStatusList() {
+    if (_sourceStatuses.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _sourceStatuses.length,
+      itemBuilder: (context, index) {
+        final status = _sourceStatuses[index];
+        return ListTile(
+          leading: _statusIcon(status.status),
+          title: Text(status.sourceName),
+          subtitle: Text(
+            status.error ?? _statusText(status),
+            style: TextStyle(
+              color: status.status == SearchStatus.error
+                  ? Theme.of(context).colorScheme.error
+                  : null,
+              fontSize: 12,
+            ),
+          ),
+          dense: true,
+        );
+      },
+    );
+  }
+
+  Widget _statusIcon(SearchStatus status) {
+    return switch (status) {
+      SearchStatus.pending => const SizedBox(
+        width: 16,
+        height: 16,
+        child: CircularProgressIndicator(strokeWidth: 1.5),
+      ),
+      SearchStatus.running => const SizedBox(
+        width: 16,
+        height: 16,
+        child: CircularProgressIndicator(strokeWidth: 1.5),
+      ),
+      SearchStatus.complete => const Icon(Icons.check_circle_outline, size: 16),
+      SearchStatus.error => const Icon(
+        Icons.error_outline,
+        size: 16,
+        color: Colors.red,
+      ),
+    };
+  }
+
+  String _statusText(SearchSourceStatus status) {
+    return switch (status.status) {
+      SearchStatus.pending => '等待中',
+      SearchStatus.running => '搜索中...',
+      SearchStatus.complete => '${status.resultCount} 条结果',
+      SearchStatus.error => '失败',
+    };
+  }
+
+  void _goDetail(SearchItem item) {
+    if (item.sources.isEmpty) return;
+    final source = item.sources.first;
+    unawaited(
+      context.pushNamed(
+        'detail',
+        pathParameters: {
+          'siteId': source.sourceId.toString(),
+          'vodId': source.vodId,
+        },
+        extra: item,
+      ),
+    );
+  }
+}

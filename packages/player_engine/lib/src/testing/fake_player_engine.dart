@@ -15,55 +15,8 @@ import 'package:player_engine/src/player_error.dart';
 import 'package:player_engine/src/player_log.dart';
 import 'package:player_engine/src/player_state.dart';
 import 'package:player_engine/src/track.dart';
+import 'package:player_engine/src/value_stream.dart';
 import 'package:player_engine/src/video_filter_settings.dart';
-
-/// 一个持有当前值的多订阅流。
-///
-/// 订阅时先补发当前值，再接后续变化——这正是 [PlayerEngine] 文档里钉死的流
-/// 语义。用 `Stream.multi` 而不是 `StreamController.broadcast`：后者对迟到的
-/// 订阅者不会补发任何东西，而播放页的组件本来就是陆续挂载的。
-final class _ValueStream<T> {
-  _ValueStream(this._value);
-
-  final StreamController<T> _controller = StreamController<T>.broadcast();
-  T _value;
-  var _closed = false;
-
-  T get value => _value;
-
-  /// 无条件推送，即便值没变。
-  void emit(T next) {
-    if (_closed) return;
-    _value = next;
-    _controller.add(next);
-  }
-
-  /// 值变化时才推送。
-  void emitIfChanged(T next) {
-    if (_value == next) return;
-    emit(next);
-  }
-
-  Stream<T> get stream => Stream<T>.multi((controller) {
-    controller.add(_value);
-    if (_closed) {
-      unawaited(controller.close());
-      return;
-    }
-    final subscription = _controller.stream.listen(
-      controller.add,
-      onError: controller.addError,
-      onDone: controller.close,
-    );
-    controller.onCancel = subscription.cancel;
-  }, isBroadcast: true);
-
-  Future<void> close() async {
-    if (_closed) return;
-    _closed = true;
-    await _controller.close();
-  }
-}
 
 /// 一个纯内存的 [PlayerEngine]。
 ///
@@ -98,11 +51,11 @@ final class FakePlayerEngine implements PlayerEngine {
   final Duration _mediaDuration;
   final List<Track> _tracks;
 
-  final _state = _ValueStream<PlayerState>(PlayerState.idle);
-  final _position = _ValueStream<Duration>(Duration.zero);
-  final _duration = _ValueStream<Duration>(Duration.zero);
-  final _buffered = _ValueStream<List<DurationRange>>(const []);
-  final _mediaInfo = _ValueStream<MediaInfo>(MediaInfo.empty);
+  final _state = ValueStream<PlayerState>(PlayerState.idle);
+  final _position = ValueStream<Duration>(Duration.zero);
+  final _duration = ValueStream<Duration>(Duration.zero);
+  final _buffered = ValueStream<List<DurationRange>>(const []);
+  final _mediaInfo = ValueStream<MediaInfo>(MediaInfo.empty);
   final _logs = StreamController<PlayerLog>.broadcast();
   final _errors = StreamController<PlayerError>.broadcast();
 
@@ -124,9 +77,24 @@ final class FakePlayerEngine implements PlayerEngine {
   AppError? _initializeFailure;
   AppError? _openFailure;
 
+  final List<Duration> _seekTargets = <Duration>[];
+
   // -------------------------------------------------------------------
   // 测试钩子
   // -------------------------------------------------------------------
+
+  /// 历次 seek 的目标位置（按发生顺序，已钳制到 `[0, duration]`）。
+  ///
+  /// 续播验收需要断言「确实 seek 到了历史位置」，而不只看最终 position——
+  /// 后者可能被后续操作覆盖。
+  List<Duration> get seekTargets => List.unmodifiable(_seekTargets);
+
+  /// seek 发生的次数。
+  int get seekCount => _seekTargets.length;
+
+  /// 最近一次 seek 的目标位置；从未 seek 为 `null`。
+  Duration? get lastSeekTarget =>
+      _seekTargets.isEmpty ? null : _seekTargets.last;
 
   /// 让下一次 [initialize] 以 [error] 失败。
   void failNextInitialize(AppError error) {
@@ -144,9 +112,11 @@ final class FakePlayerEngine implements PlayerEngine {
   }
 
   /// 手动推进播放位置。到达时长即进入 [PlayerState.ended]。
+  ///
+  /// 不计入 [seekTargets]：这是模拟内核自行推进，而非外部下发 seek 命令。
   void advance(Duration delta) {
     _requireOpen();
-    _seekTo(_position.value + delta);
+    _seekTo(_position.value + delta, record: false);
   }
 
   /// 手动发一条内核日志。
@@ -330,7 +300,10 @@ final class FakePlayerEngine implements PlayerEngine {
   Future<void> stepFrame({bool backward = false}) async {
     _requireOpen();
     const frame = Duration(milliseconds: 40);
-    _seekTo(backward ? _position.value - frame : _position.value + frame);
+    _seekTo(
+      backward ? _position.value - frame : _position.value + frame,
+      record: false,
+    );
     _state.emitIfChanged(PlayerState.paused);
   }
 
@@ -494,8 +467,9 @@ final class FakePlayerEngine implements PlayerEngine {
   // 内部
   // -------------------------------------------------------------------
 
-  void _seekTo(Duration target) {
+  void _seekTo(Duration target, {bool record = true}) {
     final clamped = _clamp(target, _duration.value);
+    if (record) _seekTargets.add(clamped);
     _position.emit(clamped);
     _buffered.emit([DurationRange(Duration.zero, clamped)]);
 

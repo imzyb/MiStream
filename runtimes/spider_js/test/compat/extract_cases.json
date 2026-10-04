@@ -1,0 +1,142 @@
+[
+  {
+    "name": "Text 去掉首尾空白",
+    "method": "pdfh",
+    "html": "<p>   海贼王   </p>",
+    "rule": "p&&Text",
+    "expected": "海贼王"
+  },
+  {
+    "name": "Text 拼接嵌套子节点",
+    "method": "pdfh",
+    "html": "<h1>测试<span>影片</span></h1>",
+    "rule": "h1&&Text",
+    "expected": "测试影片"
+  },
+  {
+    "name": "Text 跨多级嵌套",
+    "method": "pdfh",
+    "html": "<div class=\"a\"><p><em>深</em>文</p></div>",
+    "rule": ".a&&Text",
+    "expected": "深文"
+  },
+  {
+    "name": "Text 空元素返回空串",
+    "method": "pdfh",
+    "html": "<p class=\"t\"></p>",
+    "rule": ".t&&Text",
+    "expected": ""
+  },
+  {
+    "name": "Text 保留词间空格",
+    "method": "pdfh",
+    "html": "<p class=\"t\">One Piece</p>",
+    "rule": ".t&&Text",
+    "expected": "One Piece"
+  },
+  {
+    "name": "Text 解码 HTML 实体",
+    "method": "pdfh",
+    "html": "<p class=\"t\">a&amp;b</p>",
+    "rule": ".t&&Text",
+    "expected": "a&b"
+  },
+  {
+    "name": "Text 不含注释内容",
+    "method": "pdfh",
+    "html": "<p class=\"t\">a<!--注释-->b</p>",
+    "rule": ".t&&Text",
+    "expected": "ab"
+  },
+  {
+    "name": "小写 text 与 Text 等价",
+    "method": "pdfh",
+    "html": "<p class=\"t\">海贼王</p>",
+    "rule": ".t&&text",
+    "expected": "海贼王"
+  },
+  {
+    "name": "pdfa 批量取 Text",
+    "method": "pdfa",
+    "html": "<li>一</li><li>二</li><li>三</li>",
+    "rule": "li&&Text",
+    "expected": ["一", "二", "三"]
+  },
+  {
+    "name": "Html 返回内部标记",
+    "method": "pdfh",
+    "html": "<h1 id=\"t\">测试<em>影片</em></h1>",
+    "rule": "#t&&Html",
+    "expected": "测试<em>影片</em>"
+  },
+  {
+    "name": "Html 纯文本元素等同 Text",
+    "method": "pdfh",
+    "html": "<p class=\"t\">海贼王</p>",
+    "rule": ".t&&Html",
+    "expected": "海贼王"
+  },
+  {
+    "name": "Html 空元素返回空串",
+    "method": "pdfh",
+    "html": "<p class=\"t\"></p>",
+    "rule": ".t&&Html",
+    "expected": ""
+  },
+  {
+    "name": "小写 html 与 Html 等价",
+    "method": "pdfh",
+    "html": "<p class=\"t\"><b>粗</b></p>",
+    "rule": ".t&&html",
+    "expected": "<b>粗</b>"
+  },
+  {
+    "name": "Html 重新转义实体",
+    "method": "pdfh",
+    "html": "<p class=\"t\">a&amp;b</p>",
+    "rule": ".t&&Html",
+    "expected": "a&amp;b"
+  },
+  {
+    "name": "提取 class 属性原文",
+    "method": "pdfh",
+    "html": "<div class=\"item active\">x</div>",
+    "rule": "div&&class",
+    "expected": "item active"
+  },
+  {
+    "name": "提取 title 属性含空格",
+    "method": "pdfh",
+    "html": "<a title=\"海贼王 第1集\" href=\"u\">x</a>",
+    "rule": "a&&title",
+    "expected": "海贼王 第1集"
+  },
+  {
+    "name": "提取 alt 属性含中文",
+    "method": "pdfh",
+    "html": "<img src=\"c.jpg\" alt=\"封面图\">",
+    "rule": "img&&alt",
+    "expected": "封面图"
+  },
+  {
+    "name": "提取 style 属性",
+    "method": "pdfh",
+    "html": "<div class=\"bg\" style=\"background:url(/p/1.jpg)\">x</div>",
+    "rule": ".bg&&style",
+    "expected": "background:url(/p/1.jpg)"
+  },
+  {
+    "name": "提取自闭合标签的属性",
+    "method": "pdfh",
+    "html": "<img src=\"a.jpg\"/>",
+    "rule": "img&&src",
+    "expected": "a.jpg"
+  },
+  {
+    "name": "属性值含 & 实体被解码",
+    "method": "pdfh",
+    "html": "<a href=\"/p?a=1&amp;b=2\">x</a>",
+    "rule": "a&&href",
+    "expected": "/p?a=1&b=2"
+  }
+]

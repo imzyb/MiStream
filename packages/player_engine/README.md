@@ -2,7 +2,8 @@
 
 `PlayerEngine` 抽象与 libmpv 实现。
 
-**状态**：M1-a 已落地抽象层与契约测试；`MediaKitEngine` 在 M1-b 补上。
+**状态**：M1-a 已落地抽象层与契约测试；M1-b 的 `MediaKitEngine`（media_kit /
+libmpv 实现）已接入同一套契约，纯映射逻辑已被 `dart test` 覆盖。
 
 设计见 [docs/04-播放器设计](../../docs/04-播放器设计.md)，
 分两期实现的理由见 [ADR-004](../../docs/adr/004-播放器分两期实现.md)。
@@ -60,6 +61,9 @@ dart test packages/player_engine        # 或 melos run test:dart
 ```
 
 契约套件在 `test/contract/player_engine_contract.dart`，每个实现写一个几行的
-入口文件调用它即可（见 `test/contract/fake_engine_contract_test.dart`）。
-需要真实媒体才能验的项——硬解是否生效、HLS 能否起播、连续两小时不涨内存——
-属于 M1 出口标准里的手工验证，不在契约套件内。
+入口文件调用它即可（见 `test/contract/fake_engine_contract_test.dart` 与
+`test/contract/media_kit_engine_contract_test.dart`）。后者需要 libmpv 运行库
+与一个本地样本媒体（由 `LIBMPV_LIBRARY_PATH` 与 `MISTREAM_SAMPLE_MEDIA` 两个
+编译期环境变量给出），缺了就整组跳过——真真能不能起播由 M1 出口标准的手工
+验收把关。需要真实媒体才能验的项——硬解是否生效、HLS 能否起播、连续两小时
+不涨内存——都属于 M1 出口标准里的手工验证，不在契约套件内。
