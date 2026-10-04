@@ -19,7 +19,7 @@ dependencies:
     path: ../../packages/download
   flutter:
     sdk: flutter
-  go_router: ^14.8.0
+  go_router: ^18.0.2
   live:
     path: ../../packages/live
   media_kit: ^1.2.6
