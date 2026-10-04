@@ -2366,5 +2366,72 @@ run: melos run test:dart --no-select && melos run test:flutter --no-select
 - 合规规则仍只有 `spider` / `api.php` / `vod_pic` 三条，未做 license 扫描与体积门禁。
 - 草稿 Release `v0.1.0-m10-5` 未发布；`spider_jvm_runtime.jar` 仍未进包。
 
+---
+
+## 本次会话（2026-10-04）· 六：把 PR #4 合进 main —— 仓库「停在两个月前」的真相
+
+### 症状
+
+用户看 https://github.com/imzyb/MiStream 时发现仓库像是停在两个月前。诊断结论：
+**仓库没坏，是默认分支 `main` 自 2026-08-04 起就没再前进过。** M1b–M5 的全部成果
+都压在**一个始终没合并的 PR** 里，一行都没进 `main`。
+
+合并前的核对结果：
+
+| 项目 | 值 |
+|------|-----|
+| `main` HEAD | `afb9166` · `2026-08-04T15:13:37Z` · `feat(player): 落地 PlayerEngine 抽象层与契约测试 (#3)` |
+| 仓库 `pushed_at` | `2026-10-02T17:43:09Z` ← 推送是新鲜的 |
+| 仓库 `updated_at` | `2026-08-04T15:15:03Z` ← 但默认分支两个月没动 |
+| PR #4 | `feat/m1b-media-kit-engine` → `main` · open · 未合并 |
+| PR #4 规模 | **234 commits · 456 files · +92,904 / −308** |
+| PR #4 可合并性 | `mergeable: True` · `mergeable_state: clean` |
+
+`main` 上那三次 workflow 全是 `pub in /. - Update` 这类**定时任务**，提交 SHA 一直
+是 `afb9166` —— 连自动提交都没产生新 SHA，只剩空转。
+
+另有 6 个 dependabot PR 也一直挂着（#1、#5、#6、#8、#9、#10），#7 已关闭未合并。
+
+### 合并
+
+合并前先确认了一件事：`ci.yml` 的 `commitlint` 带
+`if: github.event_name == 'pull_request'`，**push 到 main 时会跳过**。所以 GitHub
+默认生成的 merge commit 标题（`Merge pull request #4 from ...`）不满足
+`^(\w+)(?:\(([^()]*)\))?(!)?: (.*)$` 也**不会**判红。确认后才动手。
+
+- 合并成功，merge commit = **`01b0de4`**，标题 `chore: 合并 M1b–M5 里程碑（PR #4）`
+- 合并请求里带了 `sha=03a43c4…`，确保合进去的正是审查过的那个提交
+- `git fetch` 后确认 `origin/main` = `01b0de4`，`03a43c4` 已是其祖先，`main` 提交数 4 → 238
+- 仓库 `updated_at` 跳到 `2026-10-04T04:17:34Z`，「停滞两个月」的症状消失
+
+### ⚠️ 合并后 main 上的 CI 全红 —— 但**不是代码问题**
+
+run `37176561363`（`01b0de4`）：10 个 job 里 9 个 failure、`commitlint` skipped。
+
+特征：**所有 job 一起红，`started_at` → `completed_at` 只差 2～5 秒，每个 job
+`steps: []`、`runner_id: 0`、`runner_name: ""`，日志接口返回 `BlobNotFound`。**
+即作业**压根没拿到 runner**。
+
+取 check-run annotations 拿到权威原因：
+
+> The job was not started because recent account payments have failed or your
+> spending limit needs to be increased. Please check the 'Billing & plans' section in your settings
+
+私有仓库的 Actions 按分钟计费；额度耗尽 / 付款失败后，**所有**新 run 都会这样秒红。
+**修法只有一条**：GitHub → Settings → Billing & plans 补付款方式或提高 spending
+limit，然后 **re-run** —— 代码一行都不用动。
+
+> 注意：这条红**不代表** `03a43c4` 上那次 10/10 全绿是假的。那次（run `37042622670`，
+> 2026-10-02）runner 正常分配、`test:dart` 各包计数与 `test:flutter` 137 passed 都是
+> 真实输出。计费问题是 2026-10-02 17:43 之后才出现的。
+
+### 仍未做（如实记）
+
+- **main 上的 CI 要等用户在 Billing 里修好计费后 re-run 才会绿。** 当前这次红纯属
+  计费，与本轮代码改动无关。
+- 6 个 dependabot PR 需等 main 前进后 rebase。
+- 分支 `feat/m1b-media-kit-engine` 已合并，可删。
+
+
 
 
