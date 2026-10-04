@@ -110,8 +110,8 @@ defaultProcessLauncher(
 
 /// `CreateFile failed 231` = `ERROR_PIPE_BUSY`。
 ///
-/// 本机 Dart VM 建子进程 stdio 管道时必报这个（`process_win.cc:744`），
-/// 见 [resilientProcessLauncher]。
+/// 被注入沙箱 DLL 的进程树里，Dart VM 建子进程 stdio 管道必报这个
+/// （`process_win.cc:744`）。见 [resilientProcessLauncher]。
 const int kPipeBusyErrorCode = 231;
 
 /// 把回环 socket 包成 [IOSink]，供 [StdioRpcChannel] 写入。
@@ -161,8 +161,13 @@ class _SocketSink implements IOSink {
 
 /// 管道优先、回环 TCP 兜底的启动器。
 ///
-/// 存在的理由：本机（Windows + Dart VM）`Process.start` 建 stdio 管道会抛
-/// `ProcessException(errorCode: 231)`（`ERROR_PIPE_BUSY`），**任何**子进程都起不来。
+/// 存在的理由：在被注入沙箱 DLL 的进程树里（`tsbx.dll`），Dart VM 的
+/// `Process.start` 建 stdio 管道会抛 `ProcessException(errorCode: 231)`
+/// （`ERROR_PIPE_BUSY`），**任何**子进程都起不来。根因是那个 DLL 钩坏了
+/// 「服务端 `PIPE_ACCESS_OUTBOUND` + 客户端 `GENERIC_READ`」这条组合，而它正是
+/// Dart 给子进程 stdin 用的（详见 `test/support/tcp_process_launcher.dart` 的
+/// 注释与 ctypes 隔离矩阵）。
+///
 /// 这里先用 [defaultProcessLauncher]；只有识别到正是这个错误时，才换成
 /// 「宿主先监听回环端口 → `inheritStdio` 起子进程 → 子进程回连」，
 /// 并给子进程追加 `--port=<n>` 告诉它端口。两条路的 RPC 载荷完全一致，

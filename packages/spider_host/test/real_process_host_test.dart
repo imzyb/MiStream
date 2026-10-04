@@ -12,9 +12,11 @@ import 'support/tcp_process_launcher.dart';
 /// 真子进程的端到端：验证 `SpiderHost` 在**真进程 + 真进程生命周期**下
 /// 的握手、调用、换新与「换新窗口内不重复建宿主」。
 ///
-/// 为什么走 TCP 而不是 stdio：本机 Dart VM 的 `Process.start` 建不了 stdio
-/// 管道（`CreateFile failed 231`），但 `inheritStdio`（不建管道）与回环 TCP
-/// 都可用，于是 `support/tcp_process_launcher.dart` 把传输层换成了 TCP。
+/// 为什么走 TCP 而不是 stdio：在被注入沙箱 DLL 的进程树里（`tsbx.dll`），
+/// Dart VM 的 `Process.start` 建不了 stdio 管道（`CreateFile failed 231`），
+/// 但 `inheritStdio`（不建管道）与回环 TCP 都可用，于是
+/// `support/tcp_process_launcher.dart` 把传输层换成了 TCP。
+/// 根因与隔离矩阵见该文件的注释。
 void main() {
   group('SpiderHost 真子进程（TCP 回连）', () {
     late List<LaunchedChild> children;

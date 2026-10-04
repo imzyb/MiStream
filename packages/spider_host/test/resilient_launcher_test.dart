@@ -8,7 +8,7 @@ import 'support/child_staging.dart';
 
 /// [resilientProcessLauncher] 的回退行为。
 ///
-/// 本机 Dart VM 的 `Process.start` 建 stdio 管道必报
+/// 在被注入沙箱 DLL 的进程树里，Dart VM 的 `Process.start` 建 stdio 管道必报
 /// `ProcessException(errorCode: 231)`（ERROR_PIPE_BUSY），所以生产启动器改成
 /// 「管道优先、回环 TCP 兜底」。这里用**真子进程**（`support/rpc_child.dart`，
 /// 认 `--port=<n>`）验证回退通道真能跑通 RPC，而不只是「没抛异常」。
