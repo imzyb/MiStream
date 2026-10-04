@@ -49,8 +49,9 @@ public final class Main {
         java.io.File cacheDir = new java.io.File(
             System.getProperty("java.io.tmpdir"), "mistream-jvm-jars");
         JarLoader loader = new JarLoader(cacheDir, classpathEntries());
-        SpiderBridge bridge = new SpiderBridge(loader, new android.content.Context() {
-        });
+        // 宿主上下文必须是 Application：jar 里的 Init 会把 context 直接
+        // checkcast 成 android.app.Application 再存起来（见 SpiderBridge#initHost）
+        SpiderBridge bridge = new SpiderBridge(loader, new android.app.Application());
         Main runtime = new Main(new FrameCodec(), bridge);
         try {
             runtime.run();
