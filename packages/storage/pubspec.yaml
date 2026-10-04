@@ -26,5 +26,5 @@ dev_dependencies:
   # test_api ≥0.7.12，而 Flutter 3.44.x stable 的 flutter_test 钉死
   # test_api 0.7.11，版本解析必然失败（CI run 31493615676 九个 job 全挂）。
   # 等 Flutter stable 跟进 Dart 3.13 后再放开。基线见 docs/03 §2。
-  drift_dev: ">=2.34.0 <2.34.1"
+  drift_dev: ^2.35.1
   test: ^1.31.0
