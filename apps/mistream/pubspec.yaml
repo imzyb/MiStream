@@ -24,7 +24,7 @@ dependencies:
     path: ../../packages/live
   media_kit: ^1.2.6
   media_kit_libs_windows_video: ^1.0.9
-  media_kit_video: ^1.2.4
+  media_kit_video: ^2.0.1
   media_sniffer:
     path: ../../packages/media_sniffer
   # 纯注解包：application 层的纯逻辑（如 resume_policy）用它标注不可变
