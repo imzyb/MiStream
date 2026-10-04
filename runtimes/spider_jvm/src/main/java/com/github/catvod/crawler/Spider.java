@@ -2,8 +2,12 @@ package com.github.catvod.crawler;
 
 import android.content.Context;
 
+import java.net.InetAddress;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+
+import okhttp3.Dns;
 
 /**
  * TVBox csp 蜘蛛的基类（android 侧同名类的最小兼容实现）。
@@ -19,6 +23,26 @@ public abstract class Spider {
 
     /** 应用上下文。jar 里的源常经 init(Context) 拿它取包名/偏好。 */
     protected Context context;
+
+    /**
+     * 容错 DNS。TVBox 宿主同名方法：解析失败**不抛异常**，返回空列表。
+     *
+     * 这个方法是**宿主提供**的（jar 里没有），部分蜘蛛（Hxq / App3Q / AppYQK 等）
+     * 在建 OkHttpClient 时会调用它。缺了会抛
+     * {@code NoSuchMethodError: 'okhttp3.Dns ...Spider.safeDns()'}，整条取数链直接
+     * 失败 —— 2026-10-04 用 `ApiSurfaceScan` 扫 jar 的成员引用时才发现漏了。
+     */
+    public static Dns safeDns() {
+        return host -> {
+            try {
+                List<InetAddress> list = Dns.SYSTEM.lookup(host);
+                return list == null ? Collections.emptyList() : list;
+            } catch (Exception e) {
+                SpiderDebug.log(e);
+                return Collections.emptyList();
+            }
+        };
+    }
 
     /** 初始化（单参版本）。 */
     public void init(Context context) {

@@ -73,7 +73,14 @@ import org.objectweb.asm.tree.VarInsnNode;
 public final class JarLoader {
 
     private static final String DEX_ENTRY = "classes.dex";
-    private static final String CACHE_PREFIX = "converted-v2-";
+    /**
+     * 转换缓存前缀。**改了转换逻辑就要改这里** —— 缓存按「原始 jar 的 md5」命名，
+     * 不含转换器版本，不升版会一直复用旧产物。
+     *
+     * v2 -> v3（2026-10-04）：开始从 dex2jar 产物拷回**泛型签名**，修 Gson 的
+     * TypeToken 校验崩溃（见 copyAnnotations 注释）。
+     */
+    private static final String CACHE_PREFIX = "converted-v3-";
 
     private final File cacheDir;
     private final List<File> runtimeClasspath;
@@ -856,9 +863,22 @@ public final class JarLoader {
     // ---- ASM：注解拷贝 --------------------------------------------------------
 
     /**
-     * 把供体 jar（dex2jar 产物）里的注解拷到目标 jar（enjarify 产物）。
-     * enjarify 丢弃全部注解，而 @SerializedName 决定 Gson 的 JSON 字段名。
-     * 按 name+desc 匹配类/字段/方法，源没有则不覆盖。
+     * 把供体 jar（dex2jar 产物）里的**注解与泛型签名**拷到目标 jar（enjarify 产物）。
+     *
+     * enjarify 丢两类元数据，而这两类都会让蜘蛛在运行期炸掉：
+     *
+     * 1. **注解**：{@code @SerializedName} 决定 Gson 的 JSON 字段名。
+     * 2. **泛型签名（Signature 属性）**：2026-10-04 才补上。enjarify 产出的类丢掉
+     *    {@code Signature}，于是 {@code class c$a extends TypeToken} 变成**裸类型**。
+     *    Gson 2.9 起 {@code TypeToken} 会做
+     *    {@code getTypeTokenTypeArgument()} 校验，裸类型直接抛
+     *    {@code IllegalStateException: TypeToken must be created with a type argument}，
+     *    整条取数链失败。实测 {@code com.github.catvod.spider.Gulu} 就死在这里，
+     *    而 dex2jar 的同一类**带着完整签名**（
+     *    {@code TypeToken<LinkedHashMap<String,List<c.b>>>}）—— 拷回来即可，
+     *    **不必降 Gson 版本**（2.8.9 才没有该校验，降到那儿是治标）。
+     *
+     * 按 name+desc 匹配类/字段/方法，源没有或目标已有则不覆盖。
      */
     private void copyAnnotations(File donorJar, File inJar, File outJar) throws IOException {
         Map<String, ClassNode> src = new HashMap<>();
@@ -905,30 +925,38 @@ public final class JarLoader {
                     if (s.invisibleAnnotations != null && cn.invisibleAnnotations == null) {
                         cn.invisibleAnnotations = s.invisibleAnnotations;
                     }
+                    // 泛型签名：enjarify 会丢，缺了 Gson 的 TypeToken 校验就炸（见方法注释）
+                    if (s.signature != null && cn.signature == null) {
+                        cn.signature = s.signature;
+                    }
                     Map<String, FieldNode> srcFields = new HashMap<>();
                     for (FieldNode f : s.fields) srcFields.put(f.name + f.desc, f);
                     for (FieldNode f : cn.fields) {
                         FieldNode sf = srcFields.get(f.name + f.desc);
-                        if (sf != null && sf.visibleAnnotations != null
-                                && f.visibleAnnotations == null) {
+                        if (sf == null) continue;
+                        if (sf.visibleAnnotations != null && f.visibleAnnotations == null) {
                             f.visibleAnnotations = sf.visibleAnnotations;
                         }
-                        if (sf != null && sf.invisibleAnnotations != null
-                                && f.invisibleAnnotations == null) {
+                        if (sf.invisibleAnnotations != null && f.invisibleAnnotations == null) {
                             f.invisibleAnnotations = sf.invisibleAnnotations;
+                        }
+                        if (sf.signature != null && f.signature == null) {
+                            f.signature = sf.signature;
                         }
                     }
                     Map<String, MethodNode> srcMethods = new HashMap<>();
                     for (MethodNode m : s.methods) srcMethods.put(m.name + m.desc, m);
                     for (MethodNode m : cn.methods) {
                         MethodNode sm = srcMethods.get(m.name + m.desc);
-                        if (sm != null && sm.visibleAnnotations != null
-                                && m.visibleAnnotations == null) {
+                        if (sm == null) continue;
+                        if (sm.visibleAnnotations != null && m.visibleAnnotations == null) {
                             m.visibleAnnotations = sm.visibleAnnotations;
                         }
-                        if (sm != null && sm.invisibleAnnotations != null
-                                && m.invisibleAnnotations == null) {
+                        if (sm.invisibleAnnotations != null && m.invisibleAnnotations == null) {
                             m.invisibleAnnotations = sm.invisibleAnnotations;
+                        }
+                        if (sm.signature != null && m.signature == null) {
+                            m.signature = sm.signature;
                         }
                     }
                 }
