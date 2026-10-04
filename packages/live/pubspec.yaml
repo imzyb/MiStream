@@ -14,7 +14,7 @@ dependencies:
     path: ../core_domain
   storage:
     path: ../storage
-  drift: ^2.22.0
+  drift: ^2.34.4
   meta: ^1.18.0
 
 dev_dependencies:

@@ -15,7 +15,7 @@ dependencies:
   # 的 GeneratedDatabase（新增 schema、去掉 allSchemaEntities），drift_dev
   # 2.34.0 的 schema verifier 编不过，migration_test 直接加载失败。
   # 两者必须成对升降。
-  drift: ">=2.34.0 <2.34.1"
+  drift: ^2.34.4
   meta: ^1.18.0
   path: ^1.9.0
   sqlite3: ^3.0.0

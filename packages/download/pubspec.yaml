@@ -16,7 +16,7 @@ dependencies:
   # 包同一模式：模块自己的 drift 仓储放在模块包内，而不是塞进 `storage`。
   storage:
     path: ../storage
-  drift: ^2.22.0
+  drift: ^2.34.4
   meta: ^1.18.0
   path: ^1.9.0
 
