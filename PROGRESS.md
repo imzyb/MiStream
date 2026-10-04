@@ -2781,10 +2781,34 @@ detail,search,play,action）/ `spider.home` 493 字节真实数据。坏的只�
 | ③ 候选顺序 | `probe_jvm_resolution.dart` 模拟 exe 路径 + `--cwd` | 打包布局命中 [1]（exe 同级），仓库树 [9] 同样命中但**未被选中** → 优先级正确 |
 | ③ 旧隐式兜底 | 同一个便携包，cwd 分别设为包目录与仓库根 | 前者 `null（不可用）`、后者 `可用` —— 旧代码里这个差异**诊断里看不出来**，现在它是第 [7] 条带「← 命中」的候选 |
 | ③ 盘根守卫 | 观察候选列表 | 到 `C:\` 后停止，没有重复 10 次同一路径 |
-| ④⑤ 静态检查 | `.workbuddy-ai/scripts/analyze_inproc.dart`（进程内 analyzer） | 全仓 **360 文件 error=0 warning=0 info=0** |
+| ④⑤ 静态检查（**含 lint，与 CI 同源**） | `python .workbuddy-ai/scripts/as_client.py errors .` | 先报 **2 条**（见下），修后 **0 条 / 361 文件** |
+| ④⑤ 单测 | `dart run .workbuddy-ai/scripts/run_tests_shim.dart`（进程内，16 个测试文件） | **217 项全部通过**（含覆盖 `listSources` 的 `home_use_case_test.dart`） |
 | ④⑤ 分层纪律 | `dart run tools/arch_check/bin/arch_check.dart` | 通过 |
 | ④⑤ 格式 | `dart format --set-exit-if-changed` | 改动文件 0 changed |
+| ⑤ 提交信息 | `dart run tools/commit_lint/bin/commit_lint.dart .git/COMMIT_EDITMSG` | exit 0（subject 38 字符，上限 50） |
 | ⑤ JDK 版本对齐 | 读 jar 内 `Main.class` 字节 6-7 | major **61 = Java 17**，与 ADR-006 要求的 JRE 17+ 一致 |
+
+### ⚠️ 一次「假绿」：`analyze_inproc.dart` 差点让 CI 红
+
+第一轮我跑的是 `.workbuddy-ai/scripts/analyze_inproc.dart`，得到
+「360 文件 error=0 warning=0 info=0」，一度以为静态检查已过。**那个结论是假的**：
+该脚本跑不了 lint 规则（pub 上最新 `linter` 只支持 `analyzer ^5.2.0`，与本仓
+12.1.0 不兼容），而 CI 用的是 `flutter analyze --fatal-infos --fatal-warnings`
+—— **INFO 也是致命的**。
+
+换成与 CI 同源的 `as_client.py errors .` 后立刻抓出 2 条真问题：
+
+```
+INFO  missing_whitespace_between_adjacent_strings  apps/mistream/lib/features/home/home_page.dart:291
+INFO  missing_whitespace_between_adjacent_strings  tools/check_jvm_runtime_bundle.dart:30
+```
+
+两处都是「相邻字符串字面量拼接中文」，被判定为疑似漏了空格。仓库里早有约定
+（`packages/spider_host/test/support/child_staging.dart:59` 留了注释）：
+**改用列表 + `join()`**。照改后 0 条。
+
+**教训**：`analyze_inproc.dart` 只能当类型级检查用，**不能当门禁证据**。
+这一条 SKILL.md 里本来就写着，我还是踩了 —— 因为它给出的「全绿」太像真的了。
 
 ### 顺手堵掉的两个同类隐患
 
@@ -2807,21 +2831,30 @@ detail,search,play,action）/ `spider.home` 493 字节真实数据。坏的只�
   `ERROR_PIPE_BUSY`），`flutter analyze`、`flutter test`、`dart analyze` 都受影响
   （`dart run` / `dart format` 正常）。①的验证是用 CMake 单独跑 install 规则做的，
   **不是**完整的 `flutter build` 产物。
+
+  顺带纠正一条既有认知：SKILL.md 里「本机没有 C++ 工具链」的说法**不准确**。
+  `C:\Program Files\Microsoft Visual Studio\2022`（x64 路径）确实是空目录，但
+  `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools` 里是**完整**的
+  MSVC：`VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe` 与
+  `VC/Auxiliary/Build/vcvars64.bat` 都在，cmake 也在
+  `Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe`。
+  也就是说**唯一的拦路虎是管道缺陷**，不是缺工具链。
 - **UI 未在真机跑过**：`flutter test` 同样起不来，片源选择器的新布局
-  （`ConstrainedBox` 限高 + 实验性标记 + 确认弹窗）只过了静态检查。
+  （`ConstrainedBox` 限高 + 实验性标记 + 确认弹窗）只过了静态检查与进程内单测
+  （后者覆盖 `listSources` 的数据，不覆盖 widget 树）。
   已刻意避开 `AlertDialog` 的 `IntrinsicWidth` 与 `flex` 子项的交互（改用
   `ConstrainedBox`），因为那个交互无法实测。
-- **lint 规则未跑**：进程内分析器跑不了 `linter`（pub 上最新 `linter` 只支持
-  `analyzer ^5.2.0`，与本仓 12.1.0 不兼容），所以 `very_good_analysis` 的 lint
-  只过了人工核对。风险项 `use_build_context_synchronously` 已确认有
-  `if (!pickerCtx.mounted) return;` 守卫。
 - **用户手上的便携包仍是坏的**：本次修的是**未来构建**。用户要么重新下完整包，
   要么把 `runtimes/spider_jvm/` 放到 `mistream.exe` 同级目录（③的第 1 条候选，
   已实测可用）。
 
 ### 收尾状态
 
-改动：10 个文件修改 + 2 个新增（`jvm_runtime_status.dart`、
-`tools/check_jvm_runtime_bundle.dart`），`git diff --stat` 565 insertions / 70 deletions。
+改动：11 个文件修改 + 2 个新增（`jvm_runtime_status.dart`、
+`tools/check_jvm_runtime_bundle.dart`）。
+
+- `8c53634` fix(spider): JVM 运行时随包分发，修 csp_ 站点全不可用
+- 后续一个小提交：修 `as_client.py` 抓出的 2 条
+  `missing_whitespace_between_adjacent_strings`（相邻字符串改列表 + `join()`）
 
 

@@ -26,9 +26,15 @@ const _libsRelative = 'runtimes/spider_jvm/libs';
 
 /// 修复指引。失败时原样打出来 —— 门禁只说「不合格」而不说「怎么修」，
 /// 下一个人还得重新推一遍因果链。
-const _howToFix =
-    '修法：先运行 `melos run jvm:build`（需 JDK 17）再构建，'
-    '或确认 CMakeLists.txt 里 runtimes/spider_jvm 的 install 规则还在。';
+///
+/// 用列表 + `join()` 而不是相邻字符串字面量：后者会被
+/// `missing_whitespace_between_adjacent_strings` 判为疑似漏了空格的笔误，
+/// 而 CI 是 `--fatal-infos`，会直接红。同一个坑 `packages/spider_host` 的
+/// `test/support/child_staging.dart` 里也踩过并留了注释。
+final _howToFix = [
+  '修法：先运行 `melos run jvm:build`（需 JDK 17）再构建，',
+  '或确认 CMakeLists.txt 里 runtimes/spider_jvm 的 install 规则还在。',
+].join();
 
 Future<void> main(List<String> args) async {
   final bundleIndex = args.indexOf('--bundle');

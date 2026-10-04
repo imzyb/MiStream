@@ -286,11 +286,18 @@ class _HomePageState extends State<HomePage> {
         context: pickerCtx,
         builder: (confirmCtx) => AlertDialog(
           title: const Text('实验性 · 二进制不可审计'),
-          content: const Text(
-            '这个片源来自闭源 jar 二进制，MiStream 无法审计它做了什么。\n\n'
-            '当前只承诺「纯 Java 逻辑 + 已 shim 的 android API 子集」可运行，'
-            '不承诺任意 jar 可用（见 ADR-006）。\n\n'
-            '确认后才会加载。',
+          // 用列表 + `join()` 而不是相邻字符串字面量：后者会被
+          // `missing_whitespace_between_adjacent_strings` 判为疑似漏了空格的
+          // 笔误，而 CI 是 `--fatal-infos`，会直接红。
+          content: Text(
+            [
+              '这个片源来自闭源 jar 二进制，MiStream 无法审计它做了什么。',
+              '',
+              '当前只承诺「纯 Java 逻辑 + 已 shim 的 android API 子集」可运行，',
+              '不承诺任意 jar 可用（见 ADR-006）。',
+              '',
+              '确认后才会加载。',
+            ].join('\n'),
           ),
           actions: [
             TextButton(
