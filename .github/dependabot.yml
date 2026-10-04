@@ -13,6 +13,20 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+        # 兜底：下面这些包已在上面的 `ignore:` 里，但 `ignore` 与 `groups` 的
+        # 交互在实测中出过一次意外 —— 分组 PR #22（build_runner + drift_dev）
+        # 仍带上了已 ignore 的 drift_dev（base 就是含该规则的提交）。
+        # 官方文档说 ignore 会先过滤、不该出现，推测是「分组在 ignore 生效前算好、
+        # 因 open-pull-requests-limit 排队，名额释放后才开出」。
+        # 这里再显式排除一次，成本为零，避免 drift_dev 每周借道分组回来。
+        exclude-patterns:
+          - test
+          - meta
+          - very_good_analysis
+          - drift
+          - drift_dev
+          - melos
+          - sqlite3
     # ── 被 Flutter SDK 钉死的传递依赖：暂不接收升级 ──────────────────────────
     # 现状：Flutter stable 3.44.8 对应 Dart 3.12.2，SDK 自带的 flutter_test /
     # flutter 把传递依赖钉死（test_api 0.7.11、meta 1.18.0），下面这些包一升级
