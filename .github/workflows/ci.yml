@@ -156,7 +156,7 @@ jobs:
           dart run tools/check_spider_js_bundle.dart
           --bundle apps/mistream/build/windows/x64/runner/Release --smoke
       - name: 上传 Release 产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mistream-windows-release
           path: apps/mistream/build/windows/x64/runner/Release
