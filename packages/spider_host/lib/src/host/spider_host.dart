@@ -100,11 +100,48 @@ defaultProcessLauncher(
     executable,
     arguments,
   );
+  _forwardChildStderr(executable, process.stderr);
   return (
     stdin: process.stdin,
     stdout: process.stdout,
     exitCode: process.exitCode,
     kill: process.kill,
+  );
+}
+
+/// 单条 stderr 转发时的最大字符数 —— 防一次几 MB 的 dump 冲垮日志。
+const int _kMaxForwardedStderrChars = 2000;
+
+/// 把子进程的 stderr 读出来转发到宿主 stderr。
+///
+/// **必须有人读**，两条理由都是实测踩出来的：
+///
+/// 1. **不读会堵死子进程。** 管道写满（Windows 约 64KB）后子进程就阻塞在写系统
+///    调用上 —— 表现是「取数卡死」，不是报错，极难归因。
+/// 2. **JVM 运行时会把蜘蛛的 `System.out` 改道到这里。** 蜘蛛的 `println` 会插进
+///    LSP 帧流把分帧器搞失步（见 `runtimes/spider_jvm/.../Main.java`），所以那条
+///    管道的流量比「偶尔一条警告」大得多。
+///
+/// 转发而不是丢弃，是为了保住诊断能力：蜘蛛打印的原始响应正是定位「服务端到底
+/// 回了什么」的唯一线索。
+void _forwardChildStderr(String executable, Stream<List<int>> stream) {
+  final label = executable.split(Platform.pathSeparator).last;
+  // 订阅刻意不保存：它要活到子进程结束，没有「取消」的时机。
+  stream.listen(
+    (chunk) {
+      var text = utf8.decode(chunk, allowMalformed: true);
+      if (text.endsWith('\n')) {
+        text = text.substring(0, text.length - 1);
+      }
+      if (text.isEmpty) return;
+      if (text.length > _kMaxForwardedStderrChars) {
+        text = '${text.substring(0, _kMaxForwardedStderrChars)}…（截断）';
+      }
+      stderr.writeln('[$label] $text');
+    },
+    // 子进程 stderr 出错不该影响宿主：管道断掉时 listen 会报错，
+    // 而这时宿主真正该关心的是 stdout 侧的 EOF。
+    onError: (Object _) {},
   );
 }
 

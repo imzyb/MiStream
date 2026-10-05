@@ -2,7 +2,7 @@
 ///
 /// 职责：
 /// - 从 stdin 读 → LspFrameParser 解析 → 匹配 pending 请求或派发通知
-/// - 写 stdout → encodeFramed 发送，队列上限 64 条
+/// - 写 stdout → encodeFramed 发送，队列上限 64 条，**串行化**
 /// - 请求超时、取消
 ///
 /// docs/08-RPC协议.md §1-3。
@@ -47,12 +47,36 @@ class StdioRpcChannel {
   final StreamController<RpcRequest> _requestController =
       StreamController<RpcRequest>.broadcast();
   bool _closed = false;
-  int _writeQueueLength = 0;
 
-  /// 在途请求数。
+  /// 写串行化链 —— 保证任意时刻只有一次 `add`/`flush` 在飞。
+  ///
+  /// 必须串行化，原因是 [_stdout] 的真实类型：
+  ///
+  /// - 主路径下它是 `Process.stdin`，即 `_StdSink(_Socket._writePipe())`，
+  ///   底层是 `IOSink(_SocketStreamConsumer)` = `_StreamSinkImpl`。
+  /// - `_StreamSinkImpl.flush()` 在**函数体内同步**把内部 `_isBound` 置 true，
+  ///   直到底层 `addStream` 完成才在 `whenComplete` 里复位；
+  /// - 而 `_StreamSinkImpl.add()` 取的 `_controller` getter 在 `_isBound` 为真时
+  ///   直接抛 `StateError("StreamSink is bound to a stream")`。
+  ///
+  /// 所以「`add()` 紧跟 `await flush()`」这个写法，只要两次 [_send] 交错
+  /// ——心跳 `runtime.ping`、宿主 API 的 `respond()`、聚合里的并发请求都会
+  /// ——第二次 `add()` 必炸。2026-10-04 实测：同轮 `add→flush→add` 抛、
+  /// 并发两次 send 抛、串行化后 4 次并发全部成功
+  /// （`.workbuddy-ai/scripts/_repro_sink_bound.dart`）。
+  ///
+  /// 这条链**永不带着错误完成**：单次写失败只让那一个 `_send` 的 future 失败，
+  /// 不能毒化整条链，否则后续所有写都会被静默跳过。
+  Future<void> _writeChain = Future<void>.value();
+
+  /// 在途请求数，也就是写队列长度。
   ///
   /// 心跳用它判断子进程是「正忙于长任务」（如 JVM 首次 jar 转换）还是真的失联
   /// ——有在途请求时子进程只是没空回 ping，不能算失联。
+  ///
+  /// 直接用 `_pending.length` 而不是另设一个计数器：两者本来就在同一处增减，
+  /// 而计数器在「管道出错/关闭时被清零，随后在途的那次调用又减一次」这类路径
+  /// 上会掉到负数，[kWriteQueueMax] 的背压闸门就永久失效了。
   int get pendingCount => _pending.length;
 
   void _onData(List<int> data) {
@@ -122,7 +146,7 @@ class StdioRpcChannel {
     Duration? timeout,
     Future<void>? cancelOn,
   }) async {
-    if (_writeQueueLength >= kWriteQueueMax) {
+    if (_pending.length >= kWriteQueueMax) {
       return const Err(
         RemoteError(
           code: ErrorCode.runtimeBusy,
@@ -134,7 +158,6 @@ class StdioRpcChannel {
     final id = _nextRequestId++;
     final completer = Completer<Result<Object?, RemoteError>>();
     _pending[id] = completer;
-    _writeQueueLength++;
 
     // 只在请求还在途时才发取消：已经回来的请求再发一条，对端只能困惑。
     unawaited(
@@ -142,7 +165,10 @@ class StdioRpcChannel {
         if (!_pending.containsKey(id)) return;
         _pending.remove(id);
         unawaited(
-          notify(r'$/cancelRequest', params: <String, Object?>{'id': id}),
+          notify(
+            r'$/cancelRequest',
+            params: <String, Object?>{'id': id},
+          ).then<void>((_) {}, onError: (Object _) {}),
         );
         if (!completer.isCompleted) {
           completer.complete(
@@ -164,7 +190,6 @@ class StdioRpcChannel {
         effectiveTimeout,
         onTimeout: () {
           _pending.remove(id);
-          _writeQueueLength--;
           return Err(
             RemoteError(
               code: ErrorCode.scriptTimeout,
@@ -173,11 +198,10 @@ class StdioRpcChannel {
           );
         },
       );
-      _writeQueueLength--;
+      _pending.remove(id);
       return result;
     } on Object catch (e) {
       _pending.remove(id);
-      _writeQueueLength--;
       return Err(
         RemoteError(
           code: ErrorCode.internalError,
@@ -193,15 +217,31 @@ class StdioRpcChannel {
     return _send(RpcNotification(method: method, params: params));
   }
 
-  Future<void> _send(RpcMessage msg) async {
-    if (_closed) return;
-    _stdout.add(encodeFramed(msg));
-    await _stdout.flush();
+  /// 发送一条消息，返回「已交给管道」的 future。
+  ///
+  /// 返回的 future 只在本次写真的落盘（`flush` 完成）后完成；失败的 future
+  /// 只影响本次调用，见 [_writeChain]。
+  Future<void> _send(RpcMessage msg) {
+    if (_closed) return Future<void>.value();
+    final bytes = encodeFramed(msg);
+    final sent = _writeChain.then((_) async {
+      // 排队期间管道可能已被 close()，此时不能再写。
+      if (_closed) return;
+      _stdout.add(bytes);
+      await _stdout.flush();
+    });
+    _writeChain = sent.then<void>(
+      (_) {},
+      // 吞掉错误只用于「链的续接」；错误本身仍由 sent 交给调用方。
+      onError: (Object _) {},
+    );
+    return sent;
   }
 
   void _reply(RpcResponse resp) {
-    // 回复失败无处上报（管道已坏时 _send 自身会短路），刻意不阻塞调用方。
-    unawaited(_send(resp));
+    // 回复失败无处上报（管道已坏时 _send 自身会短路），刻意不阻塞调用方；
+    // 但错误必须吃掉，否则会变成一条未处理的异步错误打进 zone。
+    unawaited(_send(resp).then<void>((_) {}, onError: (Object _) {}));
   }
 
   void _onDone() {
@@ -221,7 +261,6 @@ class StdioRpcChannel {
       );
     }
     _pending.clear();
-    _writeQueueLength = 0;
   }
 
   /// 订阅通知流。
@@ -255,7 +294,10 @@ class StdioRpcChannel {
       );
     }
     _pending.clear();
-    _writeQueueLength = 0;
+    // 等在途的写落定再 flush/close：`_closed` 已置位，排队中的写会自行短路，
+    // 但正在飞的那一次仍占着 `_isBound`，此刻再 flush 会抛
+    // `StateError("StreamSink is bound to a stream")`。
+    await _writeChain;
     await _stdout.flush();
     await _stdout.close();
   }

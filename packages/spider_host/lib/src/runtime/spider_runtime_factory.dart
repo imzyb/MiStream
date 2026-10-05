@@ -628,7 +628,16 @@ class SpiderRuntimeFactory {
     );
 
     if (result.isErr) {
-      throw StateError('JVM 实例创建失败: ${result.errorOrNull?.message}');
+      // JVM 侧把异常堆栈放在 error.data.stack（Main.java create 的 RpcFailure），
+      // RemoteError 会把它透传到 remoteStack。`加载 jar 失败: null` 这类
+      // message 为 null 的异常，只有堆栈能指出真正的类型 —— 所以必须带上，
+      // 否则运维侧看到的就是一句无信息量的 null。
+      final error = result.errorOrNull;
+      final stack = error is RemoteError ? error.remoteStack : null;
+      final detail = (stack == null || stack.isEmpty)
+          ? ''
+          : '\n${stack.split('\n').take(16).map((l) => '    $l').join('\n')}';
+      throw StateError('JVM 实例创建失败: ${error?.message}$detail');
     }
 
     return JvmRuntimeAdapter(host, instanceId);
