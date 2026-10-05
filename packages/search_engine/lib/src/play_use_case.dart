@@ -1,6 +1,7 @@
 /// 播放编排：根据 flag 获取真实播放地址并返回可播放的 MediaSource。
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:core_domain/core_domain.dart';
@@ -13,6 +14,12 @@ import 'package:storage/storage.dart';
 const _defaultUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
     '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+/// 单次 `playerContent` 的预算。
+///
+/// 蜘蛛拿 `playerContent` 做同步 HTTP 是常见实现，挂了就是**真的不返回**
+/// （不是慢）—— 所以这里宁可短一点，把时间留给后面的线路和嗅探。
+const _defaultPlayerContentTimeout = Duration(seconds: 6);
 
 /// 播放结果。
 class PlayResult {
@@ -78,9 +85,17 @@ class PlayUseCase {
     this.runtimeFactory,
     this.resolver,
     this.browserSniffer,
-  });
+    Duration? playerContentTimeout,
+  }) : playerContentTimeout =
+           playerContentTimeout ?? _defaultPlayerContentTimeout;
   final SiteRepository sites;
   final SpiderRuntimeFactory? runtimeFactory;
+
+  /// 单次 `playerContent` 的超时。
+  ///
+  /// 可注入是为了**能测**：「一次超时就不再逐条试」这条只有在超时真的发生时
+  /// 才观察得到，而用默认的 6 秒会让用例跑 6 秒。
+  final Duration playerContentTimeout;
 
   /// 嗅探解析器；`null` 表示不做嗅探，原地址直接返回。
   final SnifferResolver? resolver;
@@ -115,127 +130,148 @@ class PlayUseCase {
       );
     }
 
-    // 2. 根据站点类型创建运行时，取详情。
-    //
-    // 取完**立刻**回收，且成功/失败/抛异常三条路径都要走到。type=3 的 runtime
-    // 背后是一个常驻子进程（JS 或 JVM），漏一次回收就多留一个进程：连播多集会
-    // 持续堆积，离开播放页也不会释放。detail 返回的是字符串 body，回收之后仍能
-    // 继续用于下面的候选提取，所以「取完即回收」是安全的，不必挂到方法末尾。
+    // 2. 根据站点类型创建运行时。**整个播放流程共用同一个运行时**：取详情要它，
+    //    问 `playerContent` 也要它。回收统一放到 `finally` —— type=3 的 runtime
+    //    背后是一个常驻子进程（JS 或 JVM），漏一次回收就多留一个进程：连播多集
+    //    会持续堆积，离开播放页也不会释放。
     final runtime = await _createRuntime(site);
-    final detailResult = await _detailAndDispose(runtime, vodId);
-    if (detailResult.isErr) {
-      return Err(detailResult.errorOrNull!);
-    }
-
-    // 3. 从详情里列出本集在**所有线路**上的地址，按优先级排序。
-    final extracted = _extractCandidates(
-      body: detailResult.valueOrNull!.body,
-      flag: flag,
-      episodeId: episodeId,
-    );
-    if (extracted.isErr) {
-      return Err(extracted.errorOrNull!);
-    }
-    final candidates = extracted.valueOrNull!.list;
-    final episodeIndex = extracted.valueOrNull!.episodeIndex;
-
-    // 4. 站点域名作为默认 Referer：源站的反盗链多数只看域，不看具体路径。
-    final apiUri = Uri.tryParse(site.api);
-    final siteReferer = apiUri != null && apiUri.hasAuthority
-        ? '${apiUri.scheme}://${apiUri.authority}/'
-        : null;
-
-    final sniffer = resolver;
-    if (sniffer == null && browserSniffer == null) {
-      // 两级嗅探都没装：保持旧行为，原地址直接交给播放器。
-      return Ok(_plainResult(candidates.first.url, siteReferer, episodeIndex));
-    }
-
-    // 5. 逐条线路尝试：网页线路要嗅探出真实流地址，直链线路走快路径。
-    //
-    // 一部片通常有多条线路，其中一条挂掉是常态。挨个试到第一条能用的为止，
-    // 比让用户自己在详情页反复切线路合理。
-    AppError? lastError;
-    for (final candidate in candidates) {
-      final outcome = await sniffer?.resolve(
-        candidate.url,
-        referer: siteReferer,
-      );
-      if (outcome != null && outcome.isOk) {
-        final media = outcome.media!;
-        return Ok(
-          PlayResult(
-            mediaSource: MediaSource(
-              uri: Uri.parse(media.url),
-              headers: media.headers,
-            ),
-            episodeIndex: episodeIndex,
-            viaSniffing: media.viaSniffing,
-          ),
-        );
+    try {
+      final detailResult = await runtime.detail(ids: vodId);
+      if (detailResult.isErr) {
+        return Err(detailResult.errorOrNull!);
       }
-      // 没有静态嗅探器时，把「没解析出来」记成 noMatch，好让下面的浏览器
-      // 兜底仍然跑得起来——不能因为少装了一级就让整条回退链断掉。
-      lastError = outcome == null
-          ? const LocalError(
-              code: ErrorCode.sniffNoMatch,
-              message: '静态嗅探未启用',
-            )
-          : _snifferError(outcome, candidate.url);
 
-      // 5b. 静态 HTML 里没找到地址 —— 多半是地址由页面 JS 运行时拼出来的。
-      // 这时才起浏览器（贵，所以不做预判性调用），命中即返回。
-      final browser = browserSniffer;
-      if (browser != null) {
-        final headers = <String, String>{
-          'User-Agent': _defaultUserAgent,
-          'Referer': ?siteReferer,
-        };
-        final hit = await browser(candidate.url, headers);
-        if (hit != null && hit.isNotEmpty) {
+      // 3. 从详情里列出本集在**所有线路**上的地址，按优先级排序。
+      final extracted = _extractCandidates(
+        body: detailResult.valueOrNull!.body,
+        flag: flag,
+        episodeId: episodeId,
+      );
+      if (extracted.isErr) {
+        return Err(extracted.errorOrNull!);
+      }
+      final candidates = extracted.valueOrNull!.list;
+      final episodeIndex = extracted.valueOrNull!.episodeIndex;
+
+      // 4. 站点域名作为默认 Referer：源站的反盗链多数只看域，不看具体路径。
+      final apiUri = Uri.tryParse(site.api);
+      final siteReferer = apiUri != null && apiUri.hasAuthority
+          ? '${apiUri.scheme}://${apiUri.authority}/'
+          : null;
+
+      // 5. **先问蜘蛛自己**：`runtime.play(flag, ids)` 即 TVBox 的
+      //    `playerContent`。
+      //
+      //    为什么这一步不可省 —— `vod_play_url` 里的值**不一定是 URL**。
+      //    实测 `csp_YunDuo` 给的是：
+      //
+      //      token@PAN1-F2DH0r3KULNMgCWfhqnva_…==@PAN1
+      //      token@zijian_Uvhb8ej0DzhXyRJKwV1Qjg…@zijianm3u8
+      //
+      //    没有 scheme、没有 host，是蜘蛛自己的**私有占位符**。把它直接交给
+      //    播放器或嗅探器只会得到 `No host specified in URI` / 请求失败 ——
+      //    这类站点的播放因此**必然全灭**，这正是「无法播放」的根因。
+      //
+      //    只有 `playerContent` 能把它换成真地址，而且它会**一并给出反盗链
+      //    所需的 `Referer`**：实测 `PO蓝光` 给的是 `http://43.248.3.46:7788`，
+      //    与站点域名完全不同 —— 拿站点域名当 Referer 照样 403。
+      //
+      //    响应里的 `parse` 是分水岭：`0` = `url` 就是流地址（6 条线路里 4 条
+      //    是这种）；`1` = `url` 是网页播放页，仍需嗅探（交给第 6 步）。
+      final pages = <_PageCandidate>[];
+      AppError? lastError;
+      // 一次超时就别再逐条试：同一个蜘蛛的 `playerContent` 要么都能回、要么
+      // 都不回（拿空 id 进去做同步 HTTP 是常见实现）。
+      var spiderPlayUsable = true;
+      for (final candidate in candidates) {
+        if (!spiderPlayUsable) break;
+        final attempt = await _askSpider(candidate, runtime);
+        if (attempt.timedOut) {
+          spiderPlayUsable = false;
+          continue;
+        }
+        final content = attempt.content;
+        if (content == null || content.url.isEmpty) continue;
+        if (content.isDirect) {
           return Ok(
             PlayResult(
               mediaSource: MediaSource(
-                uri: Uri.parse(hit),
-                headers: {...headers, 'Referer': candidate.url},
+                uri: Uri.parse(content.url),
+                headers: content.headers,
               ),
               episodeIndex: episodeIndex,
-              viaSniffing: true,
             ),
           );
         }
-      }
-    }
-
-    // 全部线路都没解析成功。若其中有直链形态的地址，仍交给播放器碰运气——
-    // 不少流服务器只回应播放器的 range 请求，我们的探测请求反而会被拒。
-    final directFallback = candidates
-        .where((c) => SnifferResolver.looksLikeDirectMedia(c.url))
-        .firstOrNull;
-    if (directFallback != null) {
-      return Ok(_plainResult(directFallback.url, siteReferer, episodeIndex));
-    }
-
-    return Err(
-      lastError ??
-          const LocalError(
-            code: ErrorCode.playerNoPlayableSource,
-            message: '没有可播放的线路',
+        pages.add(
+          _PageCandidate(
+            url: content.url,
+            headers: content.headers,
+            flag: candidate.flag,
           ),
-    );
-  }
+        );
+      }
 
-  /// 取详情，并在**任何情况下**回收运行时。
-  ///
-  /// 与 `DetailUseCase.load`、`HomeUseCase._trySites` 保持同一套回收纪律：
-  /// 成功、业务失败、抛异常三条路径都必须 dispose。回收本身失败只吞掉异常，
-  /// 不掩盖业务结果。
-  static Future<Result<HttpResponseData, AppError>> _detailAndDispose(
-    SpiderRuntime runtime,
-    String vodId,
-  ) async {
-    try {
-      return await runtime.detail(ids: vodId);
+      // 6. 网页线路（`parse: 1`）走嗅探链；直链线路在第 5 步就返回了。
+      for (final page in pages) {
+        final sniffed = await _resolveBySniffing(
+          url: page.url,
+          referer: page.headers['Referer'] ?? siteReferer,
+          extraHeaders: page.headers,
+          episodeIndex: episodeIndex,
+        );
+        final result = sniffed.result;
+        if (result != null) return Ok(result);
+        lastError = sniffed.error ?? lastError;
+      }
+
+      // 7. 兜底：`playerContent` 什么都没给出（蜘蛛没实现 / 全部超时）时，退回
+      //    「把详情里的原值当地址」这条旧路。只处理**真的是 http(s) 地址**的
+      //    候选 —— 把 `token@…` 喂给嗅探器只会白等两次网络往返，还可能起一个
+      //    浏览器进程。
+      for (final candidate in candidates.where(
+        (c) => _looksLikeHttpUrl(c.url),
+      )) {
+        final sniffed = await _resolveBySniffing(
+          url: candidate.url,
+          referer: siteReferer,
+          extraHeaders: const {},
+          episodeIndex: episodeIndex,
+        );
+        final result = sniffed.result;
+        if (result != null) return Ok(result);
+        lastError = sniffed.error ?? lastError;
+      }
+
+      // 8. 全是直链形态但没解析成功：仍交给播放器碰运气 —— 不少流服务器只回应
+      //    播放器的 range 请求，我们的探测请求反而会被拒。
+      final directFallback = candidates
+          .where((c) => SnifferResolver.looksLikeDirectMedia(c.url))
+          .firstOrNull;
+      if (directFallback != null) {
+        return Ok(_plainResult(directFallback.url, siteReferer, episodeIndex));
+      }
+
+      // 9. 两级嗅探都没装，且 `playerContent` 也没给出任何东西：退回最旧的行为，
+      //    把第一条候选**原样**交给播放器。
+      //
+      //    这条路径是给「极简装配」（不装嗅探器）留的可用退路，也让单测不必联网；
+      //    App 的装配两级都装（`app_assembly.dart`），所以正常使用走不到这里。
+      //    它必须排在最后：`playerContent` 与嗅探都试过之后才轮得到「原样返回」，
+      //    否则新加的解析能力会被这条捷径整条短路掉。
+      if (resolver == null && browserSniffer == null) {
+        return Ok(
+          _plainResult(candidates.first.url, siteReferer, episodeIndex),
+        );
+      }
+
+      return Err(
+        lastError ??
+            const LocalError(
+              code: ErrorCode.playerNoPlayableSource,
+              message: '没有可播放的线路',
+            ),
+      );
     } finally {
       try {
         await runtime.dispose();
@@ -243,6 +279,127 @@ class PlayUseCase {
         // 回收失败不掩盖业务结果。
       }
     }
+  }
+
+  /// 问蜘蛛自己的 `playerContent`（= TVBox 的 `play(flag, id, vipFlags)`）。
+  ///
+  /// [timedOut] 单独返回而不是并进 `content == null`：调用方要能区分「这条线路
+  /// 没解析出来（继续试下一条）」与「这个蜘蛛的 playerContent 根本不可用（别
+  /// 再逐条白等）」。
+  Future<({_PlayerContent? content, bool timedOut})> _askSpider(
+    _Candidate candidate,
+    SpiderRuntime runtime,
+  ) async {
+    try {
+      final played = await runtime
+          .play(flag: candidate.flag, ids: candidate.url)
+          .timeout(playerContentTimeout);
+      if (played.isErr) return (content: null, timedOut: false);
+      return (
+        content: _parsePlayerContent(played.valueOrNull!.body),
+        timedOut: false,
+      );
+    } on TimeoutException {
+      return (content: null, timedOut: true);
+    } on Object {
+      return (content: null, timedOut: false);
+    }
+  }
+
+  /// 对一条地址跑完整嗅探链：静态嗅探 → 浏览器兜底。
+  ///
+  /// 返回 `null` 的 [result] 表示都没命中，此时 [error] 是最后一次失败原因
+  /// （用于最终的错误文案）。用记录而不是字段传错误，是为了让这个函数无状态
+  /// —— 它会被「网页线路」和「原值兜底」两处共用。
+  Future<({PlayResult? result, AppError? error})> _resolveBySniffing({
+    required String url,
+    required String? referer,
+    required Map<String, String> extraHeaders,
+    required EpisodeIndex episodeIndex,
+  }) async {
+    final sniffer = resolver;
+    final browser = browserSniffer;
+    AppError? error;
+    if (sniffer != null) {
+      final outcome = await sniffer.resolve(
+        url,
+        referer: referer,
+        extraHeaders: extraHeaders,
+      );
+      if (outcome.isOk) {
+        final media = outcome.media!;
+        return (
+          result: PlayResult(
+            mediaSource: MediaSource(
+              uri: Uri.parse(media.url),
+              headers: media.headers,
+            ),
+            episodeIndex: episodeIndex,
+            viaSniffing: media.viaSniffing,
+          ),
+          error: null,
+        );
+      }
+      error = _snifferError(outcome, url);
+    } else {
+      error = const LocalError(
+        code: ErrorCode.sniffNoMatch,
+        message: '静态嗅探未启用',
+      );
+    }
+
+    if (browser == null) return (result: null, error: error);
+    final headers = <String, String>{
+      'User-Agent': _defaultUserAgent,
+      'Referer': ?referer,
+      ...extraHeaders,
+    };
+    final hit = await browser(url, headers);
+    if (hit == null || hit.isEmpty) return (result: null, error: error);
+    return (
+      result: PlayResult(
+        mediaSource: MediaSource(
+          uri: Uri.parse(hit),
+          headers: {...headers, 'Referer': url},
+        ),
+        episodeIndex: episodeIndex,
+        viaSniffing: true,
+      ),
+      error: null,
+    );
+  }
+
+  /// 解析 `playerContent` 的响应体。
+  ///
+  /// 形状与 `HttpSpiderPlayerApi.playerContent` 一致（同一套 wire 协议）：
+  /// `{"parse":0|1,"url":"…","header":{…},"jx":0}`。解析不出来返回 `null`，
+  /// 让调用方继续试下一条线路 —— 单个线路的脏响应不该让整次起播失败。
+  static _PlayerContent? _parsePlayerContent(String body) {
+    try {
+      final json = jsonDecode(body) as Map<String, Object?>;
+      return _PlayerContent(
+        parse: (json['parse'] as num?)?.toInt() ?? 0,
+        url: (json['url'] as String?) ?? '',
+        headers:
+            (json['header'] as Map?)?.map(
+              (k, v) => MapEntry(k.toString(), v.toString()),
+            ) ??
+            const {},
+      );
+    } on Object {
+      return null;
+    }
+  }
+
+  /// 是不是一个真的 http(s) 绝对地址。
+  ///
+  /// 用来把 `token@…` 这类**私有占位符**挡在嗅探链之外：它们没有 host，
+  /// 嗅探器只会失败，而浏览器兜底还会为此起一个进程。
+  static bool _looksLikeHttpUrl(String url) {
+    final uri = Uri.tryParse(url);
+    return uri != null &&
+        (uri.scheme == 'http' || uri.scheme == 'https') &&
+        uri.hasAuthority;
   }
 
   /// 不经嗅探、直接把原地址包成 [PlayResult]。
@@ -451,4 +608,41 @@ class _Candidate {
 
   /// 是否是用户在详情页选中的那条线路。
   final bool isRequested;
+}
+
+/// 蜘蛛 `playerContent` 的响应。
+///
+/// 与 `HttpSpiderPlayerApi.playerContent` 的解析结果同形，只是本包不依赖
+/// `play_engine`（依赖方向见类注释），所以就地解析一份。
+class _PlayerContent {
+  const _PlayerContent({
+    required this.parse,
+    required this.url,
+    required this.headers,
+  });
+
+  /// `0` = [url] 就是流地址；`1` = [url] 是网页播放页，仍需嗅探。
+  final int parse;
+
+  /// 解析出的地址。
+  final String url;
+
+  /// 随请求下发的头。**反盗链的 `Referer` 常常在这里**，不能丢。
+  final Map<String, String> headers;
+
+  /// 是否已经是可直接播放的流地址。
+  bool get isDirect => parse == 0;
+}
+
+/// `parse: 1` 的网页播放页候选（蜘蛛解析出来的地址 + 它的请求头）。
+class _PageCandidate {
+  const _PageCandidate({
+    required this.url,
+    required this.headers,
+    required this.flag,
+  });
+
+  final String url;
+  final Map<String, String> headers;
+  final String flag;
 }

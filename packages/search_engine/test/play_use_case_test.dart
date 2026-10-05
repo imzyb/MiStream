@@ -20,6 +20,9 @@ class _FakeRuntime implements SpiderRuntime {
     this.detailError,
     this.detailThrow,
     this.disposeThrow,
+    this.playBody,
+    this.playThrow,
+    this.playDelay,
   });
 
   final String detailBody;
@@ -34,10 +37,27 @@ class _FakeRuntime implements SpiderRuntime {
   /// 非空时 `dispose` 抛这个异常，用来验证回收失败不掩盖业务结果。
   final Error? disposeThrow;
 
+  /// `play`（= TVBox 的 `playerContent`）要返回的响应体。
+  ///
+  /// `null` = 这个蜘蛛没实现 `playerContent`，按 [UnimplementedError] 抛 ——
+  /// 真实世界里相当一部分 HTTP 型站点就是这样，`PlayUseCase` 必须能退回旧路径。
+  final String? playBody;
+
+  /// 非空时 `play` 直接抛这个异常。
+  final Error? playThrow;
+
+  /// `play` 的耗时。用 [Future.delayed] 真的把时间花掉，否则 `timeout()`
+  /// 对立刻返回的 Future 不生效，「超时后不再逐条试」这条根本测不出来。
+  final Duration? playDelay;
+
   int detailCalls = 0;
 
   /// `dispose` 被调用次数：运行时回收是本文件的重点断言之一。
   int disposeCalls = 0;
+
+  /// `play` 收到的 `(flag, ids)`，按调用先后 —— 用来断言「问过哪几条线路」。
+  final List<({String flag, String ids})> playCalls =
+      <({String flag, String ids})>[];
 
   @override
   Future<Result<HttpResponseData, AppError>> detail({
@@ -83,7 +103,24 @@ class _FakeRuntime implements SpiderRuntime {
   Future<Result<HttpResponseData, AppError>> play({
     required String flag,
     required String ids,
-  }) => throw UnimplementedError();
+  }) async {
+    playCalls.add((flag: flag, ids: ids));
+    final boom = playThrow;
+    if (boom != null) throw boom;
+    final delay = playDelay;
+    if (delay != null) await Future<void>.delayed(delay);
+    final body = playBody;
+    if (body == null) throw UnimplementedError();
+    return Ok(
+      HttpResponseData(
+        status: 200,
+        headers: const {},
+        body: body,
+        finalUrl: '',
+        elapsedMs: 1,
+      ),
+    );
+  }
 
   @override
   Future<void> dispose() async {
@@ -159,6 +196,33 @@ String _detailBody({
     ],
   });
 }
+
+/// 一份**真实形态**的 detail 响应：`vod_play_url` 里放的不是 URL，而是蜘蛛
+/// 自己的私有占位符。
+///
+/// 抄自 `csp_YunDuo` 的实测返回（片名、线路名、占位符前缀都照原样保留）：
+///
+///   vod_play_from = "PO蓝光$$$ZJ4K"
+///   vod_play_url  = "第1集$token@PAN1-F2DH0r3KULNMgCWfhqnva_…==@PAN1
+///                    $$$第1集$token@zijian_Uvhb8ej0DzhXyRJKwV1Qjg…@zijianm3u8"
+///
+/// 这类值**没有 scheme、没有 host**，直接交给 mpv 或嗅探器必然全灭 —— 只有
+/// `playerContent` 能把它换成真地址。所以「线路解析正确」的用例不能用它，
+/// 而「必须走 playerContent」的用例非用它不可。
+String _tokenDetailBody() => jsonEncode({
+  'code': 1,
+  'list': [
+    {
+      'vod_id': 42,
+      'vod_name': '样片',
+      'vod_play_from': r'PO蓝光$$$ZJ4K',
+      'vod_play_url':
+          r'第1集$token@PAN1-F2DH0r3KULNMgCWfhqnva_kDl8Yy3rQ==@PAN1'
+          r'$$$'
+          r'第1集$token@zijian_Uvhb8ej0DzhXyRJKwV1Qjg7tPm4nA@zijianm3u8',
+    },
+  ],
+});
 
 Future<SiteRepository> _sitesWith({
   String api = 'https://api.a.com/api.php/provide/vod/',
@@ -476,6 +540,257 @@ void main() {
       );
 
       expect(result.valueOrNull!.episodeIndex, EpisodeIndex.first);
+    });
+  });
+
+  // ── 蜘蛛自己的 playerContent 是起播的第一顺位 ─────────────────────────────
+  //
+  // 2026-10-05 实测 `csp_YunDuo` 的 `vod_play_url` 给的是
+  // `token@PAN1-F2DH0r3KULNMgCWfhqnva_…==@PAN1` —— **没有 scheme、没有 host**，
+  // 是蜘蛛自己的私有占位符。旧实现把它直接交给嗅探器，于是
+  // `No host specified in URI` / 请求失败，这类站点的播放**必然全灭**。
+  //
+  // 只有 `runtime.play(flag, ids)`（= TVBox 的 `playerContent`）能把它换成真
+  // 地址，而且会**一并给出反盗链所需的 Referer**（实测 `PO蓝光` 给的是
+  // `http://43.248.3.46:7788`，与站点域名完全不同）。
+
+  group('蜘蛛 playerContent（起播第一顺位）', () {
+    test('parse:0 的地址直接采用，并带上蜘蛛给的 Referer', () async {
+      final sites = await _sitesWith();
+      final runtime = _FakeRuntime(
+        _tokenDetailBody(),
+        playBody: jsonEncode({
+          'parse': 0,
+          'url': 'http://43.248.3.46:7788/m3u8/pan1.php?token=abc.m3u8',
+          'header': {
+            'User-Agent': 'UA-from-spider',
+            'Referer': 'http://43.248.3.46:7788',
+          },
+        }),
+      );
+      final fetcher = _FakeFetcher(const {});
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(runtime),
+        resolver: SnifferResolver(fetcher: fetcher.call),
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'PO蓝光',
+      );
+
+      expect(result.isOk, isTrue);
+      final play = result.valueOrNull!;
+      expect(
+        play.mediaSource.uri.toString(),
+        'http://43.248.3.46:7788/m3u8/pan1.php?token=abc.m3u8',
+      );
+      expect(
+        play.mediaSource.headers['Referer'],
+        'http://43.248.3.46:7788',
+        reason: '反盗链的 Referer 只有 playerContent 给得出来，站点域名是错的',
+      );
+      expect(play.mediaSource.headers['User-Agent'], 'UA-from-spider');
+      expect(play.viaSniffing, isFalse);
+      expect(
+        fetcher.calls,
+        isEmpty,
+        reason: 'parse:0 已经是流地址，不该再为它发一次嗅探请求',
+      );
+      expect(
+        runtime.playCalls.single.flag,
+        'PO蓝光',
+        reason: '用户点的那条线路排最前，第一条就问它',
+      );
+    });
+
+    test('parse:1 的网页地址交给嗅探链换成真实流地址', () async {
+      final sites = await _sitesWith();
+      final runtime = _FakeRuntime(
+        _tokenDetailBody(),
+        playBody: jsonEncode({
+          'parse': 1,
+          'url': 'https://site.a.com/play/unknown?source=zijianm3u8',
+          'header': {'Referer': 'https://site.a.com'},
+        }),
+      );
+      final fetcher = _FakeFetcher({
+        'https://site.a.com/play/unknown?source=zijianm3u8':
+            const SniffResponse(
+              statusCode: 200,
+              body:
+                  '<script>var u="https://cdn.a.com/real/index.m3u8";</script>',
+              contentType: 'text/html',
+            ),
+        'https://cdn.a.com/real/index.m3u8': _playlist(),
+      });
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(runtime),
+        resolver: SnifferResolver(fetcher: fetcher.call),
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'ZJ4K',
+      );
+
+      expect(result.isOk, isTrue);
+      expect(
+        result.valueOrNull!.mediaSource.uri.toString(),
+        'https://cdn.a.com/real/index.m3u8',
+      );
+      expect(result.valueOrNull!.viaSniffing, isTrue);
+    });
+
+    test('playerContent 超时后不再逐条试，直接退回旧路径', () async {
+      final sites = await _sitesWith();
+      final runtime = _FakeRuntime(
+        _detailBody(),
+        playDelay: const Duration(milliseconds: 200),
+      );
+      final fetcher = _FakeFetcher({
+        'https://cdn.a.com/share/e1': const SniffResponse(
+          statusCode: 200,
+          body: '<script>var u="https://cdn.a.com/real/index.m3u8";</script>',
+          contentType: 'text/html',
+        ),
+        'https://cdn.a.com/real/index.m3u8': _playlist(),
+      });
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(runtime),
+        resolver: SnifferResolver(fetcher: fetcher.call),
+        playerContentTimeout: const Duration(milliseconds: 30),
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'liangzi',
+      );
+
+      expect(result.isOk, isTrue);
+      expect(
+        runtime.playCalls,
+        hasLength(1),
+        reason:
+            '一次超时说明这个蜘蛛的 playerContent 根本不可用（拿空 id 做同步 HTTP '
+            '是常见实现），再逐条问只是白等 6 秒 × 线路数',
+      );
+      expect(
+        result.valueOrNull!.mediaSource.uri.toString(),
+        'https://cdn.a.com/real/index.m3u8',
+        reason: '超时之后仍要退回嗅探路径，不能整次起播失败',
+      );
+    });
+
+    test('蜘蛛 play 抛异常只跳过该条，不终止后续线路', () async {
+      final sites = await _sitesWith();
+      final runtime = _FakeRuntime(
+        _detailBody(),
+        playThrow: StateError('spider boom'),
+      );
+      final fetcher = _FakeFetcher({
+        'https://cdn.a.com/share/e1': const SniffResponse(
+          statusCode: 200,
+          body: '<script>var u="https://cdn.a.com/real/index.m3u8";</script>',
+          contentType: 'text/html',
+        ),
+        'https://cdn.a.com/real/index.m3u8': _playlist(),
+      });
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(runtime),
+        resolver: SnifferResolver(fetcher: fetcher.call),
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'liangzi',
+      );
+
+      expect(result.isOk, isTrue);
+      expect(
+        runtime.playCalls,
+        hasLength(2),
+        reason:
+            '抛异常只是这条线路没解析出来，不能像超时那样判「整个 playerContent '
+            '不可用」—— 后一条线路仍要问',
+      );
+      expect(
+        result.valueOrNull!.mediaSource.uri.toString(),
+        'https://cdn.a.com/real/index.m3u8',
+      );
+    });
+
+    test('蜘蛛没实现 playerContent 时退回旧路径（详情里的原值）', () async {
+      final sites = await _sitesWith();
+      // playBody 不给 → play() 抛 UnimplementedError。
+      final runtime = _FakeRuntime(_detailBody());
+      final fetcher = _FakeFetcher({
+        'https://cdn.a.com/share/e1': const SniffResponse(
+          statusCode: 200,
+          body: '<script>var u="https://cdn.a.com/real/index.m3u8";</script>',
+          contentType: 'text/html',
+        ),
+        'https://cdn.a.com/real/index.m3u8': _playlist(),
+      });
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(runtime),
+        resolver: SnifferResolver(fetcher: fetcher.call),
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'liangzi',
+      );
+
+      expect(result.isOk, isTrue);
+      expect(
+        result.valueOrNull!.mediaSource.uri.toString(),
+        'https://cdn.a.com/real/index.m3u8',
+      );
+    });
+
+    test('token 形态的候选绝不喂给嗅探器（不起浏览器、不发请求）', () async {
+      final sites = await _sitesWith();
+      final runtime = _FakeRuntime(_tokenDetailBody());
+      final fetcher = _FakeFetcher(const {});
+      final browserCalls = <String>[];
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(runtime),
+        resolver: SnifferResolver(fetcher: fetcher.call),
+        browserSniffer: (url, headers) async {
+          browserCalls.add(url);
+          return null;
+        },
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'PO蓝光',
+      );
+
+      expect(result.isOk, isFalse, reason: '蜘蛛没实现 playerContent，确实没有可播线路');
+      expect(
+        fetcher.calls,
+        isEmpty,
+        reason: '`token@…` 没有 host，取页面必然失败 —— 连请求都不该发',
+      );
+      expect(
+        browserCalls,
+        isEmpty,
+        reason: '浏览器兜底贵得多（要起一个进程），更不能浪费在没有 host 的占位符上',
+      );
     });
   });
 
@@ -890,10 +1205,10 @@ void main() {
       ]);
     });
 
-    test('两级都没装时保持旧行为，原地址直接返回', () async {
+    test('两级都没装时也要给一个能播的原始地址：优先直链形态的候选', () async {
       final sites = await _sitesWith();
       // 线路名带 m3u8 只是名字，地址仍是 share/ 网页形态；这里验证的是
-      // 「没装嗅探就原样返回」这条向后兼容路径。
+      // 「没装嗅探器时的最后退路」——**必须给出一条原始地址**，不能报错。
       final useCase = PlayUseCase(
         sites,
         runtimeFactory: _FakeFactory(_FakeRuntime(_detailBody())),
@@ -907,7 +1222,14 @@ void main() {
 
       expect(result.isOk, isTrue);
       final play = result.valueOrNull!;
-      expect(play.mediaSource.uri.toString(), 'https://cdn.a.com/share/e1');
+      // ⚠️ 这里刻意**不是** `candidates.first`（= 用户点的那条 `share/e1`）。
+      //
+      // 用户点的 `liangzi` 是**网页线路**（`/share/e1`），没有嗅探器就解不出
+      // 真实流地址；而同片的 `lzm3u8` 是直链（`/1/index.m3u8`）。两者都没法
+      // 验证时，把直链形态的那条原样交出去，比死守用户点的网页线路、返回一个
+      // 必然打不开的地址更可能播出来。跨线路兜底本来就是既有行为（有嗅探器时
+      // 也是「挨个试到第一条能用的为止」），这里只是把它延伸到「没装嗅探器」。
+      expect(play.mediaSource.uri.toString(), 'https://cdn.a.com/1/index.m3u8');
       expect(play.viaSniffing, isFalse);
     });
   });
