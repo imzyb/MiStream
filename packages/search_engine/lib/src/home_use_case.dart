@@ -113,19 +113,65 @@ class SourceOption {
   bool get isUsable => hasRuntime;
 }
 
+/// 探测各档超时。
+///
+/// 做成一个可注入的记录而不是四个散落的常量，是因为「首个 JVM 站点」那档
+/// 必须能测 —— 生产值是 90 秒（要覆盖一次性的 dex→java 转换），用例不可能
+/// 真等；而只测「默认值够大」等于没测。
+typedef ProbeTimeouts = ({
+  /// 单次取数（含建运行时）的总预算；超过即停止继续探测。
+  Duration budget,
+
+  /// 单个站点建运行时的超时。
+  Duration create,
+
+  /// **首个 JVM 站点**建运行时的超时，见 [HomeUseCase._trySites] 里的说明。
+  Duration firstJvmCreate,
+
+  /// 单次请求的超时。
+  Duration request,
+});
+
+/// 生产默认值。
+///
+/// `firstJvmCreate` 为什么必须比 `create` 大一个数量级：JVM 蜘蛛的首次
+/// `create` 要在运行时侧把 `classes.dex` 转成 java 字节码，**实测约 48 秒**
+/// （按原始 jar 的 md5 缓存，之后秒回）。用 8 秒的常规超时会让第一轮探测
+/// **全军覆没** —— 而且 JVM 运行时是单线程的，第一个 `create` 卡在转换里时，
+/// 后面每个站点的 8 秒也逐个烧掉，`budget` 随即耗尽，界面上就是
+/// 「所有站点均无法连接」。
+///
+/// 2026-10-05 实测复现：清掉 `%TEMP%\mistream-jvm-jars` 后启动，103 个站点
+/// 全部报 `TimeoutException after 0:00:08`；而缓存是暖的时候同一个包首页正常
+/// 出图。用户点一次「重试」就好（那时缓存已暖），但**第一次**体验就是
+/// 「全都不能用」—— 这正是长期被报的症状。
+const ProbeTimeouts defaultProbeTimeouts = (
+  budget: Duration(seconds: 30),
+  create: Duration(seconds: 8),
+  firstJvmCreate: Duration(seconds: 90),
+  request: Duration(seconds: 5),
+);
+
 /// 首页编排器。
 class HomeUseCase {
   /// 构造首页编排器。
+  ///
+  /// [timeouts] 供用例注入短值 —— 生产默认值里「首个 JVM 站点」那条是 90 秒
+  /// （要覆盖一次性的 dex→java 转换），用例不可能真等它。
   HomeUseCase(
     this.sites, {
     this.runtimeFactory,
     this.cacheTtl = const Duration(minutes: 5),
-  });
+    ProbeTimeouts? timeouts,
+  }) : timeouts = timeouts ?? defaultProbeTimeouts;
   final SiteRepository sites;
   final SpiderRuntimeFactory? runtimeFactory;
 
   /// 首页缓存 TTL，测试可注入短 TTL。
   final Duration cacheTtl;
+
+  /// 探测用的各档超时。
+  final ProbeTimeouts timeouts;
 
   final Map<String, _CachedHome> _homeCache = {};
 
@@ -231,15 +277,6 @@ class HomeUseCase {
   static String _noSiteMessage(int? siteId) =>
       siteId == null ? '无可用站点' : '所选片源不可用（缺少运行时或已停用）';
 
-  /// 单次取数（含建运行时）的总时间预算；超过即停止继续探测。
-  static const _probeBudget = Duration(seconds: 30);
-
-  /// 单个站点建运行时的超时。
-  static const _createTimeout = Duration(seconds: 8);
-
-  /// 单次请求的超时。
-  static const _requestTimeout = Duration(seconds: 5);
-
   /// 尝试用指定站点列表执行操作，返回第一个成功的结果。
   ///
   /// 失败时汇总前几个站点的真实错误，避免把「所有站点均无法连接」这种
@@ -251,17 +288,37 @@ class HomeUseCase {
   ) async {
     final stopwatch = Stopwatch()..start();
     final errors = <String>[];
+    // 还没为任何一个 JVM 站点建过运行时。第一次可能要付那笔一次性的
+    // dex→java 转换，所以给它更长的超时、并把这段耗时从探测预算里剔除。
+    //
+    // 判据用 `classifySiteRuntime` 而不是「是不是第一个站点」：站点列表是
+    // HTTP 优先排序的，第一个站点通常是 HTTP（`_createRuntime` 是瞬时的），
+    // 按序号判会把长超时浪费在它身上，真正的 JVM 站点照样只有 8 秒。
+    var jvmCold = true;
     for (final site in siteList) {
-      if (stopwatch.elapsed > _probeBudget) {
-        errors.add('超过 ${_probeBudget.inSeconds}s 未取到数据');
+      if (stopwatch.elapsed > timeouts.budget) {
+        errors.add('超过 ${timeouts.budget.inSeconds}s 未取到数据');
         break;
       }
+      final isJvm =
+          classifySiteRuntime(typeCode: site.typeCode, api: site.api) ==
+          SiteRuntimeKind.jvm;
+      final needsWarmUp = isJvm && jvmCold;
       SpiderRuntime? runtime;
       try {
-        runtime = await _createRuntime(site).timeout(_createTimeout);
+        runtime = await _createRuntime(site).timeout(
+          needsWarmUp ? timeouts.firstJvmCreate : timeouts.create,
+        );
+        if (isJvm) {
+          // 无论成功失败，转换都已经做过（或已经在做），后续 create 是热的。
+          jvmCold = false;
+          // 一次性开销不计入探测预算，否则转换一做完预算就烧光了，
+          // 后面 100 个站点会被「超过 30s 未取到数据」一刀切掉。
+          stopwatch.reset();
+        }
         final result = await action(
           runtime,
-        ).timeout(_requestTimeout);
+        ).timeout(timeouts.request);
         await runtime.dispose();
         if (result.isOk) {
           workingSite = site;
@@ -269,6 +326,10 @@ class HomeUseCase {
         }
         errors.add('${site.name}: ${result.errorOrNull?.message}');
       } on Object catch (e) {
+        if (isJvm) {
+          jvmCold = false;
+          stopwatch.reset();
+        }
         await runtime?.dispose();
         errors.add('${site.name}: $e');
       }
@@ -283,19 +344,31 @@ class HomeUseCase {
   }
 
   /// 获取第一个可用站点（用于详情页导航）。
+  ///
+  /// 与 [_trySites] **同一套超时策略**：首个 JVM 站点拿长超时（覆盖一次性的
+  /// dex→java 转换）。早先这里既不给 `_createRuntime` 加超时、又把请求写死成
+  /// 5 秒，冷缓存下要么无限等、要么在别的站点上白等 —— 两条路都和首页不一致。
   Future<Site?> getWorkingSite() async {
     final siteList = await _getEnabledSites();
+    var jvmCold = true;
     for (final site in siteList) {
+      final isJvm =
+          classifySiteRuntime(typeCode: site.typeCode, api: site.api) ==
+          SiteRuntimeKind.jvm;
       SpiderRuntime? runtime;
       try {
-        runtime = await _createRuntime(site);
-        final result = await runtime.home().timeout(const Duration(seconds: 5));
+        runtime = await _createRuntime(site).timeout(
+          isJvm && jvmCold ? timeouts.firstJvmCreate : timeouts.create,
+        );
+        if (isJvm) jvmCold = false;
+        final result = await runtime.home().timeout(timeouts.request);
         await runtime.dispose();
         if (result.isOk) {
           workingSite = site;
           return site;
         }
       } on Object {
+        if (isJvm) jvmCold = false;
         await runtime?.dispose();
       }
     }

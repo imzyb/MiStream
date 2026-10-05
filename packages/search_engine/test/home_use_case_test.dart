@@ -10,14 +10,34 @@ import 'package:storage/storage.dart';
 import 'package:test/test.dart';
 
 class _HomeRuntime implements SpiderRuntime {
-  _HomeRuntime(this.body);
+  _HomeRuntime(this.body, {this.failHome = false, this.onHome});
 
   final String body;
+
+  /// `home()` 是否返回失败。
+  ///
+  /// 用来构造「第一个站点取数失败、循环必须继续往下走」的场景 ——
+  /// 探测预算是否被正确地重置，只有在这种情况下才观察得到。
+  final bool failHome;
+
+  /// 每次 `home()` 被调用时回调。
+  ///
+  /// 用来断言「某个站点**根本没走到取数那一步**」—— 只数 `create` 次数是
+  /// 分辨不出来的：建运行时超时被掐掉、和建成功但取数失败，两者对调用次数
+  /// 的贡献一样。
+  final void Function()? onHome;
+
   int homeCalls = 0;
 
   @override
   Future<Result<HttpResponseData, AppError>> home({int page = 1}) async {
     homeCalls++;
+    onHome?.call();
+    if (failHome) {
+      return const Err(
+        RemoteError(code: ErrorCode.networkTimeout, message: '模拟取数失败'),
+      );
+    }
     return Ok(
       HttpResponseData(
         status: 200,
@@ -60,7 +80,12 @@ class _HomeRuntime implements SpiderRuntime {
 }
 
 class _HomeFactory implements SpiderRuntimeFactory {
-  _HomeFactory(this.runtime, {this.supportedTypeCodes});
+  _HomeFactory(
+    this.runtime, {
+    this.supportedTypeCodes,
+    this.createDelays = const <Duration>[],
+    this.runtimeBuilder,
+  });
 
   final SpiderRuntime runtime;
 
@@ -69,6 +94,16 @@ class _HomeFactory implements SpiderRuntimeFactory {
   /// `null` = 任何站点都算「有运行时」（多数用例的默认：假工厂手里永远有一个
   /// 现成的 runtime）；给定集合时只认这些，用来构造「缺运行时」的场景。
   final Set<int>? supportedTypeCodes;
+
+  /// 第 N 次 `create` 要耗时多久（越界则取零）。
+  ///
+  /// 用来**真的把时间花掉**：`timeout()` 只对「真的还没完成」的 Future 生效，
+  /// 一个立刻返回的假工厂永远测不出超时，也测不出「首个 JVM 站点拿长超时」
+  /// 这条逻辑 —— 那正是冷启动时 103 个站点全报 8 秒超时的成因。
+  final List<Duration> createDelays;
+
+  /// 按调用序号产出 runtime；给定时覆盖 [runtime]。
+  final SpiderRuntime Function(int index)? runtimeBuilder;
 
   /// `create` 被调用了几次。用来断言「缺运行时的源根本没被拿去建运行时」——
   /// 只断言返回错误是不够的，旧实现在报错前会先撞满 8s 的建运行时超时。
@@ -102,13 +137,62 @@ class _HomeFactory implements SpiderRuntimeFactory {
     String? spiderJarUrl,
     String? spiderJarMd5,
   }) async {
+    final index = createCalls;
     createCalls++;
-    return runtime;
+    if (index < createDelays.length) {
+      await Future<void>.delayed(createDelays[index]);
+    }
+    return runtimeBuilder?.call(index) ?? runtime;
   }
 
   @override
   Future<void> dispose() async {}
 }
+
+/// 往库里的站点表插一条站点，返回它。
+Future<Site> _insertSite(
+  SiteRepository sites, {
+  required int configId,
+  required String siteKey,
+  required String name,
+  required int typeCode,
+  required String runtime,
+  required String api,
+  int priority = 0,
+}) => sites.upsert(
+  SitesCompanion.insert(
+    configId: Value(configId),
+    siteKey: siteKey,
+    name: name,
+    typeCode: typeCode,
+    runtime: runtime,
+    api: api,
+    priority: Value(priority),
+    createdAt: DateTime(2026),
+    updatedAt: DateTime(2026),
+  ),
+);
+
+/// 建一份只有 `configSources` 一行的空库，返回 (db, configId)。
+Future<(AppDatabase, int)> _newDb(String rawHash) async {
+  final db = AppDatabase.inMemory();
+  final configId = await db
+      .into(db.configSources)
+      .insert(
+        ConfigSourcesCompanion.insert(
+          name: 'test config',
+          rawHash: rawHash,
+          format: 'json',
+          createdAt: DateTime(2026),
+          updatedAt: DateTime(2026),
+        ),
+      );
+  return (db, configId);
+}
+
+const _okBody =
+    '{"class":[{"type_id":"1","type_name":"电影"}],'
+    '"list":[{"vod_id":"42","vod_name":"测试影片"}]}';
 
 void main() {
   test(
@@ -369,5 +453,229 @@ void main() {
       0,
       reason: '不该为缺运行时的源建运行时 —— 这条才是「口径一致」的实质',
     );
+  });
+
+  // ── 冷启动超时（2026-10-05 实测复现的「所有站点均无法连接」） ──────────────
+  //
+  // JVM 蜘蛛的首次 `create` 要在运行时侧把 `classes.dex` 转成 java 字节码，
+  // 实测约 48 秒。用 8 秒的常规超时会让第一轮探测全军覆没，而 JVM 运行时是
+  // 单线程的，后面每个站点的 8 秒也逐个烧掉，探测预算随即耗尽 —— 界面上就是
+  // 「所有站点均无法连接（共尝试 103 个：… TimeoutException after 0:00:08）」。
+  //
+  // 这四条用例必须**真的把时间花掉**（`createDelays`）才有效：`timeout()` 对
+  // 一个立刻返回的 Future 是不生效的，秒回的假工厂永远测不出这条逻辑。
+
+  const coldTimeouts = (
+    budget: Duration(seconds: 30),
+    create: Duration(milliseconds: 50),
+    firstJvmCreate: Duration(seconds: 5),
+    request: Duration(seconds: 5),
+  );
+
+  test('冷启动：首个 JVM 站点的 create 用 firstJvmCreate 而不是 create', () async {
+    final (db, configId) = await _newDb('cold-jvm');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-cold',
+      name: 'JVM 源',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_Cold',
+    );
+    final factory = _HomeFactory(
+      _HomeRuntime(_okBody),
+      createDelays: const [Duration(milliseconds: 300)],
+    );
+    final useCase = HomeUseCase(
+      sites,
+      runtimeFactory: factory,
+      timeouts: coldTimeouts,
+    );
+
+    final result = await useCase.getHomeData();
+
+    expect(
+      result.isOk,
+      isTrue,
+      reason: '300ms 的首次转换 > create(50ms) 但 < firstJvmCreate(5s)，旧实现会在这里超时',
+    );
+    expect(result.valueOrNull!.recommends.single.vodId, '42');
+    expect(factory.createCalls, 1);
+  });
+
+  test('对照：把 firstJvmCreate 退回 create，同一场景必然超时', () async {
+    // 没有这条，上面那条可能只是因为「延迟没生效」而假绿 —— 早前在
+    // ShimGapScan 上就吃过一次「两边都报 0 缺口」的假全绿。
+    final (db, configId) = await _newDb('cold-control');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-cold',
+      name: 'JVM 源',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_Cold',
+    );
+    final factory = _HomeFactory(
+      _HomeRuntime(_okBody),
+      createDelays: const [Duration(milliseconds: 300)],
+    );
+    final useCase = HomeUseCase(
+      sites,
+      runtimeFactory: factory,
+      timeouts: (
+        budget: coldTimeouts.budget,
+        create: coldTimeouts.create,
+        // 故意退回常规值 —— 复现 2026-10-05 那个「103 个站点全 8 秒超时」。
+        firstJvmCreate: coldTimeouts.create,
+        request: coldTimeouts.request,
+      ),
+    );
+
+    final result = await useCase.getHomeData();
+
+    expect(result.isErr, isTrue);
+    expect(result.errorOrNull!.message, contains('TimeoutException'));
+    expect(result.errorOrNull!.message, contains('共尝试 1 个'));
+  });
+
+  test('首个 JVM 转换的耗时不计入探测预算', () async {
+    final (db, configId) = await _newDb('cold-budget');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-a',
+      name: 'JVM A',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_A',
+      priority: 20,
+    );
+    await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-b',
+      name: 'JVM B',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_B',
+      priority: 10,
+    );
+    final ok = _HomeRuntime(_okBody);
+    final factory = _HomeFactory(
+      ok,
+      createDelays: const [Duration(milliseconds: 300)],
+      runtimeBuilder: (i) => i == 0 ? _HomeRuntime('{}', failHome: true) : ok,
+    );
+    final useCase = HomeUseCase(
+      sites,
+      runtimeFactory: factory,
+      timeouts: (
+        budget: const Duration(milliseconds: 100),
+        create: const Duration(milliseconds: 50),
+        firstJvmCreate: const Duration(seconds: 5),
+        request: const Duration(seconds: 5),
+      ),
+    );
+
+    final result = await useCase.getHomeData();
+
+    expect(
+      factory.createCalls,
+      2,
+      reason: '不重置预算的话，首次转换的 300ms 会直接顶爆 100ms 预算，第二个站点根本不会被试到',
+    );
+    expect(result.isOk, isTrue);
+  });
+
+  test('只有首个 JVM 站点拿长超时，后续回到常规超时', () async {
+    final (db, configId) = await _newDb('cold-once');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    for (final (key, priority) in const [('a', 30), ('b', 20), ('c', 10)]) {
+      await _insertSite(
+        sites,
+        configId: configId,
+        siteKey: 'csp-$key',
+        name: 'JVM ${key.toUpperCase()}',
+        typeCode: 3,
+        runtime: 'jvm',
+        api: 'csp_${key.toUpperCase()}',
+        priority: priority,
+      );
+    }
+    final ok = _HomeRuntime(_okBody);
+    // 第 i 个 runtime 的 home 被调到时记下 i，用来断言「谁真的走到了取数」。
+    final homeOrder = <int>[];
+    final factory = _HomeFactory(
+      ok,
+      // 前两次 create 都慢：第一次是转换（该拿长超时），第二次是普通冷启
+      // （该按常规超时被掐掉），第三次快。
+      createDelays: const [
+        Duration(milliseconds: 300),
+        Duration(milliseconds: 300),
+        Duration.zero,
+      ],
+      runtimeBuilder: (i) => _HomeRuntime(
+        i == 2 ? _okBody : '{}',
+        failHome: i != 2,
+        onHome: () => homeOrder.add(i),
+      ),
+    );
+    final useCase = HomeUseCase(
+      sites,
+      runtimeFactory: factory,
+      timeouts: coldTimeouts,
+    );
+
+    final result = await useCase.getHomeData();
+
+    expect(
+      factory.createCalls,
+      3,
+      reason: '三个站点都要被试到 —— 第二个的建运行时超时不该中断整个循环',
+    );
+    expect(
+      homeOrder,
+      [0, 2],
+      reason:
+          '第二次慢 create（300ms > create 50ms）必须被掐掉，它的 home 不该被调用；若它也拿到 firstJvmCreate，homeOrder 会是 [0,1,2]',
+    );
+    expect(result.isOk, isTrue);
+    expect(result.valueOrNull!.recommends.single.vodId, '42');
+  });
+
+  test('getWorkingSite 与首页同一套超时策略', () async {
+    final (db, configId) = await _newDb('working-site');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    final id = await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-w',
+      name: 'JVM W',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_W',
+    );
+    final factory = _HomeFactory(
+      _HomeRuntime(_okBody),
+      createDelays: const [Duration(milliseconds: 300)],
+    );
+    final useCase = HomeUseCase(
+      sites,
+      runtimeFactory: factory,
+      timeouts: coldTimeouts,
+    );
+
+    expect(await useCase.getWorkingSite(), isNotNull);
+    expect(useCase.workingSiteId, id.id);
   });
 }
