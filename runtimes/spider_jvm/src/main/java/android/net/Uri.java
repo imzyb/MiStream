@@ -218,6 +218,53 @@ public class Uri {
             return this;
         }
 
+        /**
+         * 追加一个查询参数。
+         *
+         * <p>键与值都按 android 语义做**保留 {@code = &}** 的编码：
+         * 这是最容易被写错的地方 —— 如果连 {@code =} 都编码掉，
+         * 拼出来的 query 会变成一个没有值的怪参数，服务端直接忽略。
+         */
+        public Builder appendQueryParameter(String key, String value) {
+            String k = encode(key, "=&");
+            String v = encode(value, "=&");
+            if (query == null || query.isEmpty()) {
+                query = k + "=" + v;
+            } else {
+                query = query + "&" + k + "=" + v;
+            }
+            return this;
+        }
+
+        /** 清空查询串。 */
+        public Builder clearQuery() {
+            this.query = null;
+            return this;
+        }
+
+        /**
+         * 设置已编码的路径。
+         *
+         * <p>与 {@link #path} 的区别：本方法**不做任何转义**，调用方保证传进来的
+         * 已经是合法编码（例如 {@code "/a%20b"}）。因此这里只做前导斜杠归一化。
+         */
+        public Builder encodedPath(String p) {
+            if (p == null) {
+                this.path = "";
+            } else if (!p.startsWith("/")) {
+                this.path = "/" + p;
+            } else {
+                this.path = p;
+            }
+            return this;
+        }
+
+        /** 设置已编码的查询串（不做转义）。 */
+        public Builder encodedQuery(String q) {
+            this.query = q;
+            return this;
+        }
+
         public Builder fragment(String f) {
             this.fragment = f;
             return this;
@@ -245,13 +292,64 @@ public class Uri {
         return b;
     }
 
-    /** URL 编码。 */
+    /**
+     * URL 编码（保留 android 的「不转义集合」语义）。
+     *
+     * <p>等价于 {@code encode(s, null)}。刻意**不**用
+     * {@link java.net.URLEncoder}：它的保留集合与 android 不同 ——
+     * 会把 {@code ~ ! ' ( )} 也编码掉、并把空格编成 {@code +}。
+     * 接口签名对编码结果敏感的站点（大量采集源用 md5(参数串) 做签名）
+     * 会因为这几个字符的差异直接鉴权失败。
+     */
     public static String encode(String s) {
-        try {
-            return URLEncoder.encode(s == null ? "" : s, "UTF-8").replace("+", "%20");
-        } catch (UnsupportedEncodingException e) {
-            return s;
+        return encode(s, null);
+    }
+
+    /**
+     * URL 编码，额外保留 {@code allow} 里的字符。
+     *
+     * <p>与 android 的 {@code Uri.encode(String, String)} 一致：字母数字与
+     * {@code _-!.~'()*} 永远保留，{@code allow} 里的字符也保留，其余按 UTF-8
+     * 逐字节编成 {@code %XX}（大写十六进制）。
+     *
+     * @param s     待编码串；null 返回 null
+     * @param allow 额外允许的字符集；null 表示没有额外允许项
+     */
+    public static String encode(String s, String allow) {
+        if (s == null) return null;
+        StringBuilder out = new StringBuilder(s.length() + 16);
+        int i = 0;
+        while (i < s.length()) {
+            int cp = s.codePointAt(i);
+            int cc = Character.charCount(cp);
+            i += cc;
+            if (cp < 128) {
+                char c = (char) cp;
+                if (isUnreserved(c) || (allow != null && allow.indexOf(c) >= 0)) {
+                    out.append(c);
+                    continue;
+                }
+            }
+            // 逐字节编码（含代理对：整体按一个码点编码成 UTF-8）
+            byte[] bytes = new String(Character.toChars(cp))
+                    .getBytes(StandardCharsets.UTF_8);
+            for (byte b : bytes) {
+                out.append('%');
+                out.append(HEX[(b >> 4) & 0xf]);
+                out.append(HEX[b & 0xf]);
+            }
         }
+        return out.toString();
+    }
+
+    /** 十六进制字符表。 */
+    private static final char[] HEX = "0123456789ABCDEF".toCharArray();
+
+    /** android 认为「永远不必编码」的字符集。 */
+    private static boolean isUnreserved(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                || c == '_' || c == '-' || c == '!' || c == '.' || c == '~'
+                || c == '*' || c == '\'' || c == '(' || c == ')';
     }
 
     /** URL 解码。 */

@@ -56,4 +56,25 @@ public final class TextUtils {
     public static String nullIfEmpty(String str) {
         return isEmpty(str) ? null : str;
     }
+
+    /**
+     * 省略位置枚举。
+     *
+     * <p>作为 {@code TextView.setEllipsize} 的参数类型出现。源里常写成
+     * {@code setEllipsize(TextUtils.TruncateAt.END)} 这种静态字段读取 ——
+     * 缺这个嵌套类会在**类加载**阶段就抛 NoClassDefFoundError（静态字段
+     * 属于常量池里的 Fieldref，解析时要求 owner 类存在）。
+     *
+     * <p>枚举常量顺序与真实 Android 一致，防止源里做 {@code ordinal()} 比较时错位。
+     */
+    public enum TruncateAt {
+        /** 末尾省略。 */
+        END,
+        /** 开头省略。 */
+        MARQUEE,
+        /** 中间省略。 */
+        MIDDLE,
+        /** 开头省略。 */
+        START
+    }
 }

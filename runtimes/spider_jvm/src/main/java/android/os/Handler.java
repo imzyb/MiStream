@@ -46,4 +46,15 @@ public class Handler {
     public final void removeCallbacks(Runnable r) {
         // no-op
     }
+
+    /**
+     * 取绑定的 Looper。
+     *
+     * <p>源常拿它做 {@code handler.getLooper().getThread()} 判断「当前是不是
+     * 主线程」，再决定要不要切线程。必须返回**非 null** —— 返回 null 会让
+     * 那个链式调用直接 NPE。
+     */
+    public final Looper getLooper() {
+        return looper != null ? looper : Looper.getMainLooper();
+    }
 }

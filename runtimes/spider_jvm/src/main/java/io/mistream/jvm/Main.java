@@ -32,6 +32,20 @@ public final class Main {
     /** 上报能力位。 */
     static final List<String> FEATURES = List.of("storage");
 
+    /**
+     * 共享的 gson 实例。
+     *
+     * {@code ToNumberPolicy.LONG_OR_DOUBLE} 不能省。gson 默认把**所有** JSON 数字
+     * 都反序列化成 {@code Double}，于是宿主发来的 `"args":[tid, 1]` 到了蜘蛛手里
+     * 变成 {@code 1.0}；{@link SpiderBridge#argStr} 一转就成了字符串 {@code "1.0"}。
+     * 实测 csp_Jpys 把这个页码原样发给服务端，服务端回
+     * `For input string: "1.0"` —— 分类页整页空。
+     */
+    private static final com.google.gson.Gson GSON =
+        new com.google.gson.GsonBuilder()
+            .setObjectToNumberStrategy(com.google.gson.ToNumberPolicy.LONG_OR_DOUBLE)
+            .create();
+
     private final FrameCodec codec;
     private final Map<String, SpiderBridge.Instance> instances =
         new ConcurrentHashMap<>();
@@ -49,13 +63,36 @@ public final class Main {
 
     /** 主入口。 */
     public static void main(String[] args) {
+        // ⚠️ 必须在**任何**代码有机会写 System.out 之前把协议流抓下来。
+        //
+        // 蜘蛛 jar（以及它拖进来的第三方库）会大量直接 System.out.println ——
+        // 实测 csp_Jpys 每取一次数就打印一行 `ddyy{...}` 的原始响应。这些字节会
+        // 插进 LSP 帧流中间，宿主的分帧器读到不合规的 header 就报
+        // 「分帧错误: 非法 UTF-8 header」，**之后所有请求全废** —— 界面上就是
+        // 「所有站点均无法连接」，而单看某一条请求的返回码全是 200。
+        //
+        // 所以：协议只走这里保存下来的原始 stdout；System.out 改指向 stderr，
+        // 蜘蛛的调试输出仍然看得见（宿主会排空子进程 stderr，见
+        // packages/spider_host 的 defaultProcessLauncher）。
+        //
+        // 顺带把两条诊断流都钉成 **UTF-8**。Windows 上 PrintStream 的默认编码是
+        // 平台 ANSI（中文系统即 GBK），而宿主侧 `_forwardChildStderr` 是按 UTF-8
+        // 解码的 —— 不改就会把中文日志全解成 U+FFFD，而蜘蛛打印的原始响应正是
+        // 「服务端到底回了什么」的唯一线索，全是乱码等于没有。这里必须显式传
+        // charset，`System.setOut(PrintStream)` 这个重载只在 Java 10+ 才有。
+        java.io.PrintStream protocolOut = System.out;
+        java.io.PrintStream diagnostics = new java.io.PrintStream(
+            System.err, true, java.nio.charset.StandardCharsets.UTF_8);
+        System.setOut(diagnostics);
+        System.setErr(diagnostics);
+
         java.io.File cacheDir = new java.io.File(
             System.getProperty("java.io.tmpdir"), "mistream-jvm-jars");
         JarLoader loader = new JarLoader(cacheDir, classpathEntries());
         // 宿主上下文必须是 Application：jar 里的 Init 会把 context 直接
         // checkcast 成 android.app.Application 再存起来（见 SpiderBridge#initHost）
         SpiderBridge bridge = new SpiderBridge(loader, new android.app.Application());
-        Main runtime = new Main(codecFrom(args), bridge);
+        Main runtime = new Main(codecFrom(args, protocolOut), bridge);
         try {
             runtime.run();
         } catch (UncheckedIOException e) {
@@ -78,9 +115,9 @@ public final class Main {
      * 注：走这条路径时宿主用 {@code javaw.exe}（GUI 子系统）而不是 {@code java.exe}，
      * 否则控制台程序会新分配一个控制台窗口弹到用户桌面上。
      */
-    private static FrameCodec codecFrom(String[] args) {
+    private static FrameCodec codecFrom(String[] args, java.io.PrintStream protocolOut) {
         Integer port = parsePort(args);
-        if (port == null) return new FrameCodec();
+        if (port == null) return new FrameCodec(System.in, protocolOut);
         try {
             java.net.Socket socket = new java.net.Socket();
             socket.setTcpNoDelay(true);
@@ -93,7 +130,7 @@ public final class Main {
         } catch (IOException e) {
             System.err.println("[jvm] 回连端口 " + port + " 失败: " + e);
             System.exit(2);
-            return new FrameCodec();
+            return new FrameCodec(System.in, protocolOut);
         }
     }
 
@@ -143,7 +180,7 @@ public final class Main {
 
     private Map<String, Object> decode(String raw) {
         try {
-            Object o = new com.google.gson.Gson().fromJson(raw, Object.class);
+            Object o = GSON.fromJson(raw, Object.class);
             if (o instanceof Map) {
                 Map<String, Object> out = new LinkedHashMap<>();
                 for (Map.Entry<?, ?> e : ((Map<?, ?>) o).entrySet()) {
@@ -295,7 +332,7 @@ public final class Main {
 
     private void write(Map<String, Object> msg) {
         try {
-            codec.writeFrame(new com.google.gson.Gson().toJson(msg));
+            codec.writeFrame(GSON.toJson(msg));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

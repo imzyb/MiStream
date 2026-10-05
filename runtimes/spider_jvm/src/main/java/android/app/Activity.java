@@ -36,6 +36,31 @@ public class Activity extends Context {
         // no-op
     }
 
+    /**
+     * 是否正在销毁 —— 恒 false。
+     *
+     * <p>源用它在异步回调里判断「界面还在不在，要不要更新 UI」。恒 false
+     * 让源继续走正常分支；恒 true 会让它提前 return，把后面的业务逻辑
+     * （包括取数据）一起跳过。
+     */
+    public boolean isDestroyed() {
+        return false;
+    }
+
+    /**
+     * 是否正在结束 —— 恒 false。
+     *
+     * <p>同 {@link #isDestroyed()}：恒 false 才让源把流程走完。
+     */
+    public boolean isFinishing() {
+        return false;
+    }
+
+    /** 是否已暂停 —— 恒 false。 */
+    public boolean isPaused() {
+        return false;
+    }
+
     @Override
     public PackageManager getPackageManager() {
         return new PackageManager();

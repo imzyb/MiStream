@@ -36,6 +36,36 @@ public final class Build {
     public static final String HARDWARE = "pc";
     /** Android ID。 */
     public static final String FINGERPRINT = "mistream/pc:13/x86_64";
+    /**
+     * 版本标识串。
+     *
+     * <p>源常把它拼进 User-Agent 或请求参数做设备指纹。必须非 null ——
+     * 很多源是 {@code "..." + Build.ID + "..."} 这种直接拼接，null 会拼出
+     * 字面量 {@code "null"} 混进参数里，让服务端判定参数非法。
+     */
+    public static final String ID = "MISTREAM.20240101.001";
+    /** 显示名（用户可见的版本串）。 */
+    public static final String DISPLAY = ID;
+    /** 宿主名。 */
+    public static final String HOST = "mistream";
+    /** 编译标签。 */
+    public static final String TAGS = "release-keys";
+    /** 构建类型。 */
+    public static final String TYPE = "user";
+    /** 启动加载器版本。 */
+    public static final String BOOTLOADER = "unknown";
+    /** 主板。 */
+    public static final String BOARD = "mistream";
+    /** 序列号（Android 10+ 已不可读）。 */
+    public static final String SERIAL = "unknown";
     /** 架构。 */
     public static final String SUPPORTED_ABIS[] = {"x86_64", "x86"};
+    /** 32 位架构。 */
+    public static final String SUPPORTED_32_BIT_ABIS[] = {"x86"};
+    /** 64 位架构。 */
+    public static final String SUPPORTED_64_BIT_ABIS[] = {"x86_64"};
+    /** CPU 架构（旧字段）。 */
+    public static final String CPU_ABI = "x86_64";
+    /** CPU 架构 2（旧字段）。 */
+    public static final String CPU_ABI2 = "x86";
 }

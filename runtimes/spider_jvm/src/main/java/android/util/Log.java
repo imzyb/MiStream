@@ -43,6 +43,46 @@ public final class Log {
         return 1;
     }
 
+    /**
+     * 按优先级打日志。
+     *
+     * <p>这是 android.util.Log 的**底层入口** —— 真实 Android 上 {@code d/i/w/e}
+     * 内部就是调它。很多源（以及 okhttp 的 android 平台适配层）会直接调
+     * {@code println}，缺了它会在调用点抛 NoSuchMethodError。
+     *
+     * @param priority 优先级（见 {@code Log.VERBOSE..ASSERT}）
+     */
+    public static int println(int priority, String tag, String msg) {
+        System.err.println("[" + priorityName(priority) + ":" + tag + "] "
+                + (msg == null ? "" : msg));
+        return 1;
+    }
+
+    /** 判断某优先级是否会被输出 —— 恒 true，保证源的调试分支能跑到。 */
+    public static boolean isLoggable(String tag, int level) {
+        return true;
+    }
+
+    /** 取优先级名。 */
+    public static String getStackTraceString(Throwable tr) {
+        if (tr == null) return "";
+        java.io.StringWriter sw = new java.io.StringWriter();
+        tr.printStackTrace(new java.io.PrintWriter(sw));
+        return sw.toString();
+    }
+
+    private static String priorityName(int priority) {
+        switch (priority) {
+            case 2: return "V";
+            case 3: return "D";
+            case 4: return "I";
+            case 5: return "W";
+            case 6: return "E";
+            case 7: return "A";
+            default: return String.valueOf(priority);
+        }
+    }
+
     private static int log(String tag, String msg) {
         System.err.println("[Log:" + tag + "] " + (msg == null ? "" : msg));
         return 1;
