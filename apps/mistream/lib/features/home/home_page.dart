@@ -18,6 +18,7 @@ import 'package:mistream/features/common/common.dart'
         ResponsiveHorizontalList;
 import 'package:mistream/features/home/widgets/home_section.dart';
 import 'package:mistream/features/home/widgets/media_card.dart';
+import 'package:mistream/features/home/widgets/recommend_row.dart';
 import 'package:search_engine/search_engine.dart';
 
 /// 全局装配实例，供首页使用。
@@ -444,27 +445,14 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
 
-                  // 推荐轮播
+                  // 推荐轮播。必须用 RecommendRow（内部是
+                  // ResponsiveHorizontalList），不能在这里裸写横向 ListView ——
+                  // 原因见 RecommendRow 的文档注释：无界宽度会让 MediaCard 撑成
+                  // 无限宽，整行渲染成空白。
                   if (_recommends.isNotEmpty)
-                    HomeSection(
-                      title: '为你推荐',
-                      child: SizedBox(
-                        height: 200,
-                        child: ListView.builder(
-                          scrollDirection: Axis.horizontal,
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          itemCount: _recommends.length,
-                          itemBuilder: (context, index) {
-                            final item = _recommends[index];
-                            return MediaCard(
-                              title: item.vodName,
-                              coverUrl: item.vodPic,
-                              remarks: item.vodRemarks,
-                              onTap: () => _navigateToDetail(item),
-                            );
-                          },
-                        ),
-                      ),
+                    RecommendRow(
+                      items: _recommends,
+                      onTap: _navigateToDetail,
                     ),
 
                   // 分类网格
