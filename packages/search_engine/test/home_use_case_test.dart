@@ -10,7 +10,12 @@ import 'package:storage/storage.dart';
 import 'package:test/test.dart';
 
 class _HomeRuntime implements SpiderRuntime {
-  _HomeRuntime(this.body, {this.failHome = false, this.onHome});
+  _HomeRuntime(
+    this.body, {
+    this.failHome = false,
+    this.onHome,
+    this.categoryBody,
+  });
 
   final String body;
 
@@ -26,6 +31,9 @@ class _HomeRuntime implements SpiderRuntime {
   /// 分辨不出来的：建运行时超时被掐掉、和建成功但取数失败，两者对调用次数
   /// 的贡献一样。
   final void Function()? onHome;
+
+  /// `category()` 的响应体；不给则 `category()` 抛 `UnimplementedError`。
+  final String? categoryBody;
 
   int homeCalls = 0;
 
@@ -50,8 +58,19 @@ class _HomeRuntime implements SpiderRuntime {
   }
 
   @override
-  Future<Result<HttpResponseData, AppError>> category() =>
-      throw UnimplementedError();
+  Future<Result<HttpResponseData, AppError>> category() async {
+    final b = categoryBody;
+    if (b == null) throw UnimplementedError();
+    return Ok(
+      HttpResponseData(
+        status: 200,
+        headers: const {},
+        body: b,
+        finalUrl: '',
+        elapsedMs: 1,
+      ),
+    );
+  }
 
   @override
   Future<Result<HttpResponseData, AppError>> categoryDetail({
@@ -193,6 +212,14 @@ Future<(AppDatabase, int)> _newDb(String rawHash) async {
 const _okBody =
     '{"class":[{"type_id":"1","type_name":"电影"}],'
     '"list":[{"vod_id":"42","vod_name":"测试影片"}]}';
+
+/// `csp_PanXunlei.home` 的**真实**响应（105 字节，2026-10-05 实测）：
+/// `list` 是空的，`class` 里那唯一一条是**提示语不是分类**。
+///
+/// 这就是「答了 ≠ 答了数据」的标本 —— 站点返回 200 + 完全合法的 JSON，
+/// 按「第一个 Ok 就收」会让首页永久停在一张「请去登录」的卡片上。
+const String _loginCardBody =
+    '{"class":[{"type_id":"0","type_name":"还未登录迅雷账号,请前往【配置中心】登录","type_flag":"1"}],"list":[],"parse":0,"jx":0}';
 
 void main() {
   test(
@@ -677,5 +704,131 @@ void main() {
 
     expect(await useCase.getWorkingSite(), isNotNull);
     expect(useCase.workingSiteId, id.id);
+  });
+
+  // ── 「答了」≠「答了数据」（2026-10-05 冷启动实测暴露） ────────────────────
+  //
+  // `csp_PanXunlei` 的 home 返回 200 + 合法 JSON，但 `list` 空、`class` 里只有
+  // 一句「还未登录迅雷账号」。按「第一个 Ok 就收」，首页会永久停在这么一张
+  // 卡片上 —— 用户看到的就是「这个站点不能用」，而它跟连接、超时、转换都无关。
+
+  test('第一个站点「答了但没内容」时继续往下试，落到有内容的站点', () async {
+    final (db, configId) = await _newDb('empty-first');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-login',
+      name: '需要登录的源',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_Login',
+      priority: 20,
+    );
+    final good = await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-good',
+      name: '有内容的源',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_Good',
+      priority: 10,
+    );
+    final factory = _HomeFactory(
+      _HomeRuntime(_okBody),
+      runtimeBuilder: (i) => _HomeRuntime(i == 0 ? _loginCardBody : _okBody),
+    );
+    final useCase = HomeUseCase(sites, runtimeFactory: factory);
+
+    final result = await useCase.getHomeData();
+
+    expect(result.isOk, isTrue);
+    expect(
+      factory.createCalls,
+      2,
+      reason:
+          '第一个源只答了一句「请去登录」，必须继续往下试 —— '
+          '「第一个 Ok 就收」正是把首页钉死在那张卡片上的原因',
+    );
+    expect(result.valueOrNull!.recommends.single.vodId, '42');
+    expect(
+      useCase.workingSiteId,
+      good.id,
+      reason: 'workingSite 要落在真正有内容的源上，否则详情页导航会挂在空源上',
+    );
+  });
+
+  test('所有站点都「答了但没内容」：返回兜底，而不是谎报「无法连接」', () async {
+    final (db, configId) = await _newDb('all-empty');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    for (final (key, priority) in const [('a', 20), ('b', 10)]) {
+      await _insertSite(
+        sites,
+        configId: configId,
+        siteKey: 'csp-$key',
+        name: '登录源 ${key.toUpperCase()}',
+        typeCode: 3,
+        runtime: 'jvm',
+        api: 'csp_${key.toUpperCase()}',
+        priority: priority,
+      );
+    }
+    final factory = _HomeFactory(_HomeRuntime(_loginCardBody));
+    final useCase = HomeUseCase(sites, runtimeFactory: factory);
+
+    final result = await useCase.getHomeData();
+
+    expect(
+      result.isOk,
+      isTrue,
+      reason:
+          '站点明明答了 200，报「所有站点均无法连接」是不实描述 —— '
+          '会把排查方向引到网络/运行时上',
+    );
+    expect(result.valueOrNull!.recommends, isEmpty);
+    expect(
+      result.valueOrNull!.categories.single.typeName,
+      contains('还未登录迅雷账号'),
+      reason: '兜底返回的内容原样透出，用户至少知道要去登录',
+    );
+    expect(factory.createCalls, 2, reason: '两个站点都要试过才判定「全都没内容」');
+    expect(useCase.workingSiteId, isNotNull);
+  });
+
+  test('getCategories 跳过「分类为空」的站点', () async {
+    final (db, configId) = await _newDb('cat-empty');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    for (final (key, priority) in const [('a', 20), ('b', 10)]) {
+      await _insertSite(
+        sites,
+        configId: configId,
+        siteKey: 'csp-$key',
+        name: '源 ${key.toUpperCase()}',
+        typeCode: 3,
+        runtime: 'jvm',
+        api: 'csp_${key.toUpperCase()}',
+        priority: priority,
+      );
+    }
+    final factory = _HomeFactory(
+      _HomeRuntime(_okBody),
+      runtimeBuilder: (i) => _HomeRuntime(
+        _okBody,
+        categoryBody: i == 0
+            ? '{"list":[]}'
+            : '{"class":[{"type_id":"1","type_name":"电影"}]}',
+      ),
+    );
+    final useCase = HomeUseCase(sites, runtimeFactory: factory);
+
+    final result = await useCase.getCategories();
+
+    expect(result.isOk, isTrue);
+    expect(factory.createCalls, 2, reason: '第一个源返回空分类，必须继续往下试');
+    expect(result.valueOrNull!.single.typeName, '电影');
   });
 }

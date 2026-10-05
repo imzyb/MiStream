@@ -277,17 +277,40 @@ class HomeUseCase {
   static String _noSiteMessage(int? siteId) =>
       siteId == null ? '无可用站点' : '所选片源不可用（缺少运行时或已停用）';
 
-  /// 尝试用指定站点列表执行操作，返回第一个成功的结果。
+  /// 尝试用指定站点列表执行操作，返回第一个**被 [accept] 认可**的结果。
   ///
   /// 失败时汇总前几个站点的真实错误，避免把「所有站点均无法连接」这种
   /// 无信息量的消息抛给用户。
+  ///
+  /// [accept] 为什么必要 —— **「答了」不等于「答了数据」**。实测
+  /// `csp_PanXunlei` 的 `home` 返回 200 + 完全合法的 JSON：
+  ///
+  /// ```json
+  /// {"class":[{"type_id":"0","type_name":"还未登录迅雷账号,请前往【配置中心】登录",
+  ///            "type_flag":"1"}],
+  ///  "list":[],"parse":0,"jx":0}
+  /// ```
+  ///
+  /// `list` 是空的，`class` 里那唯一一条是**提示语不是分类**。按「第一个 Ok 就
+  /// 收」，首页会永久停在这么一张「请去登录」的卡片上，用户看到的就是
+  /// 「首页没内容 / 这个站点不能用」—— 而这跟连接、超时、转换统统无关。
+  ///
+  /// 现在遇到这种站点：**记下来当兜底，继续往下试**，直到某个站点真的给出
+  /// 可解析的内容。全都给不出内容时返回兜底的那个 —— 那时至少「站点答了」是
+  /// 事实，比报「所有站点均无法连接」（明显不实）准确。
+  ///
+  /// 不传 [accept] 时保持原语义（第一个 Ok 就收），调用方按需选择。
   Future<Result<HttpResponseData, AppError>> _trySites(
     List<Site> siteList,
     Future<Result<HttpResponseData, AppError>> Function(SpiderRuntime runtime)
-    action,
-  ) async {
+    action, {
+    bool Function(String body)? accept,
+  }) async {
     final stopwatch = Stopwatch()..start();
     final errors = <String>[];
+    // 第一个「答了但没内容」的响应，以及它是哪个站点给的。
+    Result<HttpResponseData, AppError>? fallback;
+    Site? fallbackSite;
     // 还没为任何一个 JVM 站点建过运行时。第一次可能要付那笔一次性的
     // dex→java 转换，所以给它更长的超时、并把这段耗时从探测预算里剔除。
     //
@@ -321,8 +344,15 @@ class HomeUseCase {
         ).timeout(timeouts.request);
         await runtime.dispose();
         if (result.isOk) {
-          workingSite = site;
-          return result;
+          final body = result.valueOrNull!.body;
+          if (accept == null || accept(body)) {
+            workingSite = site;
+            return result;
+          }
+          fallback ??= result;
+          fallbackSite ??= site;
+          errors.add('${site.name}: 响应里没有可用内容');
+          continue;
         }
         errors.add('${site.name}: ${result.errorOrNull?.message}');
       } on Object catch (e) {
@@ -334,6 +364,10 @@ class HomeUseCase {
         errors.add('${site.name}: $e');
       }
     }
+    if (fallback != null) {
+      workingSite = fallbackSite;
+      return fallback;
+    }
     final samples = errors.take(3).join('；');
     return Err(
       RemoteError(
@@ -343,11 +377,34 @@ class HomeUseCase {
     );
   }
 
+  /// 首页响应里是否**真的有内容**（至少一条推荐）。
+  ///
+  /// 只看 `list`：首页的主体是海报墙，`list` 空就是「没有首页内容」。而
+  /// `class` 不能作为判据 —— 上面 `csp_PanXunlei` 那个例子正说明 `class` 里
+  /// 可以塞一句提示语。只带 `class` 不带 `list` 的站点（如 `csp_Djuu`）会
+  /// 因此被跳过，但那是**有意的**：它给不出海报，让位给能给海报的站点，
+  /// 用户看到的东西更多；全都给不出时还有 [fallback] 兜着。
+  bool _hasHomeContent(String body) =>
+      _parseList(body, null).valueOrNull?.isNotEmpty ?? false;
+
+  /// 分类响应里是否真的有分类。
+  bool _hasCategories(String body) =>
+      _parseCategories(body).valueOrNull?.isNotEmpty ?? false;
+
+  /// 分类详情响应里是否真的有影片。
+  bool _hasCategoryItems(String body, int page) =>
+      _parseCategoryDetail(body, page, null).valueOrNull?.items.isNotEmpty ??
+      false;
+
   /// 获取第一个可用站点（用于详情页导航）。
   ///
   /// 与 [_trySites] **同一套超时策略**：首个 JVM 站点拿长超时（覆盖一次性的
   /// dex→java 转换）。早先这里既不给 `_createRuntime` 加超时、又把请求写死成
   /// 5 秒，冷缓存下要么无限等、要么在别的站点上白等 —— 两条路都和首页不一致。
+  ///
+  /// 判据也和首页一致：**答了不等于答了数据**，用 [_hasHomeContent] 而不是
+  /// 「result.isOk」。否则一个「请去登录」的站点会被当成可用站点记进
+  /// `workingSite`，详情页导航就挂在一个取不到详情的源上。
   Future<Site?> getWorkingSite() async {
     final siteList = await _getEnabledSites();
     var jvmCold = true;
@@ -363,7 +420,7 @@ class HomeUseCase {
         if (isJvm) jvmCold = false;
         final result = await runtime.home().timeout(timeouts.request);
         await runtime.dispose();
-        if (result.isOk) {
+        if (result.isOk && _hasHomeContent(result.valueOrNull!.body)) {
           workingSite = site;
           return site;
         }
@@ -386,11 +443,12 @@ class HomeUseCase {
         ),
       );
     }
-    final result = await _trySites(siteList, (runtime) => runtime.home());
-    return result.fold(
-      (ok) => _parseList(ok.body, ok.finalUrl),
-      Err.new,
+    final result = await _trySites(
+      siteList,
+      (runtime) => runtime.home(),
+      accept: _hasHomeContent,
     );
+    return result.fold((ok) => _parseList(ok.body, ok.finalUrl), Err.new);
   }
 
   /// 获取分类列表。
@@ -404,11 +462,12 @@ class HomeUseCase {
         ),
       );
     }
-    final result = await _trySites(siteList, (runtime) => runtime.category());
-    return result.fold(
-      (ok) => _parseCategories(ok.body),
-      Err.new,
+    final result = await _trySites(
+      siteList,
+      (runtime) => runtime.category(),
+      accept: _hasCategories,
     );
+    return result.fold((ok) => _parseCategories(ok.body), Err.new);
   }
 
   /// 获取首页完整数据（推荐 + 分类），单次 API 调用。
@@ -434,7 +493,11 @@ class HomeUseCase {
         ),
       );
     }
-    final result = await _trySites(siteList, (runtime) => runtime.home());
+    final result = await _trySites(
+      siteList,
+      (runtime) => runtime.home(),
+      accept: _hasHomeContent,
+    );
     return await result.fold(
       (ok) async {
         final base = ok.finalUrl.isNotEmpty
@@ -450,6 +513,7 @@ class HomeUseCase {
           final catResult = await _trySites(
             siteList,
             (runtime) => runtime.category(),
+            accept: _hasCategories,
           );
           catResult.fold(
             (ok2) {
@@ -494,6 +558,7 @@ class HomeUseCase {
     final result = await _trySites(
       siteList,
       (runtime) => runtime.categoryDetail(typeId: typeId, page: page),
+      accept: (body) => _hasCategoryItems(body, page),
     );
     return result.fold(
       (ok) {
