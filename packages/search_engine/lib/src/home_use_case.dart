@@ -249,23 +249,76 @@ class HomeUseCase {
     // 于是 105 个 csp_ 站点会被挨个去试、把 30s 探测预算烧光还全失败。
     // 现在用与分发同一把尺子（classifySiteRuntime）先筛掉。
     final usable = enabled.where(_siteHasRuntime).toList();
-    // HTTP 类（type=1/4）优先：零脚本，通常最快可用；JS 类排后作兜底，
-    // 避免首页被大量 JS 源拖慢。
-    usable.sort((a, b) {
-      final aHttp =
-          classifySiteRuntime(typeCode: a.typeCode, api: a.api) ==
-              SiteRuntimeKind.http
-          ? 0
-          : 1;
-      final bHttp =
-          classifySiteRuntime(typeCode: b.typeCode, api: b.api) ==
-              SiteRuntimeKind.http
-          ? 0
-          : 1;
-      final byKind = aHttp.compareTo(bHttp);
-      return byKind != 0 ? byKind : b.priority.compareTo(a.priority);
-    });
+    usable.sort(_compareSites);
     return usable;
+  }
+
+  /// 站点探测顺序：**上次成功的 → HTTP 类 → 配置优先级 → id 升序**。
+  ///
+  /// 最后那条 `id` 兜底不是装饰，它是「有时能用有时不能用」的解药。
+  ///
+  /// 这份真实配置 **103 个站点全是 `priority = 0`**，而 Dart 的 `List.sort`
+  /// 对**对等键是不稳定的**（元素数 > 32 时走 dual-pivot quicksort，不是
+  /// 插入排序）。没有兜底键时，「第一个被试的站点是谁」由快排的内部交换决定 ——
+  /// 输入一样时它确定，但只要 `enabled()` 的行序有任何扰动（SQLite 无
+  /// `ORDER BY` 的返回序、配置重导入后的 rowid 变化），首页就会换一个站点，
+  /// 用户看到的就是「昨天能用今天不能用」。**加一条全序兜底，行为就钉死了。**
+  ///
+  /// 第一条（`lastOkAt`）让顺序**自我收敛**：首次启动挨个试出来的那个能用的
+  /// 站点，下一次启动直接排到最前。见 [_recordSuccess]。
+  static int _compareSites(Site a, Site b) {
+    final aOk = a.lastOkAt;
+    final bOk = b.lastOkAt;
+    if (aOk != null || bOk != null) {
+      if (aOk == null) return 1;
+      if (bOk == null) return -1;
+      final byRecency = bOk.compareTo(aOk);
+      if (byRecency != 0) return byRecency;
+    }
+    // HTTP 类（type=1/4）优先：零脚本，通常最快可用；JS/JVM 类排后作兜底，
+    // 避免首页被大量脚本源拖慢。
+    final aHttp =
+        classifySiteRuntime(typeCode: a.typeCode, api: a.api) ==
+            SiteRuntimeKind.http
+        ? 0
+        : 1;
+    final bHttp =
+        classifySiteRuntime(typeCode: b.typeCode, api: b.api) ==
+            SiteRuntimeKind.http
+        ? 0
+        : 1;
+    final byKind = aHttp.compareTo(bHttp);
+    if (byKind != 0) return byKind;
+    final byPriority = b.priority.compareTo(a.priority);
+    if (byPriority != 0) return byPriority;
+    return a.id.compareTo(b.id);
+  }
+
+  /// 记下「这个站点刚刚取数成功」。
+  ///
+  /// `site` 表里 `status` / `last_ok_at` / `last_latency_ms` 这几列**从 v1 就
+  /// 在**，`SiteRepository.updateStatus` 也早就写好 —— 但全仓库**没有任何代码
+  /// 调用它**（属 `docs/CODE_AUDIT_*.md` 那类「声明了却没人用」的缺口）。
+  /// 后果就是 [_compareSites] 里说的：排序只能靠 `priority`，而这份配置 103 个
+  /// 站点全是 0，等于没排。
+  ///
+  /// 现在把成功落库，下次启动把上次成功的站点排到最前。
+  ///
+  /// **失败不记**，这是刻意的：失败的成因多半在站点侧或上游（要登录、限流、
+  /// 改版），拿一个会过期的计数去熔断站点，比不熔断更糟 —— 用户会看着一个
+  /// 明明恢复了的站点被永久跳过。`_trySites` 本来就会挨个往下试，兜底已经有了。
+  Future<void> _recordSuccess(Site site, Duration elapsed) async {
+    try {
+      await sites.updateStatus(
+        site.id,
+        status: 'ok',
+        lastOkAt: DateTime.now().toUtc(),
+        lastLatencyMs: elapsed.inMilliseconds,
+      );
+    } on Object {
+      // 记状态是**优化**，不是正确性的一部分：写库失败绝不能把一次已经成功的
+      // 取数变成失败，更不能把首页的异常往上抛。
+    }
   }
 
   /// 取不到站点列表时的错误文案。
@@ -327,6 +380,10 @@ class HomeUseCase {
           classifySiteRuntime(typeCode: site.typeCode, api: site.api) ==
           SiteRuntimeKind.jvm;
       final needsWarmUp = isJvm && jvmCold;
+      // 这个站点自己的耗时（建运行时 + 取数）。`stopwatch` 是整轮探测的预算
+      // 计时器、而且会被 reset，拿它记 `last_latency_ms` 会记成前几个站点的
+      // 累计值。
+      final siteWatch = Stopwatch()..start();
       SpiderRuntime? runtime;
       try {
         runtime = await _createRuntime(site).timeout(
@@ -347,6 +404,7 @@ class HomeUseCase {
           final body = result.valueOrNull!.body;
           if (accept == null || accept(body)) {
             workingSite = site;
+            await _recordSuccess(site, siteWatch.elapsed);
             return result;
           }
           fallback ??= result;
@@ -412,6 +470,7 @@ class HomeUseCase {
       final isJvm =
           classifySiteRuntime(typeCode: site.typeCode, api: site.api) ==
           SiteRuntimeKind.jvm;
+      final siteWatch = Stopwatch()..start();
       SpiderRuntime? runtime;
       try {
         runtime = await _createRuntime(site).timeout(
@@ -422,6 +481,7 @@ class HomeUseCase {
         await runtime.dispose();
         if (result.isOk && _hasHomeContent(result.valueOrNull!.body)) {
           workingSite = site;
+          await _recordSuccess(site, siteWatch.elapsed);
           return site;
         }
       } on Object {

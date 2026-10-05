@@ -128,6 +128,12 @@ class _HomeFactory implements SpiderRuntimeFactory {
   /// 只断言返回错误是不够的，旧实现在报错前会先撞满 8s 的建运行时超时。
   int createCalls = 0;
 
+  /// `create` 收到的 `api`，**按调用先后**。
+  ///
+  /// 用来断言探测顺序 —— 顺序是「首页由哪个站点供数」的唯一可观测量，
+  /// 也是「有时能用有时不能用」的观察点。
+  final List<String> createdApis = <String>[];
+
   @override
   HostApi get hostApi => throw UnimplementedError();
 
@@ -158,6 +164,7 @@ class _HomeFactory implements SpiderRuntimeFactory {
   }) async {
     final index = createCalls;
     createCalls++;
+    createdApis.add(api);
     if (index < createDelays.length) {
       await Future<void>.delayed(createDelays[index]);
     }
@@ -830,5 +837,120 @@ void main() {
     expect(result.isOk, isTrue);
     expect(factory.createCalls, 2, reason: '第一个源返回空分类，必须继续往下试');
     expect(result.valueOrNull!.single.typeName, '电影');
+  });
+
+  // ── 探测顺序：为什么「有时能用有时不能用」 ─────────────────────────────────
+  //
+  // 这份真实配置 **103 个站点全是 `priority = 0`**，而 Dart 的 `List.sort`
+  // 对**对等键不稳定**（>32 元素走 dual-pivot quicksort）。没有全序兜底时
+  // 「先试哪个」等于随机，首页跟着换站点。
+
+  test('上次成功取过数的站点排到最前（哪怕 priority 更低）', () async {
+    final (db, configId) = await _newDb('lastok-first');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-stale',
+      name: '没成功过的源',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_Stale',
+      priority: 50,
+    );
+    final proven = await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-proven',
+      name: '上次成功的源',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_Proven',
+      priority: 0,
+    );
+    await sites.updateStatus(
+      proven.id,
+      status: 'ok',
+      lastOkAt: DateTime.utc(2026, 10, 5, 12),
+    );
+
+    final factory = _HomeFactory(_HomeRuntime(_okBody));
+    final useCase = HomeUseCase(sites, runtimeFactory: factory);
+
+    await useCase.getHomeData();
+
+    expect(
+      factory.createdApis,
+      ['csp_Proven'],
+      reason: '`priority` 高的那个反而排在后面 —— 顺序要由「上次成功」决定，否则同一份配置每次启动的首页可能来自不同站点',
+    );
+    expect(useCase.workingSiteId, proven.id);
+  });
+
+  test('成功取数后把 last_ok_at 落库（下次启动才能收敛）', () async {
+    final (db, configId) = await _newDb('record-ok');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    final site = await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-ok',
+      name: '源',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_Ok',
+    );
+    expect((await sites.byId(site.id))!.lastOkAt, isNull);
+
+    final useCase = HomeUseCase(
+      sites,
+      runtimeFactory: _HomeFactory(_HomeRuntime(_okBody)),
+    );
+    await useCase.getHomeData();
+
+    final after = await sites.byId(site.id);
+    expect(
+      after!.lastOkAt,
+      isNotNull,
+      reason:
+          '`site` 表的 status/last_ok_at/last_latency_ms 与 '
+          'SiteRepository.updateStatus 早就存在，但一直没人调用 —— '
+          '不落库，排序就永远只能靠 priority（这份配置全是 0）',
+    );
+    expect(after.status, 'ok');
+    expect(after.lastLatencyMs, isNotNull);
+  });
+
+  test('priority 全相同时探测顺序按 id 升序，不是快排的任意排列', () async {
+    final (db, configId) = await _newDb('stable-order');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    // 40 > 32，Dart 的 List.sort 走 dual-pivot quicksort，对等键不稳定。
+    for (var i = 0; i < 40; i++) {
+      await _insertSite(
+        sites,
+        configId: configId,
+        siteKey: 'csp-$i',
+        name: '源 $i',
+        typeCode: 3,
+        runtime: 'jvm',
+        api: 'csp_S$i',
+      );
+    }
+    // 全部只答「请去登录」，于是 40 个都会被试到 —— 顺序完整可观察。
+    final factory = _HomeFactory(_HomeRuntime(_loginCardBody));
+    final useCase = HomeUseCase(sites, runtimeFactory: factory);
+
+    await useCase.getHomeData();
+
+    expect(factory.createdApis, hasLength(40));
+    final rows = await sites.enabled(searchable: false);
+    rows.sort((a, b) => a.id.compareTo(b.id));
+    expect(
+      factory.createdApis,
+      [for (final s in rows) s.api],
+      reason: '必须有一个全序的兜底键，否则「先试哪个」由快排的内部交换决定',
+    );
   });
 }
