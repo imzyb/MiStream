@@ -353,17 +353,28 @@ class HomeUseCase {
   /// 事实，比报「所有站点均无法连接」（明显不实）准确。
   ///
   /// 不传 [accept] 时保持原语义（第一个 Ok 就收），调用方按需选择。
+  ///
+  /// [fallbackRank] 是给「首选判据比兜底判据更严、而兜底本身还分好坏」的场景
+  /// 用的：返回分数，越高越优先，**分数相同时保留先遇到的那个**。不传时按 0 算，
+  /// 即「任何 `isOk` 的响应都能兜底」（等价于旧行为）。
+  ///
+  /// 为什么兜底要分档而不是「第一个答了 200 的就兜」—— 首页有三种「答了但不
+  /// 完整」的形态，价值差得很远：有海报没分类（海报墙能用）、有分类没海报
+  /// （首页基本是空的）、只有一句提示语。只留一个兜底槽时，先遇到哪个就兜哪个，
+  /// `csp_Gulu`（12 个分类、0 张海报）会盖过 `csp_Douban`（20 张海报、0 个分类）。
   Future<Result<HttpResponseData, AppError>> _trySites(
     List<Site> siteList,
     Future<Result<HttpResponseData, AppError>> Function(SpiderRuntime runtime)
     action, {
     bool Function(String body)? accept,
+    int Function(String body)? fallbackRank,
   }) async {
     final stopwatch = Stopwatch()..start();
     final errors = <String>[];
-    // 第一个「答了但没内容」的响应，以及它是哪个站点给的。
+    // 当前最好的「答了但没内容」的响应，以及它是哪个站点给的。
     Result<HttpResponseData, AppError>? fallback;
     Site? fallbackSite;
+    var fallbackRankBest = -1;
     // 还没为任何一个 JVM 站点建过运行时。第一次可能要付那笔一次性的
     // dex→java 转换，所以给它更长的超时、并把这段耗时从探测预算里剔除。
     //
@@ -407,8 +418,13 @@ class HomeUseCase {
             await _recordSuccess(site, siteWatch.elapsed);
             return result;
           }
-          fallback ??= result;
-          fallbackSite ??= site;
+          // 「答了但没内容」的响应：按 [fallbackRank] 择优留下，继续往下试。
+          final rank = fallbackRank?.call(body) ?? 0;
+          if (rank > fallbackRankBest) {
+            fallbackRankBest = rank;
+            fallback = result;
+            fallbackSite = site;
+          }
           errors.add('${site.name}: 响应里没有可用内容');
           continue;
         }
@@ -439,15 +455,57 @@ class HomeUseCase {
   ///
   /// 只看 `list`：首页的主体是海报墙，`list` 空就是「没有首页内容」。而
   /// `class` 不能作为判据 —— 上面 `csp_PanXunlei` 那个例子正说明 `class` 里
-  /// 可以塞一句提示语。只带 `class` 不带 `list` 的站点（如 `csp_Djuu`）会
-  /// 因此被跳过，但那是**有意的**：它给不出海报，让位给能给海报的站点，
-  /// 用户看到的东西更多；全都给不出时还有 [fallback] 兜着。
+  /// 可以塞一句提示语。只带 `class` 不带 `list` 的站点（实测 45 个，如
+  /// `csp_Gulu`）会因此被跳过，但那是**有意的**：它给不出海报，让位给能给
+  /// 海报的站点，用户看到的东西更多；全都给不出时还有 [_homeFallbackRank]
+  /// 兜着（它给这类站点打 1 分）。
   bool _hasHomeContent(String body) =>
       _parseList(body, null).valueOrNull?.isNotEmpty ?? false;
 
   /// 分类响应里是否真的有分类。
   bool _hasCategories(String body) =>
       _parseCategories(body).valueOrNull?.isNotEmpty ?? false;
+
+  /// 一次 `home` 是否**同时**给出了推荐和分类。
+  ///
+  /// 为什么首页的首选判据要用它，而不是「有推荐就行」——
+  ///
+  /// 2026-10-05 实测 103 个站点的 `home` 形状（`.workbuddy-ai/scripts/
+  /// _probe_home_shape.dart`）：
+  ///
+  /// | 形状             | 个数 | 例子                                        |
+  /// | ---------------- | ---- | ------------------------------------------- |
+  /// | 两行齐全         | 4    | `csp_ShortHema` / `csp_Duboku` / `csp_SaoHuo` / `csp_TingJinxia` |
+  /// | 只有推荐         | 1    | `csp_Douban`（`class` 为空数组）             |
+  /// | 只有分类         | 45   | `csp_Gulu`（`list` 为空数组）                |
+  /// | 都没有 / 失败    | 53   | —                                           |
+  ///
+  /// 只要求「有推荐」时，首页会选中 `csp_Douban`：它的 `class` 是空的，于是
+  /// 触发**跨站回填**去问另一个站点的 `category()`；回填成功会把 `workingSite`
+  /// 改成那个站点。结果顶栏显示的站点名和推荐的实际来源不是同一个，
+  /// `_navigateToDetail` 拿到的 `siteId` 是错的 —— 首页看起来有 9 张卡片，
+  /// 点任何一张都必然失败。而且豆瓣的 `home` 其实是**搜索页**（`vod_id` 形如
+  /// `msearch:37068446`），它的 `detail` 本来就取不到东西。
+  ///
+  /// 要求两行齐全，等于要求「这个站点自己就能把首页两行都供上」，从根上避免
+  /// 跨站拼接。全都做不到时由 [fallbackAccept] 兜到「有推荐」的站点。
+  bool _hasCompleteHome(String body) =>
+      _hasHomeContent(body) && _hasCategories(body);
+
+  /// 「答了但不完整」的首页响应值多少分（越高越优先）。
+  ///
+  /// 只有首选判据 [_hasCompleteHome] 全落空时才会用到这个分数。分档依据是
+  /// **用户能拿它做什么**：
+  ///
+  /// - `2` 有海报没分类 —— 海报墙可用、点进去有详情，只是少了分类入口；
+  /// - `1` 有分类没海报 —— 首页主体是空的，只剩导航；
+  /// - `0` 两者都没有 —— 只有一句提示语（`csp_PanXunlei` 的「请去登录」），
+  ///   透出它是为了让用户知道该去登录，而不是看到「所有站点均无法连接」。
+  int _homeFallbackRank(String body) {
+    if (_hasHomeContent(body)) return 2;
+    if (_hasCategories(body)) return 1;
+    return 0;
+  }
 
   /// 分类详情响应里是否真的有影片。
   bool _hasCategoryItems(String body, int page) =>
@@ -535,6 +593,11 @@ class HomeUseCase {
   /// Apple CMS v2 的 `?ac=videolist` 返回 `{list: [...], class: [...]}`，
   /// 同时包含推荐和分类。一次调用比 `getHome()` + `getCategories()` 更快且
   /// 保证使用同一个站点。
+  ///
+  /// **两行必须来自同一个站点**，这是硬约束而不是优化：`workingSite` 只有
+  /// 一个，而 `_navigateToDetail` 用它给详情页定源。推荐来自 A、分类来自 B
+  /// 时，点 A 的卡片会拿 B 的 siteId 去查 A 的 `vod_id`，必然查不到。首选
+  /// 判据 [accept] 因此用 [_hasCompleteHome]（见那里的实测表格）。
   Future<Result<HomeData, AppError>> getHomeData({int? siteId}) async {
     final cacheKey = siteId != null ? 'site:$siteId' : 'auto';
     final cached = _homeCache[cacheKey];
@@ -556,7 +619,11 @@ class HomeUseCase {
     final result = await _trySites(
       siteList,
       (runtime) => runtime.home(),
-      accept: _hasHomeContent,
+      // 首选「两行齐全」；一个都没有时按 [_homeFallbackRank] 择优兜底 ——
+      // 最差的情况（只有一句提示语）也照样兜，免得把「站点答了 200」谎报成
+      // 「所有站点均无法连接」。
+      accept: _hasCompleteHome,
+      fallbackRank: _homeFallbackRank,
     );
     return await result.fold(
       (ok) async {
@@ -568,10 +635,16 @@ class HomeUseCase {
         if (recommends.isErr) return Err(recommends.errorOrNull!);
         if (categories.isErr) return Err(categories.errorOrNull!);
         var catList = categories.valueOrNull!;
-        // 部分源 videolist 不带 class，尝试用 category 接口补全
-        if (catList.isEmpty) {
+        // 部分源 videolist 不带 class，尝试用 category 接口补全。
+        //
+        // **只问 [workingSite] 自己**，不遍历整个站点列表：跨站补全拿到的分类
+        // 不属于给推荐的那个站点，点进去会用错的 siteId（`_navigateToCategoryDetail`
+        // 走 `_currentSite`，也就是 `workingSite`）。宁可分类行空着，也不要一排
+        // 点了就出错的入口。
+        final owner = workingSite;
+        if (catList.isEmpty && owner != null) {
           final catResult = await _trySites(
-            siteList,
+            [owner],
             (runtime) => runtime.category(),
             accept: _hasCategories,
           );
@@ -715,17 +788,30 @@ class HomeUseCase {
           ),
         );
       }
-      final items = list.map((item) {
+      final items = <CategoryItem>[];
+      for (final item in list) {
         final map = item is Map<String, Object?>
             ? item
             : (item is Map
                   ? Map<String, Object?>.from(item)
                   : <String, Object?>{});
-        return CategoryItem(
-          typeId: '${map['type_id'] ?? ''}',
-          typeName: (map['type_name'] as String?) ?? '',
-        );
-      }).toList();
+        final typeId = '${map['type_id'] ?? ''}';
+        final typeName = '${map['type_name'] ?? ''}';
+        // **必须同时有 id 和名字才算一条分类。**
+        //
+        // 上面那条 `list` fallback 是为 `category()` 响应准备的，但它在
+        // **videolist 形状**的响应上会误判：实测 `csp_Gulu.category()` 返回的是
+        // `{"list":[{"vod_id":"902056","vod_name":"兰香如故",...}, ...]}` ——
+        // 一份**影片**列表。旧实现照单全收，产出几十条
+        // `CategoryItem(typeId: '902056', typeName: '')`，`_hasCategories` 又
+        // 只看「非空」，于是首页「分类」行渲染成一排**没有文字的空白灰块**，
+        // 而站点身份也被这次回填改掉了（见 [getHomeData]）。
+        //
+        // 丢掉不满足的条目而不是整条响应报错：一个响应里混着合法分类和噪声
+        // 时，前者仍然可用。
+        if (typeId.isEmpty || typeName.isEmpty) continue;
+        items.add(CategoryItem(typeId: typeId, typeName: typeName));
+      }
       return Ok(items);
     } on Object catch (e) {
       return Err(

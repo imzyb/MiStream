@@ -104,6 +104,7 @@ class _HomeFactory implements SpiderRuntimeFactory {
     this.supportedTypeCodes,
     this.createDelays = const <Duration>[],
     this.runtimeBuilder,
+    this.runtimesByApi,
   });
 
   final SpiderRuntime runtime;
@@ -123,6 +124,14 @@ class _HomeFactory implements SpiderRuntimeFactory {
 
   /// 按调用序号产出 runtime；给定时覆盖 [runtime]。
   final SpiderRuntime Function(int index)? runtimeBuilder;
+
+  /// 按 `api` 产出 runtime，优先于 [runtimeBuilder]。
+  ///
+  /// 探测是**按站点逐个**发生的，而且同一个站点可能被 `create` 多次（首页取数
+  /// 一次、分类回填一次）。用序号绑 runtime 会把「同一站点被建了两次」错当成
+  /// 「两个不同站点」—— 断言「回填只问了一个站点」时正好会踩到。按 `api` 绑就
+  /// 不会。
+  final Map<String, SpiderRuntime>? runtimesByApi;
 
   /// `create` 被调用了几次。用来断言「缺运行时的源根本没被拿去建运行时」——
   /// 只断言返回错误是不够的，旧实现在报错前会先撞满 8s 的建运行时超时。
@@ -168,7 +177,7 @@ class _HomeFactory implements SpiderRuntimeFactory {
     if (index < createDelays.length) {
       await Future<void>.delayed(createDelays[index]);
     }
-    return runtimeBuilder?.call(index) ?? runtime;
+    return runtimesByApi?[api] ?? runtimeBuilder?.call(index) ?? runtime;
   }
 
   @override
@@ -227,6 +236,31 @@ const _okBody =
 /// 按「第一个 Ok 就收」会让首页永久停在一张「请去登录」的卡片上。
 const String _loginCardBody =
     '{"class":[{"type_id":"0","type_name":"还未登录迅雷账号,请前往【配置中心】登录","type_flag":"1"}],"list":[],"parse":0,"jx":0}';
+
+/// `csp_Douban.home` 的**真实形状**（2026-10-05 实测，20 条推荐 / 0 个分类）：
+/// `class` 是**空数组**，`list` 里是 20 条搜索结果。
+///
+/// 它是「只有推荐」那唯一一个站点，也是跨站回填的触发器 —— 旧实现拿到它之后
+/// 会去问别的站点的 `category()`，把 `workingSite` 改成那个站点。
+const String _recommendsOnlyBody =
+    '{"class":[],"list":[{"vod_id":"42","vod_name":"只有海报"}]}';
+
+/// `csp_Gulu.home` 的**真实形状**（2026-10-05 实测，0 条推荐 / 12 个分类）：
+/// `list` 是**空数组**，`class` 里有 12 个带名字的分类。它是「只有分类」那
+/// 45 个站点之一。
+const String _categoriesOnlyBody =
+    '{"class":[{"type_id":"movie","type_name":"电影"}],'
+    '"list":[],"filters":{}}';
+
+/// `csp_Gulu.category()` 的**真实响应**（2026-10-05 实测，3727 字节）：
+/// 一份**影片**列表，没有 `class`、没有 `type_id`/`type_name`。
+///
+/// 这是 `_parseCategories` 那条 `list` fallback 的陷阱标本 —— 旧实现把每条
+/// 影片都当成一条分类，产出 `CategoryItem(typeId:'902056', typeName:'')`，
+/// 首页「分类」行于是渲染成一排**没有文字的空白灰块**。
+const String _videoListAsCategoriesBody =
+    '{"list":[{"vod_id":"902056","vod_name":"兰香如故","vod_remarks":"已完结"},'
+    '{"vod_id":"948475","vod_name":"余红旧事","vod_remarks":"已完结"}]}';
 
 void main() {
   test(
@@ -952,5 +986,219 @@ void main() {
       [for (final s in rows) s.api],
       reason: '必须有一个全序的兜底键，否则「先试哪个」由快排的内部交换决定',
     );
+  });
+
+  // ── 首页两行必须来自同一个站点 ─────────────────────────────────────────────
+  //
+  // 2026-10-05 实测 103 个站点的 `home` 形状（`_probe_home_shape.dart`）：
+  // 两行齐全 4 个、只有推荐 1 个（`csp_Douban`）、只有分类 45 个（`csp_Gulu`
+  // 是其一）、其余 53 个都没有或失败。
+  //
+  // 只要求「有推荐」时，首页会选中 `csp_Douban`（`class` 为空数组）→ 触发跨站
+  // 回填 → 回填成功把 `workingSite` 改成另一个站点。结果：顶栏站点名与推荐的
+  // 实际来源不一致，`_navigateToDetail` 拿到的 `siteId` 是错的 —— 首页看起来
+  // 有 9 张卡片，点任何一张都必然失败。
+
+  test('首选「一次 home 同时给出推荐和分类」的站点，哪怕它排在后面', () async {
+    final (db, configId) = await _newDb('prefer-complete');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-partial',
+      name: '只有海报的源',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_Partial',
+      priority: 10,
+    );
+    final full = await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-full',
+      name: '两行齐全的源',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_Full',
+      priority: 5,
+    );
+    final factory = _HomeFactory(
+      _HomeRuntime(_okBody),
+      runtimesByApi: {
+        'csp_Partial': _HomeRuntime(_recommendsOnlyBody),
+        'csp_Full': _HomeRuntime(_okBody),
+      },
+    );
+    final useCase = HomeUseCase(sites, runtimeFactory: factory);
+
+    final result = await useCase.getHomeData();
+
+    expect(
+      factory.createdApis,
+      ['csp_Partial', 'csp_Full'],
+      reason: '第一个源只给了海报没给分类，不能就此收工 —— 它会让两行来自不同站点',
+    );
+    expect(useCase.workingSiteId, full.id);
+    expect(result.valueOrNull!.recommends.single.vodId, '42');
+    expect(
+      result.valueOrNull!.categories.single.typeName,
+      '电影',
+      reason: '两行必须同源：分类得来自真正供数的那一个站点',
+    );
+  });
+
+  test('全是「答了但不完整」时，兜底选有海报的那个，不是先遇到的那个', () async {
+    final (db, configId) = await _newDb('fallback-rank');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-notice',
+      name: '只有提示语的源',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_Notice',
+      priority: 10,
+    );
+    final poster = await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-poster',
+      name: '只有海报的源',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_Poster',
+      priority: 5,
+    );
+    final factory = _HomeFactory(
+      _HomeRuntime(_loginCardBody),
+      runtimesByApi: {
+        'csp_Notice': _HomeRuntime(_loginCardBody),
+        'csp_Poster': _HomeRuntime(_recommendsOnlyBody),
+      },
+    );
+    final useCase = HomeUseCase(sites, runtimeFactory: factory);
+
+    final result = await useCase.getHomeData();
+
+    expect(
+      factory.createdApis.take(2),
+      ['csp_Notice', 'csp_Poster'],
+      reason: '两个站点都要试过才判定「没有两行齐全的站点」（第 3 次是分类回填，见下条用例）',
+    );
+    expect(
+      result.valueOrNull!.recommends.single.vodId,
+      '42',
+      reason: '兜底要按「用户能拿它做什么」分档：有海报（2 分）胜过只有提示语（1 分）。只留一个兜底槽时，先遇到的提示语会盖住后面的海报墙',
+    );
+    expect(useCase.workingSiteId, poster.id);
+  });
+
+  test('分类回填只在供数站点上做，不去问别的站点', () async {
+    final (db, configId) = await _newDb('no-cross-site');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    final poster = await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-poster',
+      name: '只有海报的源',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_Poster',
+      priority: 10,
+    );
+    await _insertSite(
+      sites,
+      configId: configId,
+      siteKey: 'csp-cats',
+      name: '只有分类的源',
+      typeCode: 3,
+      runtime: 'jvm',
+      api: 'csp_Cats',
+      priority: 5,
+    );
+    final factory = _HomeFactory(
+      _HomeRuntime(_okBody),
+      runtimesByApi: {
+        // 供数站点自己的 category() 给的是一份**影片列表**（csp_Gulu 的真实形状）。
+        'csp_Poster': _HomeRuntime(
+          _recommendsOnlyBody,
+          categoryBody: _videoListAsCategoriesBody,
+        ),
+        // 另一个站点有真分类 —— 旧实现会去问它，然后把 workingSite 改成它。
+        'csp_Cats': _HomeRuntime(
+          _categoriesOnlyBody,
+          categoryBody: '{"class":[{"type_id":"1","type_name":"电影"}]}',
+        ),
+      },
+    );
+    final useCase = HomeUseCase(sites, runtimeFactory: factory);
+
+    final result = await useCase.getHomeData();
+
+    expect(
+      useCase.workingSiteId,
+      poster.id,
+      reason:
+          '推荐来自海报源，`workingSite` 就必须是它 —— 被回填改成分类源之后，`_navigateToDetail` 会拿错的 siteId 去查 `msearch:` 这种 vod_id',
+    );
+    expect(
+      result.valueOrNull!.categories,
+      isEmpty,
+      reason: '影片列表不是分类，一条都不该透出来（否则渲染成一排空白灰块）',
+    );
+    expect(
+      factory.createdApis.where((a) => a == 'csp_Cats'),
+      hasLength(1),
+      reason: '分类源只在首页探测里被建过一次，回填不该再去问它',
+    );
+  });
+
+  test('分类接口返回影片列表时跳过该站点，不产出没有名字的分类', () async {
+    final (db, configId) = await _newDb('videolist-not-categories');
+    addTearDown(db.close);
+    final sites = SiteRepository(db);
+    for (final (key, priority) in const [('a', 20), ('b', 10)]) {
+      await _insertSite(
+        sites,
+        configId: configId,
+        siteKey: 'csp-$key',
+        name: '源 ${key.toUpperCase()}',
+        typeCode: 3,
+        runtime: 'jvm',
+        api: 'csp_${key.toUpperCase()}',
+        priority: priority,
+      );
+    }
+    final factory = _HomeFactory(
+      _HomeRuntime(_okBody),
+      runtimesByApi: {
+        // csp_Gulu.category() 的真实响应：一份影片列表。
+        'csp_A': _HomeRuntime(
+          _okBody,
+          categoryBody: _videoListAsCategoriesBody,
+        ),
+        'csp_B': _HomeRuntime(
+          _okBody,
+          categoryBody: '{"class":[{"type_id":"1","type_name":"电影"}]}',
+        ),
+      },
+    );
+    final useCase = HomeUseCase(sites, runtimeFactory: factory);
+
+    final result = await useCase.getCategories();
+
+    expect(
+      factory.createCalls,
+      2,
+      reason:
+          '影片列表里没有 type_id/type_name，一条分类都算不上 —— '
+          '必须继续往下试，而不是把「兰香如故」当成分类收下',
+    );
+    expect(result.valueOrNull!.single.typeName, '电影');
+    expect(result.valueOrNull!.single.typeId, '1');
   });
 }
