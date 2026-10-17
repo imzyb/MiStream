@@ -2,14 +2,14 @@
 
 > 本文件只做一件事：对照 [ROADMAP.md](ROADMAP.md) 的**出口标准**报告真实状态。
 > 每个勾都指向可复现的证据（测试文件/命令/提交）。未验证的一律不勾。
-> 更新：2026-10-01
+> 更新：2026-10-17
 
 ## 总览
 
 | 里程碑 | 出口标准 | 状态 |
 | --- | --- | --- |
 | M0 工程奠基 | 4/4 | ✅ 完成 |
-| M1 播放内核 | 0/7 | ⏸ 依赖真实播放矩阵 |
+| M1 播放内核 | 1/7 | ⏸ 网络 HLS + UA/Referer 透传已验；其余待真实播放矩阵 |
 | M2 数据层 | 4/5 | 🟢 迁移/备份/导入导出均已自动化验证；冷启动 50ms 阈值待基准机确认 |
 | M3 RPC + Spider 骨架 | 5/6 | 🟢 仅剩真实 type=1 源 |
 | M4 JS 运行时 | 5/6 | 🟢 仅剩真实源 |
@@ -19,13 +19,21 @@
 | M8 下载与离线 | 1/5 | 🟡 持久化/恢复/续传已接入并有证据，其余卡真实网络与播放器 |
 | M9 插件系统与主题 | 6/6 | 🟢 出口标准全勾；交付物仍缺主题包安装链路/插件中心 UI |
 | M10 发布工程 | 0/6 | 🟡 发布链草稿已就位 |
-| M11-M15 | — | 🔴 未启动 |
+| M11-M15 | — | 🔴 未启动（**例外：M15 的 JVM 运行时已进产线**，见下注） |
 
-> **口径说明**：上表的「出口标准 0 勾」不等于「代码未实现」。M1/M2 的实现
-> 与测试早已齐备（player_engine 142 用例、storage 54 用例），其出口标准
-> 之所以为 0，是因为条目本身要求**人工在真实环境验证**（硬解实测、2 小时
-> 长跑、迁移回滚、冷启动性能），而非缺代码。详见
+> **口径说明**：上表的「出口标准大多未勾」不等于「代码未实现」。M1/M2 的实现
+> 与测试早已齐备（player_engine 144 用例、storage 54 用例），那些条目之所以
+> 没勾，是因为它们要求**人工在真实环境验证**（硬解实测、2 小时长跑、迁移回滚、
+> 冷启动性能），而非缺代码。详见
 > [进度审计报告](docs/PROGRESS_AUDIT_2026-09-19.md)。
+
+> ⚠️ **M15 的口径要单独看**：ROADMAP 把 `runtimes/spider_jvm` 排在 v2.0 的
+> 「实验性运行时」，并明确「不进 v1.0 出口标准」。但这份真实配置 **103 个站点
+> 全是 `type=3` + `csp_`（JVM）**，一行 JS 都不走 —— 也就是说 **JVM 运行时
+> 不是实验性附加项，而是当前唯一让产品可用的东西**（2026-10-05 起，整组可用
+> 54/103，而在此之前的可用数是 0）。M15 的出口标准仍未勾（缺 Python 运行时、
+> 缺 `NativeMpvEngine`），但「JVM 运行时是否可用」这个问题已经有答案了。
+> 里程碑排序与真实需求的这处错配，见文末「2026-10-05」一节的说明。
 
 ## M0 · 工程奠基 ✅
 
@@ -33,6 +41,28 @@
 - [x] CI 三平台通过
 - [x] `core_domain` 无 Flutter/IO 依赖
 - [x] 日志脱敏 URL token
+
+## M1 · 播放内核 ⏸
+
+出口标准共 7 条，已勾 1 条。**没有勾的那些是「缺真实环境验证」，不是「缺代码」**
+—— `player_engine` 有 144 个用例，契约测试齐备。
+
+- [x] 网络 HLS 流可播，自定义 UA/Referer 正确透传 —— 2026-10-05 实测，
+      两层证据：
+      ① `.workbuddy-ai/scripts/_verify_play_e2e.dart` 跑生产 `PlayUseCase`，
+         `csp_YunDuo` 六条线路 **6/6** 都取到真 m3u8 且 HTTP 200（87K–116K 字节）；
+      ② `.workbuddy-ai/scripts/_probe_mpv_play.py` 用便携包的 `libmpv-2.dll`
+         直接 `loadfile`，应用下发的 `UA + Referer` 能打开：
+         `file-loaded duration=6368.2 秒`。
+      反盗链的 Referer 与站点域名不同（`43.248.3.46:7788` vs `323433ssdfd.top`），
+      所以这条同时证明了「头确实透传到位」。
+- [ ] 本地 H.264 / HEVC 1080p 硬解 + `hwdec-current` 正确显示 — 需真实片源与 GPU 实测
+- [ ] 硬解失败自动降级软解 + 用户可见提示 — 降级链已实现并单测，缺真机触发
+- [ ] 外挂 SRT/ASS 字幕加载与切换 — 缺真实字幕样本
+- [ ] 契约测试全绿 — 本机 `flutter test` 跑不了（`flutter_tester` WebSocket 失败），
+      只能由 CI 的 `melos run test:flutter` 证明
+- [ ] 连续播放 2 小时 RSS 波动 < 10% — 需长跑
+- [ ] 用真实构建产物校准体积预算 — 待发布工程（M10）
 
 ## M3 · RPC 与 Spider 骨架 🟢
 
@@ -2877,3 +2907,121 @@ INFO  missing_whitespace_between_adjacent_strings  tools/check_jvm_runtime_bundl
 
 
 
+---
+
+## 本次会话（2026-10-05）：把「站点全不可用」和「无法播放」两件事都修到能证伪
+
+这一天的目标只有一个：让用户报的**「所有站点都不能用」**和**「还是无法播放」**
+变成可复现、可验证的结论。八个提交，每个都对应一个具体的可观测症状。
+
+### ① 54918e4 补齐 JVM 宿主 shim 与转换缺陷
+
+`Context.getContentResolver()` 缺失导致 22 个 csp_ 类 `NoSuchMethodError`；
+Android JCE 认 `PKCS7Padding` 而桌面 JDK 不认（`NoSuchAlgorithmException`）；
+宿主 shim 的 interface/class 声明与 Android 不一致（`InterfaceMismatchScan`）；
+enjarify 的 `invoke-super` / 构造器 owner / `invoke-static` 三个语义缺陷。
+新增/完善了五个静态体检工具（`ShimGapScan` / `InitOwnerScan` / `SuperCallScan` /
+`InterfaceRefScan` / `VerifyAllScan`），**全部要喂转换后的 jar** —— 喂原始 jar
+会静默给「0 缺口」假绿。
+
+### ② c42f81e 修写串行化
+
+`StdioRpcChannel` 的写未串行化，并发下必炸
+`Bad state: StreamSink is bound to a stream` —— 这是 GUI 里「所有站点都不能用」
+的**直接**原因。同时把蜘蛛的 `System.out.println` 与 LSP 帧流隔离（`Main.main`
+把协议流单独保存、`System.setOut` 改道 stderr），否则一行调试输出就能让分帧器
+失步、之后所有请求全废。
+
+### ③ 5dfd1d6 冷启动超时
+
+`HomeUseCase` 建运行时只给 8s，而 JVM 首次 `create` 要付一次 ~48s 的
+dex→java 转换 → 103 个站点全报 `TimeoutException after 0:00:08`。现在首个
+JVM 站点给 90s（`ProbeTimeouts.firstJvmCreate`），且转换耗时不入探测预算。
+
+### ④ 1c04510 「答了」≠「答了数据」
+
+`_trySites` 原来「第一个 `isOk` 就收」，于是 `csp_PanXunlei` 那种
+「200 + 空 `list` + `class` 里塞一句『请去登录』」的站会把首页钉死。
+现在有 `accept` 判据 + 兜底，不满足就继续往下试。
+
+### ⑤ bd6e26f 横向列表的卡片必须有紧宽度
+
+`MediaCard` / `PosterImage` 是 `AspectRatio`，横向 `ListView` 给的是**无界宽度**
+→ release 下 `Size(inf, inf)`，第一项占掉无限宽、整行空白。横向一行改用
+`ResponsiveHorizontalList(itemWidth:)`。
+
+### ⑥ cbc305c 探测顺序：103 个站点全是 `priority = 0`
+
+三个事实叠在一起：全表 `priority = 0`；Dart 的 `List.sort` 对**对等键不稳定**
+（>32 元素走 dual-pivot quicksort）；`site` 表的健康度三列**从 v1 就在但没人写**。
+于是「今天能用明天不能用」。现在 `_compareSites` 是全序
+（`lastOkAt` 降序 → HTTP 优先 → `priority` 降序 → **`id` 升序**），
+并加 `_recordSuccess` 落库，让顺序自我收敛。
+
+### ⑦ 0b76e18 首页两行必须来自同一个站点
+
+`_parseCategories` 把 `category()` 的**影片列表**当分类（→ 空白灰块）；
+`accept: _hasHomeContent` 太松，选中 `csp_Douban`（它的 home 其实是搜索页）
+触发跨站回填；回填又把 `workingSite` 改成别的站点 → **点卡片必失败**。
+现在 `_hasCompleteHome`（一次 home 两行都要）+ 回填只问 `workingSite`
++ 兜底分档 `fallbackRank`。
+
+### ⑧ f1f9bd0 起播先问 `playerContent`
+
+**「无法播放」的根因**：`vod_play_url` 里的值**不一定是 URL**。`csp_YunDuo`
+六条线路全是蜘蛛私有占位符（`token@PAN1-…==@PAN1`、`token@zijian_…@zijianm3u8`），
+没有 scheme / host → 旧代码直接喂嗅探器 → `No host specified in URI` → 必然全灭。
+只有 `runtime.play(flag, ids)`（= TVBox 的 `playerContent`）能解，而且会**一并
+给出反盗链的 `Referer`**（`PO蓝光` 给 `http://43.248.3.46:7788`，与站点域名
+`323433ssdfd.top` 完全不同）。
+
+`PlayUseCase` 现在在嗅探之前逐条问 `runtime.play`：`parse:0` → `url` 就是流地址
+（直接返回 + 带上 `header`）；`parse:1` → 网页播放页（转交嗅探链）。
+两个语义分开：**一次超时**判「这个蜘蛛的 playerContent 不可用」→ 停止逐条问；
+**抛普通异常**只算这条没解出来 → 继续下一条。
+
+### 验收口径（这一天最重要的产出之一）
+
+⚠️ **`verify_prod_jvm.dart` 的链路是 home → categoryDetail → detail → search，
+从来没有 `play`** —— 所以此前所有「站点可用 54/103」的数字都**不能**证明能播。
+用户报的偏偏是播放。为此新增两个脚本：
+
+| 脚本 | 验什么 |
+| --- | --- |
+| `_verify_play_e2e.dart` | 生产 `PlayUseCase` + 真库副本，逐条线路取地址**并把地址真的 HTTP 拉一遍** |
+| `_probe_mpv_play.py` | 用便携包的 `libmpv-2.dll` 直接 `loadfile`，验 mpv 能否用应用下发的头打开 |
+
+结果：
+
+- 站点扫描（全量 103 组，生产装配直跑）：**整组可用 54/103**
+  （v9 基线 25）；home **91** / categoryDetail **73** / detail **60** / search **62**。
+  剩余失败几乎全在站点侧或上游（空响应、`spider.* 执行失败: null`），不是转换器缺陷。
+- 播放：`csp_YunDuo` **6/6 线路可播**，每条都 200 + 合法 HLS 清单；
+  mpv 侧 `file-loaded duration=6368.2 秒`。整条链闭合。
+- GUI：便携包热缓存启动，顶栏站点名与数据来源一致，推荐 9+ 张**海报真实加载**
+  的卡片 + 4 张带名字的分类。
+
+门禁：`as_client.py errors .` **0 条 / 364 文件**；`run_tests_shim.dart`
+**238 passed**（新增 6 例覆盖 `playerContent`）；`dart format` 0 changed。
+三条变异各自单独注入，分别只打中对应用例（关掉 `playerContent` 步骤 → 4 例红；
+放开 `_looksLikeHttpUrl` 闸门 → 占位符那例红；去掉超时短路 → 超时那例红）。
+
+### 这一天的教训
+
+1. **用户看到的是「一个」症状，底层可能是「一串」缺陷** —— 先逐环打通道链路，
+   再逐环修，每修一环跑同一批样本做前后对比。
+2. **验收脚本的覆盖范围本身就是缺陷来源**：`verify_prod_jvm` 不覆盖 `play`，
+   于是「首页好了」被当成「能用了」。
+3. **探针写错会得出反向结论**：用 `mpv_set_option_string("http-header-fields",
+   "A: 1,B: 2")` 传头时 mpv 按逗号切，而 UA 里就有逗号 → 400，一度误判成
+   「带 Referer 反而打不开」。必须复刻 media_kit 的 `MPV_FORMAT_NODE_ARRAY`。
+4. **播放地址短时效 + 近似一次性**：同一 URL 第一次能加载、之后必失败 ——
+   对照实验每条用例都要取新地址，且**起播前不要额外请求「预检」**（会烧掉 token）。
+
+### 里程碑排序的一处错配（待决策）
+
+ROADMAP 把 JVM 运行时放在 M15「实验性」，不进 v1.0 出口标准；但这份真实配置
+**103 个站点全是 JVM**。也就是说：**产品的可用性完全建立在一个「非出口标准」的
+组件上**。这不影响当前交付，但影响后续排期 —— 若要继续提升可用站点数，
+投入应该落在 JVM 侧（shim 覆盖、转换器缺陷），而不是 ROADMAP 认定的关键路径
+（M4 的 drpy 兼容层，这份配置一行 JS 都不走）。
