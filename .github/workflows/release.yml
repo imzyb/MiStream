@@ -75,9 +75,22 @@ jobs:
           $dst = "dist/mistream-${{ github.ref_name }}-windows-x64.zip"
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Compress-Archive -Path "$src/*" -DestinationPath $dst -Force
+      - name: 生成更新 feed（latest.json）
+        # 自动更新的客户端只认这个文件：版本号、包地址、sha256、字节数。
+        # 必须从**刚打出来的 zip** 算，不能手写 —— 生成器会用客户端那套解析器
+        # 回读一遍，两边漂移时这一步直接红，而不是等用户点「检查更新」才发现。
+        run: >
+          dart run tools/gen_update_feed.dart
+          --zip "dist/mistream-${{ github.ref_name }}-windows-x64.zip"
+          --tag "${{ github.ref_name }}"
+          --out dist/latest.json
       - name: 创建草稿 Release
         uses: softprops/action-gh-release@v3
         with:
           draft: true
           generate_release_notes: true
-          files: dist/*.zip
+          # latest.json 必须和 zip 一起发：客户端先取 feed 再下包，
+          # 少一个就等于「有更新但装不了」。
+          files: |
+            dist/*.zip
+            dist/latest.json

@@ -1,0 +1,22 @@
+name: updater
+description: >
+  自动更新链的**纯逻辑**部分：版本比较、更新 feed（latest.json）解析、
+  下载与校验。不含 UI，也不做文件替换 —— 替换与回滚需要「应用已退出」的
+  时机，单独一层（见 installer 的说明）。
+  M10 发布工程，见 ROADMAP.md。
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  # 更新包是 zip，校验要 sha256。两者都已在锁文件里（transitive），
+  # 这里改成直接依赖不引入新版本。
+  archive: ^4.3.0
+  crypto: ^3.0.7
+  path: ^1.9.0
+
+dev_dependencies:
+  test: ^1.31.0
