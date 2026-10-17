@@ -325,6 +325,8 @@ class SpiderJvmConfig {
     required this.runtimeJarPath,
     required this.libsDirPath,
     required this.jarCacheDir,
+    this.strictJarMd5 = false,
+    this.onJarMd5Mismatch,
   });
 
   /// java 可执行文件路径。
@@ -338,6 +340,24 @@ class SpiderJvmConfig {
 
   /// 下载的 spider jar 缓存目录。
   final Directory jarCacheDir;
+
+  /// jar 的 md5 与配置源声明不一致时，是否**硬失败**。默认 `false`（降级）。
+  ///
+  /// 那个 md5 是**第三方配置源**声明的校验值，不是我们自己算的。拿它当闸门
+  /// 会有一个很糟的失效模式：上游换了 jar 却没同步改配置，校验就永远不过，
+  /// **整个应用一个站点都用不了**。实测 2026-10-17：`xiaosa/spider.jar` 从
+  /// `c1ed419a…` 换成 `708a0bc0…`，库里 `spider_md5` 还是旧值，于是 103 个
+  /// 站点全部 `StateError: spider jar MD5 不匹配`，首页只剩骨架。
+  ///
+  /// 降级不等于放行：仍按**实际** md5 缓存（缓存失效语义照旧），并把差异通过
+  /// [onJarMd5Mismatch] 报出去。需要供应链强校验时把它打开。
+  final bool strictJarMd5;
+
+  /// md5 与配置源声明不一致时的回调（降级模式下调用）。
+  ///
+  /// `(期望值, 实际值, 来源 URL)`。
+  final void Function(String expected, String actual, String url)?
+  onJarMd5Mismatch;
 
   /// 拼接后的子进程 `-cp` 参数。
   ///
@@ -675,6 +695,19 @@ class SpiderRuntimeFactory {
     final target = File('${cacheDir.path}${Platform.pathSeparator}$name');
     if (target.existsSync()) return target.path;
 
+    // 上一次因为「配置源 md5 过期」而按**实际** md5 缓存过 → 直接复用，
+    // 否则每次启动都要重新下载 1.8MB，还会一直打上游。
+    final marker = File('${target.path}.actual');
+    if (marker.existsSync()) {
+      final actual = (await marker.readAsString()).trim();
+      if (actual.isNotEmpty) {
+        final real = File(
+          '${cacheDir.path}${Platform.pathSeparator}spider_$actual.jar',
+        );
+        if (real.existsSync()) return real.path;
+      }
+    }
+
     // 带重试的下载：网络抖动时最多重试 2 次（共 3 次尝试）
     List<int>? bytes;
     Object? lastError;
@@ -716,9 +749,24 @@ class SpiderRuntimeFactory {
     if (expectedMd5 != null && expectedMd5.isNotEmpty) {
       final actual = crypto.md5.convert(bytes).toString();
       if (actual != expectedMd5.toLowerCase()) {
-        throw StateError(
-          'spider jar MD5 不匹配: 期望 $expectedMd5 实际 $actual ($url)',
+        if (config.strictJarMd5) {
+          throw StateError(
+            'spider jar MD5 不匹配: 期望 $expectedMd5 实际 $actual ($url)',
+          );
+        }
+        // 配置源声明的 md5 过期 —— 这不是「拿到的 jar 坏了」，而是「配置没跟上
+        // 上游」。详见 [SpiderJvmConfig.strictJarMd5] 的说明。
+        //
+        // 仍按**实际** md5 缓存（缓存失效语义不变：配置源下次改 md5，期望名
+        // 就变了，会重新下载），并写一个 `.actual` 标记让下次启动直接命中。
+        config.onJarMd5Mismatch?.call(expectedMd5, actual, url);
+        await cacheDir.create(recursive: true);
+        final real = File(
+          '${cacheDir.path}${Platform.pathSeparator}spider_$actual.jar',
         );
+        await real.writeAsBytes(bytes, flush: true);
+        await marker.writeAsString(actual, flush: true);
+        return real.path;
       }
     }
     await cacheDir.create(recursive: true);

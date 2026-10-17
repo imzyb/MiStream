@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:spider_host/src/host/host_api.dart';
 import 'package:spider_host/src/runtime/spider_runtime_factory.dart';
 import 'package:test/test.dart';
@@ -275,7 +276,7 @@ void main() {
       );
     });
 
-    test('spider jar 下载后按 MD5 校验，不匹配报错', () async {
+    test('严格模式下 MD5 不匹配即报错，且不留下缓存', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(() => server.close(force: true));
       server.listen((request) {
@@ -298,6 +299,7 @@ void main() {
           runtimeJarPath: 'runtime.jar',
           libsDirPath: 'libs',
           jarCacheDir: cacheDir,
+          strictJarMd5: true,
         ),
         jvmLauncher: fakeLauncher,
       );
@@ -330,6 +332,126 @@ void main() {
           ? cacheDir.listSync().whereType<File>().toList()
           : <File>[];
       expect(cached, isEmpty);
+    });
+
+    test('md5 与配置源声明不一致时降级使用实际 jar，并按实际 md5 缓存', () async {
+      // 真实事故复现（2026-10-17）：上游把 spider.jar 从 c1ed419a… 换成
+      // 708a0bc0…，而配置源仍声明旧 md5。严格校验会让**所有** csp_ 站点
+      // StateError，首页只剩骨架 —— 一个第三方声明值不该有这种杀伤力。
+      var downloads = 0;
+      const payload = [0x01, 0x02, 0x03];
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) {
+        downloads++;
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..add(payload)
+          ..close();
+      });
+      final url = 'http://127.0.0.1:${server.port}/spider.jar';
+      final cacheDir = Directory(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        'jvm_md5_degrade_${DateTime.now().microsecondsSinceEpoch}',
+      );
+      addTearDown(() {
+        if (cacheDir.existsSync()) cacheDir.deleteSync(recursive: true);
+      });
+
+      final mismatches = <List<String>>[];
+      final factory = SpiderRuntimeFactory(
+        spiderJsPath: 'unused',
+        hostApi: HostApi(),
+        jvm: SpiderJvmConfig(
+          javaPath: 'java',
+          runtimeJarPath: 'runtime.jar',
+          libsDirPath: 'libs',
+          jarCacheDir: cacheDir,
+          onJarMd5Mismatch: (expected, actual, source) =>
+              mismatches.add([expected, actual, source]),
+        ),
+        jvmLauncher: fakeLauncher,
+      );
+      addTearDown(factory.dispose);
+
+      const declared = 'ffffffffffffffffffffffffffffffff';
+      final actual = crypto.md5.convert(payload).toString();
+
+      // 服务端只负责应答；JVM 宿主第二次会被复用，所以「握手帧」只在第一轮出现，
+      // 第二轮的 create 帧是同一个进程里的第 3 帧。
+      Future<void> serve(
+        Future<Object?> pending, {
+        required int totalFrames,
+        bool handshake = false,
+      }) async {
+        var waited = 0;
+        // create() 是异步的，launcher 可能还没跑起来 —— 先等进程出现。
+        while (processes.isEmpty && waited < 3000) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          waited += 20;
+        }
+        final p = processes.last;
+        if (handshake) {
+          while (p.stdinSink.written.isEmpty && waited < 3000) {
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+            waited += 20;
+          }
+          p.stdoutCtrl.add(
+            handshakeResponse(extractId(p.stdinSink.written[0])),
+          );
+        }
+        while (p.stdinSink.written.length < totalFrames && waited < 3000) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          waited += 20;
+        }
+        final frame = p.stdinSink.written.last;
+        expect(extractMethod(frame), 'spider.create');
+        p.stdoutCtrl.add(
+          resultResponse(extractId(frame), {
+            'capabilities': ['home'],
+          }),
+        );
+        await pending;
+      }
+
+      final first = factory.create(
+        typeCode: 3,
+        api: 'csp_Fan',
+        spiderJarUrl: url,
+        spiderJarMd5: declared,
+      );
+      await serve(first, totalFrames: 2, handshake: true);
+      expect(
+        await first,
+        isA<JvmRuntimeAdapter>(),
+        reason: '配置源的 md5 过期不该让站点不可用',
+      );
+      expect(downloads, 1);
+      expect(mismatches, hasLength(1));
+      expect(mismatches.single[0], declared);
+      expect(mismatches.single[1], actual);
+
+      // 缓存按**实际** md5 命名（配置源下次改 md5 时仍会重新下载，失效语义不变），
+      // 并留一个 `.actual` 标记，让下次启动直接命中而不是再下 1.8MB。
+      final names = cacheDir
+          .listSync()
+          .whereType<File>()
+          .map((f) => f.uri.pathSegments.last)
+          .toList();
+      expect(names, contains('spider_$actual.jar'));
+      expect(names, contains('spider_$declared.jar.actual'));
+
+      // 第二次：宿主复用（只写 create 帧），缓存命中 → 不再下载、不再报 mismatch
+      final second = factory.create(
+        typeCode: 3,
+        api: 'csp_Fan',
+        spiderJarUrl: url,
+        spiderJarMd5: declared,
+      );
+      await serve(second, totalFrames: 3);
+      expect(await second, isA<JvmRuntimeAdapter>());
+      expect(downloads, 1, reason: '每次启动重下 1.8MB 会一直打上游');
+      expect(mismatches, hasLength(1));
     });
   });
 }

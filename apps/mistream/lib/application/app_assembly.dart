@@ -274,6 +274,16 @@ class AppAssembly {
   /// 诊断：当前解析到的 JVM 配置；`null` 表示 JVM 不可用。
   static SpiderJvmConfig? debugJvmConfig() => _resolveJvmConfig();
 
+  /// 最近一次「配置源声明的 spider jar md5 过期」记录。
+  ///
+  /// `(期望值, 实际值, 来源 URL)`。非 `null` 意味着**当前跑在降级模式**：
+  /// 真正加载的 jar 不是配置源声明的那个。它是可用的（上游换了 jar 而配置没
+  /// 跟上），但供应链上确实「不是声明的那份」——排查时这两件事必须能分开看。
+  ///
+  /// 界面暂时没有位置显示它（诊断面板还是桩），先由
+  /// [debugJvmRuntimeReport] 带出来，等 AppEvents 接上再走通知。
+  static (String expected, String actual, String url)? lastJarMd5Mismatch;
+
   /// 诊断：JVM 运行时**为什么**可用/不可用。
   ///
   /// 逐条列出候选目录与命中情况。这条信息的价值在于区分四种病因 —— 它们在界面上
@@ -300,6 +310,13 @@ class AppAssembly {
     );
     final hitDir = _resolveJvmRuntimeDir();
     buffer.writeln('命中目录: ${hitDir?.path ?? '无'}');
+    final mismatch = lastJarMd5Mismatch;
+    if (mismatch != null) {
+      buffer.writeln(
+        'jar md5: 配置源声明 ${mismatch.$1} / 实际 ${mismatch.$2} '
+        '（不一致，已降级使用实际 jar；来源 ${mismatch.$3}）',
+      );
+    }
     var index = 0;
     for (final runtimeDir in _jvmRuntimeDirCandidates()) {
       index++;
@@ -366,6 +383,16 @@ class AppAssembly {
       jarCacheDir: Directory(
         '${Directory.systemTemp.path}${sep}mistream-jvm-spiders',
       ),
+      // md5 校验**默认降级**（见 SpiderJvmConfig.strictJarMd5）：那个 md5 来自
+      // 第三方配置源，硬失败会让「上游换了 jar 但配置没同步」变成「一个站点都
+      // 用不了」。降级但**不静默** —— 记下来，命令行启动时 stderr 也能看到。
+      onJarMd5Mismatch: (expected, actual, url) {
+        lastJarMd5Mismatch = (expected, actual, url);
+        stderr.writeln(
+          '[spider] spider jar md5 与配置源声明不一致，已降级使用实际 jar：期望 '
+          '$expected 实际 $actual（$url）',
+        );
+      },
     );
   }
 
