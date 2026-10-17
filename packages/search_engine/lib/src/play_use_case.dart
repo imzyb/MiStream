@@ -380,15 +380,34 @@ class PlayUseCase {
       return _PlayerContent(
         parse: (json['parse'] as num?)?.toInt() ?? 0,
         url: (json['url'] as String?) ?? '',
-        headers:
-            (json['header'] as Map?)?.map(
-              (k, v) => MapEntry(k.toString(), v.toString()),
-            ) ??
-            const {},
+        headers: _headerMap(json['header']),
       );
     } on Object {
       return null;
     }
+  }
+
+  /// 把 `playerContent` 的 `header` 归一成字符串映射。
+  ///
+  /// 形状**不一定是对象**：实测 `csp_AppQi` 给的是 JSON 字符串 ——
+  /// `"header":"{\"User-Agent\":\"…\",\"Referer\":\"…\"}"`。
+  /// 旧代码直接 `as Map?`，类型转换抛异常后被 [\_parsePlayerContent] 的
+  /// `catch` 吞掉，于是**连已经拿到的 `url` 一起作废**，整条线路白丢。
+  ///
+  /// 头只是锦上添花：解不出来就当没有，有 `url` 就还能试。
+  static Map<String, String> _headerMap(Object? raw) {
+    var decoded = raw;
+    if (raw is String && raw.trim().isNotEmpty) {
+      try {
+        decoded = jsonDecode(raw);
+      } on Object {
+        return const {};
+      }
+    }
+    if (decoded is! Map) return const {};
+    return {
+      for (final e in decoded.entries) e.key.toString(): e.value.toString(),
+    };
   }
 
   /// 是不是一个真的 http(s) 绝对地址。

@@ -606,6 +606,46 @@ void main() {
       );
     });
 
+    test('header 是 JSON 字符串时仍采用 url，并把头解出来', () async {
+      final sites = await _sitesWith();
+      final runtime = _FakeRuntime(
+        _tokenDetailBody(),
+        playBody: jsonEncode({
+          'parse': 0,
+          'url': 'https://cdn.a.com/direct/index.m3u8',
+          // 实测 `csp_AppQi` 就是这个形状：header 不是对象，而是**被再编码了
+          // 一次**的 JSON 字符串。旧代码 `as Map?` 抛类型错误 → 整条响应被判
+          // 成脏数据，连 url 一起丢掉。
+          'header': jsonEncode({
+            'User-Agent': 'UA-from-spider',
+            'Referer': 'https://cdn.a.com',
+          }),
+        }),
+      );
+      final fetcher = _FakeFetcher(const {});
+      final useCase = PlayUseCase(
+        sites,
+        runtimeFactory: _FakeFactory(runtime),
+        resolver: SnifferResolver(fetcher: fetcher.call),
+      );
+
+      final result = await useCase.getPlayableSource(
+        siteId: 1,
+        vodId: '42',
+        flag: 'PO蓝光',
+      );
+
+      expect(result.isOk, isTrue, reason: 'header 形状脏不该让整条线路作废');
+      final play = result.valueOrNull!;
+      expect(
+        play.mediaSource.uri.toString(),
+        'https://cdn.a.com/direct/index.m3u8',
+      );
+      expect(play.mediaSource.headers['Referer'], 'https://cdn.a.com');
+      expect(play.mediaSource.headers['User-Agent'], 'UA-from-spider');
+      expect(play.viaSniffing, isFalse);
+    });
+
     test('parse:1 的网页地址交给嗅探链换成真实流地址', () async {
       final sites = await _sitesWith();
       final runtime = _FakeRuntime(
