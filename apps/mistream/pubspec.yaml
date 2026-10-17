@@ -55,6 +55,10 @@ dependencies:
   # UTF-8 解会整篇乱码。纯 Dart，无第三方依赖。
   text_codec:
     path: ../../packages/text_codec
+  # 自动更新的纯逻辑：版本比较、feed 解析、下载校验、安装/回滚。
+  # 启动时要用它收尾上一次没走完的安装（`finishPendingUpdate`）。
+  updater:
+    path: ../../packages/updater
 
 dev_dependencies:
   flutter_test:

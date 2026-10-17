@@ -25,6 +25,7 @@ import 'package:search_engine/search_engine.dart';
 import 'package:sniffer/sniffer.dart';
 import 'package:source_adapter/source_adapter.dart';
 import 'package:spider_host/spider_host.dart';
+import 'package:updater/updater.dart';
 import 'package:storage/storage.dart';
 
 /// 应用层装配。
@@ -216,6 +217,37 @@ class AppAssembly {
   ///
   /// **恢复不自动续传**：这一步只把状态读回来，是否接着下由用户决定。
   Future<void> restoreDownloads() => downloadManager.restore();
+
+  /// 上一次自动更新的收尾：装成功了清现场，失败了**回滚**。
+  ///
+  /// 必须在起 UI **之前** await：回滚会把 `mistream.exe` / `data/app.so`
+  /// 换回旧版，界面一旦起来就是在「半新半旧」的文件上跑，症状是随机崩溃 ——
+  /// 那种崩溃查起来最贵。
+  ///
+  /// 没有待处理的安装时它立刻返回（只看 `<exe目录>/update/plan.json` 在不在），
+  /// 所以放在启动路径上是零成本的。
+  Future<void> finishPendingUpdate() async {
+    final installer = UpdateInstaller(
+      appDir: File(Platform.resolvedExecutable).parent,
+    );
+    try {
+      lastUpdateState = await installer.recoverIfNeeded();
+      if (lastUpdateState != null) {
+        stderr.writeln(
+          '[updater] 上一次更新收尾: ${lastUpdateState!.status.name}'
+          '${lastUpdateState!.error == null ? '' : '（${lastUpdateState!.error}）'}',
+        );
+      }
+    } on Object catch (e) {
+      // 收尾失败不能拦住启动：用户至少还能用旧版本，而且下次启动会再试。
+      stderr.writeln('[updater] 更新收尾失败: $e');
+    }
+  }
+
+  /// 上一次更新收尾的结果；`null` 表示没有待处理的安装。
+  ///
+  /// 留给 About / 更新入口展示（「已更新到 0.2.0」/「上次更新失败已回滚」）。
+  InstallState? lastUpdateState;
 
   /// 把 `PlayUseCase` 的结果压成「可下载的媒体源」。
   ///

@@ -37,6 +37,10 @@ Future<void> main() async {
   // （残留的「下载中」会降级成「已暂停」，等用户点继续）。
   await assembly.restoreDownloads();
 
+  // 上一次自动更新的收尾必须在起 UI 之前：失败要回滚，而回滚会把 exe / app.so
+  // 换回旧版。界面先起来的话，跑的就是「半新半旧」的文件。
+  await assembly.finishPendingUpdate();
+
   runApp(
     MiStreamApp(
       assembly: assembly,
