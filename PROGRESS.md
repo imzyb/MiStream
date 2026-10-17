@@ -3025,3 +3025,111 @@ ROADMAP 把 JVM 运行时放在 M15「实验性」，不进 v1.0 出口标准；
 组件上**。这不影响当前交付，但影响后续排期 —— 若要继续提升可用站点数，
 投入应该落在 JVM 侧（shim 覆盖、转换器缺陷），而不是 ROADMAP 认定的关键路径
 （M4 的 drpy 兼容层，这份配置一行 JS 都不走）。
+
+## 本次会话（2026-10-17）· 十一：把「能用」从 1 个站点推到「可度量」
+
+这一天的起点是「分析开发进度」，结论是三条：8 个提交只在本地、`PROGRESS.md`
+落后 12 天、**播放链路从来没进过验收**。于是按「先 push → 补文档 → 把 play
+纳入验收 → 扩到多站点 → M10」的顺序做。前两步已完成，第三步在做的过程中
+**挖出一个让 103 个站点全部瘫痪的线上回归**。
+
+### ① `a17ee35` 配置源声明的 jar md5 不该当启动闸门
+
+现象：首页只剩骨架，站点名就是「MiStream」本身，无卡片无分类。
+
+根因：`config_source.spider_md5` 声明 `c1ed419a…`，而上游
+`xiaosa/spider.jar` 已经变成 `708a0bc0…`。旧 `_ensureJar` 不匹配就
+`throw StateError` → **每个 csp_ 站点 create 都失败** → 一个都用不了。
+
+那个 md5 是**第三方**声明的校验值，不是我们自己算的。拿它当硬闸门，等于把
+「上游换了包、配置没跟上」升级成「产品不可用」。
+
+修法：`SpiderJvmConfig.strictJarMd5`（默认 `false`）。不匹配时
+
+- 按**实际** md5 缓存（`spider_708a0bc0….jar`）—— 缓存失效语义不变：配置源
+  下次改 md5，期望文件名就变了，会重新下载；
+- 写 `spider_<声明值>.jar.actual` 标记，下次启动直接命中，不再为了同一个不匹配
+  反复下 1.8MB；
+- 差异走 `onJarMd5Mismatch` → `AppAssembly.lastJarMd5Mismatch` + stderr，
+  `debugJvmRuntimeReport()` 会带出来。**降级但不静默。**
+
+⚠️ 别把「按实际 md5 命名」省掉。若沿用声明值的文件名，缓存层就再也看不见
+「jar 换了」，而 md5 恰恰是唯一能发现这件事的东西。
+
+### ② `e6d05ca` `header` 是 JSON 字符串时不该丢掉整条地址
+
+实测 `csp_AppQi` 的 `playerContent` 返回
+`{"parse":0,"url":"https://…m3u8","header":"{\"User-Agent\":\"…\"}"}` ——
+`header` 是被**再编码了一次**的 JSON 字符串。旧代码 `as Map?` 抛类型错误，
+被外层 `catch` 吞掉后 `_parsePlayerContent` 返回 `null`，于是**已经拿到的
+`url` 一起作废**，表现为「这个站点播不了」。
+
+头只是锦上添花：解不出来就当没有，有 `url` 就还能试。新增 `_headerMap`
+统一接受「Map / JSON 字符串 / 其它（当空）」。
+
+### ③ 验收口径：`play` 进脚本，并且**不预检**
+
+- `verify_prod_jvm.dart` 加了 `play` 段（`home → categoryDetail → detail →
+  search → play`）。判据是「detail 里有播放地址却解不出来」才算失败；detail
+  本身没给地址的站点只 SKIP —— 算失败会让「可用站点数」系统性偏低。
+- ⚠️ 脚本**只解析、不拉取**：播放地址短时效且近似一次性，多拉一次就烧掉 token。
+- 新增 `.workbuddy-ai/scripts/_verify_play_multi.dart`（本地工具，不入库）：
+  多站点跑「首页 → 分类 → 详情 → 取地址 → **真拉一次**」，分三档
+  `[OK]` 直接可播 / `[WEB]` 网页播放页 / `[FAIL]`。
+
+### ④ 十站点抽样（2026-10-17，生产装配直跑）
+
+| 站点 | api | 结果 |
+| --- | --- | --- |
+| 布布 • APP | csp_YunDuo | **OK** 1 条直链（真拉 200 + 合法 HLS）+ 1 条网页 |
+| 三六零 • 视频 | csp_SP360 | WEB 2 条（youku / iqiyi 播放页，走嗅探） |
+| 双星 • 动漫 | csp_App99 | FAIL 取到地址但 403（站点反盗链） |
+| 蓝鸟 • APP | csp_AppQi | FAIL VIP 403 / 量子 15s 超时（站点侧） |
+| 哔哩 • 视频 | csp_BiliYS | FAIL 地址指向 `127.0.0.1:255` 本地代理（见下） |
+| 马猴 • APP | csp_App3Q | FAIL 蜘蛛自己的 `detailContent` 抛 NPE |
+| 高中 • 课堂 | csp_Bili | FAIL home 空响应 |
+| 咕咕 • 动漫 | csp_AppGet | FAIL home/分类都给不出 `vod_id` |
+| 人人 • 4K | csp_RenRen | FAIL 线路里的地址全是空串 |
+| 指南 • 4K | csp_4KZhinan | FAIL 同上 |
+| 种子 • 4K | csp_SeedHub | FAIL detail 没有线路（站点只给磁力/网盘） |
+| 豆瓣 • 首页 | csp_Douban | FAIL detail 没有线路（它本质是搜索页） |
+
+**直接可播 1/10，网页播放页 1/10，失败 8/10。** 但逐条归因之后，8 个失败里
+**没有一个是我们代码的缺陷**：4 个是上游 403/超时/空响应，2 个是蜘蛛自身 NPE
+或给不出 id，2 个是站点本来就没有可播线路。
+
+⚠️ 这份数字**不能**读成「站点可用率 10%」：抽样是按 id 挑的 10 个，不是随机
+样本，而且判据比 `verify_prod_jvm` 的「整组可用」严得多（要求**地址真能拉**）。
+
+### ⑤ 一条产品级缺口（不是 bug，是能力缺失）
+
+`csp_BiliYS` 的 `playerContent` 返回：
+
+```json
+{"parse":0,"format":"application/dash+xml",
+ "url":["清晰 480P","http://127.0.0.1:255/proxy?do=biliys&aid=…&type=mpd",
+        "流畅 360P","http://127.0.0.1:255/proxy?do=biliys&…"]}
+```
+
+两件事同时出现：
+
+1. `url` 是**扁平交替数组** `[标签, 地址, 标签, 地址]`（TVBox 的多清晰度形态），
+   不是字符串 —— 生产代码的 `as String?` 会抛，整条作废；
+2. 地址指向 `127.0.0.1:255` —— 蜘蛛**期望宿主提供本地代理**（TVBox 会起一个）。
+
+即使把 ① 解析对，② 也拉不动。所以这不是「改个类型转换就好」的事：要支持这类
+站点，得先在宿主侧实现那个代理协议。**当前不修，记在这里作为已知边界。**
+
+### 这一天的教训
+
+1. **第三方声明的校验值不能当启动闸门**。只适合「变了就提示」，不适合
+   「不符就拒绝启动」—— 前者降级可用，后者全站瘫痪。
+2. **响应形状的脏数据不该让整条线路作废**。`header` / `url` 的形状在 TVBox
+   生态里没有约束；因为头不合规就丢掉可用地址，等于把「上游不规范」升级成
+   「我们的功能不可用」。
+3. **「首页好了」≠「能用了」**。这个误判已经发生过一次（`verify_prod_jvm`
+   不覆盖 play），现在 play 进了脚本，但**它不拉流**；真正证明「能播」的是
+   `_verify_play_e2e.dart` 与 `_probe_mpv_play.py`。
+4. **扫站点必须带 `ext`**。库里有 **48** 个站点配了 `ext`（此前记的 21 是
+   `_api_ext.json` 的口径）。不带 ext 时 `csp_YunDuo` 的 home 直接返回 0 字节 ——
+   会被误算成「站点坏了」。
