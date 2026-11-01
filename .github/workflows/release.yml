@@ -32,7 +32,7 @@ jobs:
         # 与 ci.yml 的 release-windows 一致：钉住 17。ADR-006 要求用户自行安装
         # JRE 17+，编译环境必须与运行环境对齐，不能让 runner 的默认 JDK 决定
         # 产物的字节码版本。
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
