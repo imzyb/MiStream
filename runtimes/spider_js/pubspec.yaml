@@ -14,7 +14,7 @@ dependencies:
   # → asn1lib），此处显式提升为直接依赖：RSA 的 PEM 解析要用 asn1lib，
   # rsaX 的三种 padding 要用 pointycastle，靠传递依赖拿到属于「碰运气」——
   # encrypt 哪天换掉 pointycastle，这里就断了。
-  asn1lib: ^1.6.5
+  asn1lib: ^1.6.8
   core_domain:
     path: ../../packages/core_domain
   crypto: ^3.0.6
