@@ -17,7 +17,7 @@ dependencies:
   asn1lib: ^1.6.5
   core_domain:
     path: ../../packages/core_domain
-  crypto: ^3.0.6
+  crypto: ^3.0.8
   encrypt: ^5.0.3
   ffi: ^2.1.4
   html: ^0.15.7

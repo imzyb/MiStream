@@ -14,7 +14,7 @@ dependencies:
     path: ../core_domain
   storage:
     path: ../storage
-  crypto: ^3.0.0
+  crypto: ^3.0.8
   meta: ^1.18.0
 
 dev_dependencies:

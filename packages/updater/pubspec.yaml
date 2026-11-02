@@ -15,7 +15,7 @@ dependencies:
   # 更新包是 zip，校验要 sha256。两者都已在锁文件里（transitive），
   # 这里改成直接依赖不引入新版本。
   archive: ^4.3.0
-  crypto: ^3.0.7
+  crypto: ^3.0.8
   path: ^1.9.0
 
 dev_dependencies:
