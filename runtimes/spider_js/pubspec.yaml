@@ -33,4 +33,4 @@ dependencies:
 dev_dependencies:
   mock_source_server:
     path: ../../tools/mock_source_server
-  test: ^1.31.0
+  test: ^1.32.0
