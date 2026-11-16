@@ -14,4 +14,4 @@ dependencies:
     path: ../../packages/core_domain
 
 dev_dependencies:
-  test: ^1.31.0
+  test: ^1.32.0
